@@ -1,0 +1,79 @@
+---
+title: "Connect a delegated-inference consumer"
+sourceExample: "packages/sdk/examples/delegated-inference/consumer.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: delegate-public-key
+    description: 'Passes providerPublicKey under a `delegate` block to loadModel'
+    pattern: "delegate\\s*:\\s*\\{[^}]*providerPublicKey"
+  - id: timeout-set
+    description: 'Sets a generous timeout on the delegate'
+    pattern: "delegate\\s*:\\s*\\{[^}]*timeout"
+  - id: fallback-to-local
+    description: 'Sets fallbackToLocal on the delegate'
+    pattern: "fallbackToLocal"
+  - id: runs-completion
+    description: 'Calls completion() against the delegated modelId'
+    pattern: "completion\\s*\\(\\s*\\{[^}]*modelId"
+  - id: streams-tokens
+    description: 'Iterates response.tokenStream to stdout'
+    pattern: "for\\s+await.*tokenStream"
+hints:
+  - "loadModel({ modelSrc, delegate: { providerPublicKey, timeout: 60_000, fallbackToLocal: true } }) registers a model that runs on a remote peer."
+  - "The first call on a cold DHT takes 15 to 45 seconds for the consumer to bootstrap hyperdht and look up the provider's key. The timeout gives that headroom. Subsequent connections in the same process are sub-second."
+  - "fallbackToLocal: true means the consumer will run the model locally if the delegate is unreachable. Useful while the provider is restarting or offline."
+expectedOutput:
+  - "▸ Testing delegated inference"
+  - "▸ Provider: 7f3a2b1c..."
+  - "▸ Delegated model registered: model-7f2a"
+  - "Hello there!"
+  - "▸ Stats: { tokensPerSecond: 47.31 }"
+---
+
+The previous lesson booted a provider. This one consumes it.
+
+The consumer side is the same `loadModel()` / `completion()` shape as every other lesson. The only new field is `delegate`, which routes the inference to a peer instead of running it locally.
+
+The `loadModel()` call takes the same `modelSrc` and `modelType` shape, with one new field: `delegate` carries the routing fields (`providerPublicKey`, `timeout`, `fallbackToLocal`):
+
+```ts
+const modelId = await loadModel({
+  modelSrc: LLAMA_3_2_1B_INST_Q4_0,
+  delegate: {
+    providerPublicKey,
+    timeout: 60_000,
+    fallbackToLocal: true,
+  },
+});
+```
+
+The `completion()` call uses the same `modelId`, `history`, and `stream: true` shape as the text-generation lessons. The `modelId` here is the delegate's handle, so the call routes through the peer over the DHT:
+
+```ts
+const response = completion({
+  modelId,
+  history: [{ role: "user", content: "Hello!" }],
+  stream: true,
+});
+```
+
+The loop iterates `response.tokenStream` and writes each token to stdout. The `response.stats` Promise resolves once the stream ends, so logging it after the loop gives the per-call metrics:
+
+```ts
+for await (const token of response.tokenStream) {
+  process.stdout.write(token);
+}
+console.log("\n▸ Stats:", await response.stats);
+```
+
+The `delegate` block takes the provider's public key and a generous timeout. The first call on a cold DHT needs 15 to 45 seconds: bootstrapping hyperdht, looking up the provider's key, opening the connection. The SDK gives that headroom via `timeout: 60_000`. Once the DHT is warm, subsequent connections in the same process are sub-second.
+
+`fallbackToLocal: true` is the safety net. If the provider is unreachable (restarting, offline, behind a firewall the consumer can't traverse), the consumer falls back to running the model on its own hardware. The call still succeeds, though with a different latency profile.
+
+> Note: the consumer's `modelSrc` has to match the provider's loaded model. If the provider has Llama 3.2 1B loaded, the consumer has to ask for the same constant, or the provider's router will reject the request with a model-mismatch error.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelSrc: LLAMA_3_2_1B_INST_Q4_0` and a `delegate: { providerPublicKey, timeout: 60_000, fallbackToLocal: true }` block.
+2. Call `completion({ modelId, history: [{ role: "user", content: "Hello!" }], stream: true })`.
+3. Iterate `response.tokenStream` to stdout, then console.log `response.stats` when the stream ends.

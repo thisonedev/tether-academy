@@ -1,0 +1,70 @@
+---
+title: Compare embeddings with cosine similarity
+sourceExample: "packages/sdk/examples/embed-multi-gpu.ts"
+platforms: ['node']
+tests:
+  - id: defines-cosine
+    description: 'Defines a cosineSimilarity helper that takes two number arrays'
+    pattern: "function\\s+cosineSimilarity\\s*\\(\\s*[a-zA-Z_]+\\s*:\\s*number\\[\\]\\s*,\\s*[a-zA-Z_]+\\s*:\\s*number\\[\\]"
+  - id: computes-dot
+    description: 'Sums the element-wise products'
+    pattern: "dotProduct\\s*[+\\+=]|dotProduct\\s*=\\s*0"
+  - id: compares-similar-pair
+    description: 'Computes similarity between two similar embeddings'
+    pattern: "cosineSimilarity\\s*\\(\\s*emb1\\s*,\\s*emb2"
+  - id: compares-different-pair
+    description: 'Computes similarity between an unrelated pair'
+    pattern: "cosineSimilarity\\s*\\(\\s*emb1\\s*,\\s*emb3"
+hints:
+  - "Cosine similarity is just the dot product of two vectors. Multiply matching positions together and sum the results."
+  - "Use cosineSimilarity(emb1, emb2) for the similar pair and cosineSimilarity(emb1, emb3) for the unrelated pair."
+  - "Higher numbers mean more similar meanings. Trust the trend, not the value."
+expectedOutput:
+  - "Similarity between texts 1 and 2 (similar meaning): 0.8723"
+  - "Similarity between texts 1 and 3 (different topics): 0.1138"
+---
+
+We have three vectors from the last lesson. Two are similar (both about a fox). One is unrelated (Python). The comparison is one short function: multiply matching positions, then sum them up.
+
+For two 1024-dimension vectors `a` and `b`:
+
+```
+similarity = Σᵢ aᵢ × bᵢ
+```
+
+That's all there is to it. Strictly speaking, "cosine similarity" divides by the magnitudes too, but for normalized embeddings like these the dot product alone ranks similarity correctly.
+
+Same batch `embed()` call, but destructured into three named variables. Different destructuring pattern than the previous lesson, since we want three separate handles rather than one batch. You would destructure like so:
+
+```ts
+const { embedding: [emb1, emb2, emb3] } = await embed({ modelId, text: texts });
+```
+
+The `cosineSimilarity` helper is one-line math: a loop that multiplies matching positions and sums. Output range is `-1` to `1`, but `GTE_LARGE_FP16` typically produces `0` to `1`. Note that the `?? 0` is defensive against sparse arrays. The function looks as follows:
+
+```ts
+function cosineSimilarity(vecA: number[], vecB: number[]) {
+  let dotProduct = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += (vecA[i] ?? 0) * (vecB[i] ?? 0);
+  }
+  return dotProduct;
+}
+```
+
+With `cosineSimilarity` defined, the side-by-side compare is two calls and two logs. The similar pair (text 1 vs text 2) should land high (around 0.87), the unrelated one (text 1 vs text 3) should land low (around 0.11). `.toFixed(4)` rounds each to four decimal places so the numbers stay readable on one line:
+
+```ts
+const similarity1 = cosineSimilarity(emb1, emb2);
+const similarity2 = cosineSimilarity(emb1, emb3);
+console.log(`Similarity between texts 1 and 2 (similar meaning): ${similarity1.toFixed(4)}`);
+console.log(`Similarity between texts 1 and 3 (different topics): ${similarity2.toFixed(4)}`);
+```
+
+> Note: `vecA[i]!` uses the non-null assertion (`!`) because TypeScript thinks the array might have a hole. For our case the array is dense, so `!` is safe. If you prefer to be defensive, write `vecA[i] ?? 0` instead.
+
+## Put it to the test
+
+1. Call `embed({ modelId, text: texts })` and destructure the batch as `emb1`, `emb2`, `emb3`.
+2. Define `cosineSimilarity(vecA: number[], vecB: number[])` that returns the dot product.
+3. Call `cosineSimilarity(emb1, emb2)` and `cosineSimilarity(emb1, emb3)`, then console.log both with `.toFixed(4)`.

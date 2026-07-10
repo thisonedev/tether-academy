@@ -1,0 +1,65 @@
+---
+title: Show download progress
+sourceExample: "packages/sdk/examples/quickstart.ts"
+platforms: ['node']
+tests:
+  - id: has-onprogress
+    description: loadModel call includes an onProgress option
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*onProgress\\s*:"
+  - id: callback-shape
+    description: onProgress callback receives a progress object and reads percentage / downloaded / total
+    pattern: "onProgress\\s*:\\s*\\(?\\s*p\\)?\\s*=>\\s*\\{[\\s\\S]*p\\.(percentage|downloaded|total)"
+  - id: still-loads
+    description: Still calls loadModel with modelSrc
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc"
+  - id: awaits-result
+    description: Awaits the result into modelId
+    pattern: "modelId\\s*=\\s*await\\s+loadModel"
+hints:
+  - "onProgress is a key inside the same options object you already pass to loadModel(). Put it next to modelSrc."
+  - "The callback runs many times during one download. Each call hands you a progress object with percentage (0 to 100), downloaded bytes, and total bytes."
+  - "Write to process.stderr, not process.stdout. Progress is logging; stdout is reserved for the model's actual response in the next lesson."
+expectedOutput:
+  - "▸ Downloading 7% (50.0/740.0 MB)"
+  - "▸ Downloading 38% (281.0/740.0 MB)"
+  - "▸ Downloading 71% (525.0/740.0 MB)"
+  - "▸ Downloading 100% (740.0/740.0 MB)"
+  - "▸ Model loaded: model-7f2a"
+  - "modelId: model-7f2a"
+---
+
+In the very first lesson we called `loadModel({ modelSrc: ... })` and waited. From the user's point of view the script sat there with no output while a multi-hundred-megabyte file downloaded. `onProgress` exists to make that wait readable.
+
+`onProgress` is a callback we pass alongside `modelSrc`. The SDK calls it repeatedly while the model downloads. Each call hands us `{ percentage, downloaded, total }`. We print every call, throttle to every few percent, or draw a progress bar.
+
+Let's take a closer look at the pattern from the [QVAC quickstart example](https://github.com/tetherto/qvac/blob/main/packages/sdk/examples/quickstart.ts). The callback goes inside the same `loadModel()` options object that already carries `modelSrc`.
+
+`onProgress` runs many times during a download. The full callback wired into `loadModel()` would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: LLAMA_3_2_1B_INST_Q4_0,
+  onProgress: (p) => {
+    const mb = (n: number) => (n / 1e6).toFixed(1);
+    const line = `▸ Downloading ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)`;
+    process.stderr.write(process.stderr.isTTY ? `\r${line}` : `${line}\n`);
+  },
+});
+```
+
+Without the trailing newline, the next log would start on the same line as the final 100% line. Adding it at 100 puts the next log on a fresh row:
+
+```ts
+    if (p.percentage >= 100) process.stderr.write("\n");
+```
+
+A few details worth pointing at:
+
+- `process.stderr.write` is the right call here. Stdout is reserved for the model's actual response in the next lesson; progress is logging, and stderr is the standard place for it.
+- The `process.stderr.isTTY` flag picks the rendering mode. When the terminal is a TTY, the script writes `\r` so each tick overwrites the same line. When output is piped to a file, it writes `\n` so each tick ends up on its own row in the log.
+- The final `process.stderr.write("\n")` after `p.percentage >= 100` makes sure the next log starts on a fresh row.
+
+## Put it to the test
+
+1. Add `modelSrc: LLAMA_3_2_1B_INST_Q4_0` and an `onProgress` callback to the `loadModel` call. Inside the callback, write `▸ Downloading X% (Y/Z MB)` to `process.stderr`, choosing between overwriting the line (`isTTY`) and appending a newline (pipe).
+2. Inside the callback, when `p.percentage >= 100`, write a newline to `process.stderr` so the next log starts on a fresh row.

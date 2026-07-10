@@ -1,0 +1,70 @@
+---
+title: "Run a delegated-inference provider"
+sourceExample: "packages/sdk/examples/delegated-inference/provider.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: starts-provider
+    description: 'Calls startQVACProvider() to boot the local provider'
+    pattern: "startQVACProvider\\s*\\("
+  - id: firewall-optional
+    description: "Builds a firewall block with mode 'allow' and a public key list"
+    pattern: "firewall\\s*:|publicKeys"
+  - id: logs-public-key
+    description: 'Logs the response.publicKey that consumers use to connect'
+    pattern: "publicKey"
+hints:
+  - "Pass an optional seed as the first argument. The seed is a 64-character hex string that pins the provider's Hyperswarm identity. With a seed you can reconnect to the same provider across restarts."
+  - "Pass an optional consumer public key as the second argument. When set, the provider's firewall only allows that consumer; other consumers are rejected at the network layer."
+  - "startQVACProvider({ firewall: { mode: 'allow', publicKeys: [key] } }) returns { publicKey }. Print it and the matching consumer command so anyone can copy-paste it."
+expectedOutput:
+  - "▸ Starting provider service..."
+  - "▸ Provider service started successfully."
+  - "▸ Provider Public Key: 7f3a2b1c..."
+  - "▸ Consumer command: node consumer.ts 7f3a2b1c..."
+---
+
+Now that we've seen how models download over P2P, we're going to look at the other side of the same network.
+
+Delegated inference sends a completion request to a peer and reads back the response, instead of running the model locally. Useful when the requester's hardware is too small for the model, or when the data needs to stay on the closer-to-source peer.
+
+The provider side is a single long-running process. It advertises itself on the Hyperswarm DHT under a public key, and any consumer that knows that key can route completion calls through it.
+
+The seed is optional. Without it, Hyperswarm uses a fresh random key per run. Consider the following seed setup:
+
+```ts
+const seed = process.argv[2];
+const allowedConsumerPublicKey = process.argv[3];
+
+if (seed) {
+  process.env["QVAC_HYPERSWARM_SEED"] = seed;
+}
+```
+
+Calling `startQVACProvider()` is what boots the local provider. If a consumer key was passed, we lock the firewall to that one consumer like so:
+
+```ts
+const response = await startQVACProvider({
+  firewall: allowedConsumerPublicKey
+    ? {
+        mode: "allow" as const,
+        publicKeys: [allowedConsumerPublicKey],
+      }
+    : undefined,
+});
+console.log(`▸ Provider Public Key: ${response.publicKey}`);
+console.log("");
+console.log("▸ Consumer command:");
+console.log(`   node consumer.ts ${response.publicKey}`);
+```
+
+A seed makes the provider's identity deterministic: the same seed always boots the same public key, so a consumer configured with that key can reconnect across provider restarts. A random seed (no argument) generates a fresh identity each run.
+
+A consumer public key passed as the second argument locks the provider down. The firewall is allowlist-only; consumers not on the list are rejected at the network layer. Useful for staging, demos, and any setup where the provider is reachable from the public DHT.
+
+> Note: `startQVACProvider()` doesn't return until the provider is listening on the DHT. Once it returns, consumers can connect. The provider process stays alive until you Ctrl+C.
+
+## Put it to the test
+
+1. Read the optional seed and consumer public key from `process.argv`. If a seed is present, set `process.env["QVAC_HYPERSWARM_SEED"]` to it before the provider call.
+2. Call `startQVACProvider({ firewall: { mode: "allow", publicKeys: [consumerKey] } })` if a consumer key was given, or `startQVACProvider({})` otherwise.
+3. Log `response.publicKey` and a copy-pasteable `node consumer.ts <publicKey>` command line.

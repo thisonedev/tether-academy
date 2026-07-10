@@ -1,0 +1,65 @@
+---
+title: "Cache conversation state across turns"
+sourceExample: "packages/sdk/examples/kv-cache-example.ts"
+platforms: ['node']
+tests:
+  - id: enables-kv-cache
+    description: 'Sets kvCache: true on completion()'
+    pattern: "kvCache\\s*:\\s*true"
+  - id: reuses-history
+    description: 'Reuses the same history across multiple completions'
+    pattern: "(?:const|let|var)\\s+history\\s*[=:]"
+  - id: compares-stats
+    description: 'Logs final.stats for both runs (or the cacheableAssistantContent field)'
+    pattern: "final\\d*\\.stats|final\\d*\\.cacheableAssistantContent|final\\.stats|final\\.cacheableAssistantContent"
+hints:
+  - "Set kvCache: true on completion(). The SDK saves the KV state after the first turn and reuses it on the second."
+  - "The same history prefix lets the cache key match. Push the assistant's reply into history between turns so the second call has the same prefix as the saved cache."
+  - "Use final.cacheableAssistantContent to push the assistant turn back into history. It's the exact text the cache was saved against."
+expectedOutput:
+  - "▸ First turn: 24 tokens, 2.31s"
+  - "▸ Second turn (cached): 12 tokens, 0.84s"
+---
+
+Generating the first response from a multi-turn history reprocesses every prior turn. The KV cache is the trick that skips that: save the model's internal state after the first turn, then replay it on the second turn with only the new user message.
+
+`kvCache: true` on the second `completion()` call skips the prior turn's reprocessing. The same `history` prefix is required; change the prefix and the cache misses, falling back to a full reprocess.
+
+Setting `kvCache: true` asks the SDK to save the model's internal state after this turn. Consider the first call with the flag on:
+
+```ts
+const r1 = completion({ modelId, history, stream: true, kvCache: true });
+for await (const token of r1.tokenStream) process.stdout.write(token);
+const final1 = await r1.final;
+```
+
+The cache key is the history prefix. To keep that prefix intact for the next hit, push `cacheableAssistantContent` back into `history`:
+
+```ts
+history.push({
+  role: "assistant",
+  content: final1.cacheableAssistantContent ?? final1.contentText,
+});
+history.push({ role: "user", content: "What about Germany?" });
+```
+
+Same flag, same `history` reference. The second turn replays the cache; comparing `stats` after proves it. You would call it like so:
+
+```ts
+const r2 = completion({ modelId, history, stream: true, kvCache: true });
+for await (const token of r2.tokenStream) process.stdout.write(token);
+const final2 = await r2.final;
+
+console.log(`\n▸ First: ${JSON.stringify(final1.stats)}`);
+console.log(`▸ Second (cached): ${JSON.stringify(final2.stats)}`);
+```
+
+The two `stats` objects show the speedup. On a long-running assistant with thousands of prior turns, the cached path runs ten to a hundred times faster than the cold path.
+
+> Note: `final.cacheableAssistantContent` is the exact text the cache was saved against. Fall back to `final.contentText` if it's `undefined` (some models and tool-using flows don't expose it).
+
+## Put it to the test
+
+1. Build a `history` array starting with one user turn. First turn: call `completion({ modelId, history, kvCache: true, stream: true })`, drain `tokenStream`, then `await r1.final`.
+2. Push the assistant turn back into `history` using `final1.cacheableAssistantContent ?? final1.contentText`. Append the next user turn.
+3. Second turn: call `completion()` again with the same `history` and `kvCache: true`. Compare `final.stats` for both runs.

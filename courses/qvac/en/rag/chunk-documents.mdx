@@ -1,0 +1,52 @@
+---
+title: "Chunk documents for RAG"
+sourceExample: "packages/sdk/examples/rag/rag-hyperdb/ingest.ts"
+platforms: ['node']
+tests:
+  - id: sets-chunk-true
+    description: 'Sets chunk: true for long documents'
+    pattern: "ragIngest\\s*\\(\\s*\\{[\\s\\S]*?chunk\\s*:\\s*true"
+  - id: passes-chunk-opts
+    description: 'Passes chunkOpts with size and overlap'
+    pattern: "chunkOpts\\s*:\\s*\\{[^}]*chunkSize"
+  - id: logs-chunk-count
+    description: Logs how many chunks came back
+    pattern: "console\\.log\\s*\\([^)]*processed\\.length|console\\.log\\s*\\([^)]*chunks"
+hints:
+  - "Set chunk: true when your documents are longer than a few hundred words. The SDK splits them before embedding."
+  - "chunkOpts.chunkSize is the target size per chunk in tokens. chunkOverlap is how much neighboring chunks share, keeps context that crosses a boundary."
+  - "result.processed.length is the chunk count, not the document count. One long doc becomes many chunks."
+expectedOutput:
+  - "Created 12 chunks from 3 documents"
+---
+
+Now that we know how to ingest and search, let's handle longer documents.
+
+A 1024-token embedding model can't take a 5000-word article in one shot. `chunk: true` tells `ragIngest` to split documents before embedding. The search results we saw before were whole documents. Chunked search returns the *passage* that matched, which is what we actually want for question-answering.
+
+The default strategy is `paragraph`: the SDK splits on blank lines, then groups paragraphs to roughly hit `chunkSize` tokens. `chunkOverlap` keeps a few tokens of shared context at every boundary so a sentence that straddles two chunks isn't lost.
+
+`chunk: true` splits each document before embedding. The default `paragraph` strategy splits on blank lines, then groups to roughly hit `chunkSize` tokens like so:
+
+```ts
+const result = await ragIngest({
+  modelId,
+  workspace: "tech",
+  documents: samples,
+  chunk: true,
+  chunkOpts: {
+    chunkSize: 200,
+    chunkOverlap: 20,
+  },
+});
+console.log(`Created ${result.processed.length} chunks from ${samples.length} documents`);
+```
+
+`processed` is now a list of chunks, not documents. Search against this workspace returns the specific passage that matched, not the whole document.
+
+> Note: `chunkSize` is in tokens, not characters. A typical English word is roughly 1.3 tokens, so `chunkSize: 200` gives you chunks of about 150 words.
+
+## Put it to the test
+
+1. Call `ragIngest()` with `chunk: true` and `chunkOpts: { chunkSize: 200, chunkOverlap: 20 }`.
+2. Log both `result.processed.length` (chunk count) and `samples.length` (document count).

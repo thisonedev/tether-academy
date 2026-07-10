@@ -1,0 +1,43 @@
+---
+title: Load your first model
+sourceExample: "packages/sdk/examples/quickstart.ts"
+platforms: ['node']
+tests:
+  - id: calls-loadmodel
+    description: Calls loadModel with a modelSrc option
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc"
+  - id: awaits-loadmodel
+    description: Awaits the result and stores it in modelId
+    pattern: "modelId\\s*=\\s*await\\s+loadModel"
+hints:
+  - "loadModel is a top-level export from @qvac/sdk. Import it alongside a model constant."
+  - "loadModel takes an options object. The only required key is modelSrc. Point it at an SDK-provided model like LLAMA_3_2_1B_INST_Q4_0."
+  - "loadModel is async. await it and store the result in a variable called modelId so the next lessons can reuse it."
+expectedOutput:
+  - "▸ Model loaded: model-7f2a"
+  - "modelId: model-7f2a"
+---
+
+In this first lesson, we're going to load a model into memory and get back a `modelId` you can reuse. Every other lesson in this chapter builds on top of this one, so let's get it right.
+
+Before any completion can run, the model has to live somewhere the SDK can reach it. `loadModel()` does that for us. We give it a model constant, it downloads the model files if they're not already cached, and hands us back an id we can pass to other calls.
+
+Every QVAC lesson starts with the same load idiom. The canonical `loadModel({ modelSrc })` call looks like this:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: LLAMA_3_2_1B_INST_Q4_0,
+});
+console.log("modelId:", modelId);
+```
+
+`LLAMA_3_2_1B_INST_Q4_0` is one of the model constants `@qvac/sdk` exports. It's small (about 740 MB) and downloads in a few minutes on a fast connection.
+
+> Note: the `await` is important. `loadModel` returns a Promise, and we have to wait for it to resolve before we can use `modelId`.
+
+In the next lesson, we'll use this `modelId` to run our first completion. For now, let's make sure the load itself works.
+
+## Put it to the test
+
+1. Call `loadModel({ modelSrc: LLAMA_3_2_1B_INST_Q4_0 })` and assign the result to `modelId`.
+2. Log `modelId` to stdout.

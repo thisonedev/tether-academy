@@ -1,0 +1,221 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-ui/css/black.css';
+@import 'fumadocs-ui/css/shiki.css';
+
+@theme {
+  /* Emerald accent, the only brand color, used sparingly */
+  --color-fd-primary: oklch(0.696 0.17 162);
+  --color-fd-primary-foreground: oklch(0.97 0.01 162);
+  --color-fd-ring: oklch(0.696 0.17 162);
+
+  /* Dark main canvas, the whole app lives on this */
+  --color-canvas: oklch(0.16 0.012 162);
+  --color-canvas-foreground: oklch(0.96 0.005 162);
+  --color-canvas-muted: oklch(0.22 0.012 162);
+  --color-canvas-muted-foreground: oklch(0.72 0.012 162);
+  --color-canvas-border: oklch(0.27 0.012 162);
+}
+
+html {
+  color-scheme: dark;
+}
+
+/* Dark-theme scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.32 0.012 162) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: oklch(0.3 0.012 162);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.42 0.012 162);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Lightweight prose, replaces the @tailwindcss/typography `prose` plugin
+   for content inside .prose-md containers. */
+.prose-md {
+  color: var(--color-canvas-foreground);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+.prose-md > * + * {
+  margin-top: 1em;
+}
+.prose-md h2 {
+  margin-top: 1.6em;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--color-canvas-foreground);
+  letter-spacing: -0.01em;
+}
+.prose-md h3 {
+  margin-top: 1.4em;
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-canvas-foreground);
+}
+.prose-md p {
+  color: var(--color-canvas-foreground);
+}
+.prose-md a {
+  color: oklch(0.78 0.16 162);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+.prose-md a:hover {
+  color: oklch(0.85 0.16 162);
+}
+.prose-md strong {
+  color: var(--color-canvas-foreground);
+  font-weight: 600;
+}
+.prose-md code:not(pre code) {
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background-color: var(--color-canvas-muted);
+  color: oklch(0.85 0.15 162);
+  font-size: 0.9em;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+/* Code blocks: explicit high-contrast styling. */
+.prose-md pre {
+  padding: 1rem 1.25rem;
+  border-radius: 0.5rem;
+  background-color: #0d1117;
+  border: 1px solid var(--color-canvas-border);
+  overflow-x: auto;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+.prose-md pre code {
+  background: transparent;
+  padding: 0;
+  color: #e6edf3;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+/* Lesson MDX code blocks (MdxPre) */
+.prose-md .mdx-code-figure {
+  background-color: #0d1117;
+}
+.prose-md .mdx-code-pre {
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 1rem 6rem 1rem 1.25rem;
+  margin: 0;
+}
+/* Fallback shiki token colouring */
+.prose-md .shiki code span {
+  color: var(--shiki-dark);
+}
+html.dark .prose-md .shiki code span {
+  color: var(--shiki-dark);
+}
+.prose-md ul,
+.prose-md ol {
+  padding-left: 1.5em;
+  list-style: disc;
+}
+.prose-md ol {
+  list-style: decimal;
+}
+.prose-md li {
+  margin-top: 0.4em;
+  color: var(--color-canvas-foreground);
+}
+.prose-md li::marker {
+  color: var(--color-canvas-muted-foreground);
+}
+.prose-md blockquote {
+  border-left: 3px solid oklch(0.696 0.17 162);
+  padding-left: 1rem;
+  font-style: italic;
+  color: var(--color-canvas-muted-foreground);
+}
+.prose-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.4em 0;
+  font-size: 0.92em;
+  line-height: 1.5;
+  border: 1px solid var(--color-canvas-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.prose-md th,
+.prose-md td {
+  border: 1px solid var(--color-canvas-border);
+  padding: 0.55em 0.85em;
+  text-align: left;
+  vertical-align: top;
+}
+.prose-md th {
+  background: var(--color-canvas-muted);
+  color: var(--color-canvas-foreground);
+  font-weight: 600;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.prose-md td {
+  color: var(--color-canvas-foreground);
+}
+.prose-md tbody tr:nth-child(even) td {
+  background: color-mix(in oklab, var(--color-canvas-muted) 40%, transparent);
+}
+
+/* Pulse animation for the points badge */
+@keyframes pointsPulse {
+  0% {
+    transform: scale(1);
+    color: var(--color-canvas-foreground);
+  }
+  40% {
+    transform: scale(1.18);
+    color: oklch(0.78 0.16 162);
+  }
+  100% {
+    transform: scale(1);
+    color: var(--color-canvas-foreground);
+  }
+}
+.points-pulse {
+  animation: pointsPulse 0.45s ease-out;
+  transform-origin: center;
+}
+
+/* Constrain the CodeMirror editor to fill its parent and scroll internally */
+.cm-theme,
+.cm-editor,
+.cm-editor.cm-focused {
+  height: 100% !important;
+  max-height: 100%;
+}
+.cm-scroller {
+  overflow: auto !important;
+  max-height: 100%;
+}

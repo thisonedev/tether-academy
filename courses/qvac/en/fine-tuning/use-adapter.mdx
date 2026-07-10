@@ -1,0 +1,73 @@
+---
+title: "Use the fine-tuned adapter at inference time"
+sourceExample: "packages/sdk/examples/voice-assistant/voice-assistant.ts"
+platforms: ['node']
+tests:
+  - id: loads-model-with-lora
+    description: 'Passes modelConfig.lora to loadModel'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelConfig\\s*:\\s*\\{[^}]*lora"
+  - id: lora-is-string
+    description: 'lora field is a string path'
+    pattern: "lora\\s*:\\s*[`'\"]"
+  - id: runs-completion
+    description: 'Calls completion() with the loaded model'
+    pattern: "completion\\s*\\(\\s*\\{[^}]*modelId"
+  - id: streams-tokens
+    description: 'Iterates result.tokenStream or result.events'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+[^)]*(?:tokenStream|events)"
+  - id: unloads-model
+    description: 'Calls unloadModel({ modelId })'
+    pattern: "unloadModel\\s*\\(\\s*\\{[^}]*modelId"
+hints:
+  - "The adapter path is set at Model time via modelConfig.lora, not at completion time. One adapter per modelId."
+  - "The path must point at the .gguf file finetune() produced, typically under your outputParametersDir."
+  - "Stream the completion so you can see the new behavior token by token."
+expectedOutput:
+  - "Loaded with adapter"
+  - "(streamed completion output)"
+---
+
+Now that we know how to train an adapter, we're going to use it.
+
+The trained adapter is just a small `.gguf` file. The base model stays the same. Stacking the adapter happens at `loadModel()` by passing `modelConfig.lora` with the file path.
+
+Loading the base model with `modelConfig.lora` pointing at the adapter file is the inference setup. The base model stays the same; we just stack the trained LoRA on top. The adapter is a small `.gguf` file produced by `finetune()`:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: QWEN3_600M_INST_Q4,
+  modelConfig: {
+    lora: "./examples/finetune/results/adapter.gguf",
+  },
+});
+console.log("Loaded with adapter");
+```
+
+Building the history with one user message is the same shape as a non-adapted call. The adapter doesn't change the prompt format:
+
+```ts
+const history = [{ role: "user", content: "What's a peanut butter sandwich in one sentence?" }];
+```
+
+Calling `completion()` with `stream: true` and streaming the tokens to stdout is the visible part. The trained behavior shows up token by token. Every call against this `modelId` reflects the trained behavior; there's nothing to set on `completion()` itself. Putting it into code:
+
+```ts
+const result = completion({
+  modelId,
+  history,
+  stream: true,
+});
+
+for await (const token of result.tokenStream) {
+  process.stdout.write(token);
+}
+process.stdout.write("\n");
+```
+
+> Note: the lora field can be re-set on a new `loadModel` call to switch adapters. Reload with a different path.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelConfig.lora` pointing at a `.gguf` adapter path, and console.log `"Loaded with adapter"`.
+2. Build a `history` array with one user message.
+3. Call `completion({ modelId, history, stream: true })` and iterate `result.tokenStream` to stdout.

@@ -1,0 +1,69 @@
+---
+title: "Compare multiple images in a completion"
+sourceExample: "packages/sdk/examples/llamacpp-multimodal.ts"
+platforms: ['node']
+tests:
+  - id: multiple-attachments
+    description: 'Sends multiple attachments in a single user message'
+    pattern: "attachments\\s*:\\s*\\[[\\s\\S]*?\\{[\\s\\S]*?path[\\s\\S]*?\\},[\\s\\S]*?\\{[\\s\\S]*?path"
+  - id: asks-comparison
+    description: 'The user content asks the model to compare'
+    pattern: "compare|diff|both|two"
+  - id: streams-multimodal
+    description: 'Streams the completion response via tokenStream'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+result\\.tokenStream"
+hints:
+  - "Add a second object to the attachments array. Each entry is `{ path: '...' }`."
+  - "The prompt can reference the images by position ('the first image' / 'the second image') or label them in the prompt itself."
+  - "You can attach images alongside text in the same user message, but not in the assistant message."
+expectedOutput:
+  - "(streamed completion comparing the two images)"
+---
+
+The previous lesson attached a single image. This one attaches two and asks the model to compare them.
+
+The model can hold more than one image in context. The `attachments` array is the only knob: we add more objects, point each at a different file on disk, and the projection model handles the rest.
+
+We use it for comparisons, "spot the difference", describing a sequence of frames, or any task where the answer is "across" multiple images rather than "about" one.
+
+Each image in `attachments` becomes one entry in the array. The order in the array is the order the SDK passes the images to the model. We keep that in mind if our prompt references "the first image" or "the second image".
+
+Two image attachments on the same user message, SDK passes them to the projection in `attachments` order (index 0 is the first image):
+
+```ts
+const history = [
+  {
+    role: "user",
+    content: "Compare the two newspaper articles. Which one is older?",
+    attachments: [
+      { path: "./examples/multimodal/input/article-a.jpg" },
+      { path: "./examples/multimodal/input/article-b.jpg" },
+    ],
+  },
+];
+```
+
+Two images in the history is what makes the call 'compare'. You would call it like so:
+
+```ts
+const result = completion({ modelId: multimodalId, history, stream: true });
+```
+
+Once the call returns, drain the tokens same as text-only:
+
+```ts
+for await (const token of result.tokenStream) {
+  process.stdout.write(token);
+}
+process.stdout.write("\n");
+```
+
+The history grows by one entry per extra image. `completion()` and `result.tokenStream` work the same as a text-only call; only the history entries carry images.
+
+> Note: multimodal assistants use `modelConfig.projectionModelSrc`, not `modelConfig.lora`. The two are unrelated options.
+
+## Put it to the test
+
+1. Build a `history` array with one user message that has two image attachments in the `attachments` array and asks the model to compare them.
+2. Call `completion({ modelId: multimodalId, history, stream: true })`.
+3. Iterate `result.tokenStream` and write each token to stdout. Confirm the model compares the two articles.

@@ -1,0 +1,69 @@
+---
+title: "Generate image with img2img"
+sourceExample: "packages/sdk/examples/diffusion-img2img.ts"
+platforms: ['node']
+tests:
+  - id: reads-init-image
+    description: 'Reads an init image as a Uint8Array via fs.readFileSync'
+    pattern: "fs\\.readFileSync\\s*\\(\\s*[`'\"][\\s\\S]*?\\.(?:png|jpg|jpeg)"
+  - id: passes-init-image
+    description: 'Passes the bytes as init_image to diffusion()'
+    pattern: "init_image\\s*:"
+  - id: uses-strength
+    description: 'Sets a strength value between 0 and 1'
+    pattern: "strength\\s*:\\s*0?\\.[0-9]+"
+hints:
+  - "Read your starting image with fs.readFileSync('input.png'). The Uint8Array bytes go straight into init_image."
+  - "Strength is how much the output can differ from the input: 0 = keep source, 1 = ignore source. ~0.6 is a sensible starting point."
+  - "Same options shape as before. The two new fields are init_image and strength."
+expectedOutput:
+  - "Generated 1 image"
+---
+
+Now that we can do txt2img, we're going to learn img2img.
+
+With txt2img, the model by default starts from noise. With img2img, the model starts from an image we supply and iteratively refines it until the result matches our prompt.
+
+`init_image` is a `Uint8Array` of PNG or JPEG bytes. We read it off disk with `fs.readFileSync`. The `strength` number tells the model how much room it has. At `0` it keeps the source image untouched, and at `1` it ignores it and behaves like txt2img.
+
+Common uses include rough sketch to colored illustration, screenshot to wireframe turned into a design mock, or an existing photo restyled.
+
+Reading the source image into a `Uint8Array` is what hands the bytes to `diffusion()`. Let's look at how to handle that:
+
+```ts
+const initImage = fs.readFileSync("./examples/diffusion/input/sketch.png");
+```
+
+Calling `diffusion()` with `init_image` set to the source bytes is the img2img path. The call we'd run looks like:
+
+```ts
+const result = diffusion({
+  modelId,
+  prompt: "an oil painting of a fox in a snowy forest",
+  init_image: initImage,
+  strength: 0.6,
+  width: 512,
+  height: 512,
+  steps: 25,
+});
+```
+
+Once `await result.outputs` resolves, write `outputs[0]` and log the count:
+
+```ts
+const outputs = await result.outputs;
+const first = outputs[0];
+if (!first) throw new Error("No image returned from diffusion");
+fs.writeFileSync("fox-painting.png", first);
+console.log(`Generated ${outputs.length} image`);
+```
+
+We tweak `strength` until the balance between "preserves the source" and "rewrites everything" feels right.
+
+> Note: `init_image` dimensions are the lower bound. The output resolution is governed by `width` and `height`, not the source size.
+
+## Put it to the test
+
+1. Read an input image with `fs.readFileSync` into a `Uint8Array`.
+2. Call `diffusion({ modelId, prompt, init_image, strength: 0.6, width, height, steps })` and `await result.outputs`.
+3. Write the first PNG to disk and console.log the count.

@@ -1,0 +1,57 @@
+---
+title: Stream transcription from microphone
+platforms: ['node', 'desktop']
+tests:
+  - id: imports-mic-input
+    description: References an audio stream (mic helper or generator)
+    pattern: "audioStream|microphone|MicInput|getUserMedia"
+  - id: calls-transcribe
+    description: 'Calls transcribe({ modelId, audioStream })'
+    pattern: "transcribe\\s*\\(\\s*\\{[^}]*modelId[^}]*audioStream"
+  - id: iterates-segments
+    description: Iterates over live segments
+    pattern: "for\\s*await|for\\s*\\(\\s*const"
+hints:
+  - "transcribe accepts an audioStream AsyncIterable<Float32Array> in addition to a file path. Feed it frames from getUserMedia or any PCM source."
+  - "Set metadata: true to get per-segment timestamps. Each segment arrives as soon as Whisper finalizes it, so the transcript updates in real time."
+  - "The bundled examples/audio/mic-input.ts shows the full pattern using the node-record-lpcm16 package."
+expectedOutput:
+  - "▸ Listening..."
+  - "[0.00s → 2.30s] The first sentence the user said."
+  - "[2.30s → 4.80s] A second sentence comes back from Whisper."
+---
+
+Now that we can transcribe files, we're going to stream transcription live.
+
+Whisper doesn't have to wait for the user to finish talking. We feed it a live audio stream and it returns segments as soon as it has enough context to commit to a transcription. Each segment carries timestamps, so the UI can render captions in sync with the audio.
+
+The shape mirrors the file-based `transcribe()` call, but `audioChunk` becomes `audioStream`. It's an `AsyncIterable<Float32Array>` of PCM frames at 16 kHz. You would call it like so:
+
+```ts
+const audioStream = micInput(); // AsyncIterable<Float32Array>, 16 kHz mono PCM
+
+const segments = transcribe({
+  modelId,
+  audioStream,
+  metadata: true,
+});
+```
+
+Each segment carries `startMs`, `endMs`, `confidence`. To render captions in lockstep with the speaker, iterate as they arrive. Consider the following loop:
+
+```ts
+for await (const segment of segments) {
+  const start = (segment.startMs / 1000).toFixed(2);
+  const end = (segment.endMs / 1000).toFixed(2);
+  console.log(`[${start}s → ${end}s] ${segment.text}`);
+}
+```
+
+Whisper's voice-activity detection commits to a segment when the speaker pauses or the buffer hits its maximum length. The `append` field on each segment tells us whether to overwrite the previous caption or append to it.
+
+> Note: the running buffer has a maximum length. Long pauses or slow speakers may produce fewer segments than you'd expect. Tune the model's `vad_params.max_speech_duration_s` if you need more granularity.
+
+## Put it to the test
+
+1. Set up a microphone capture. `node-record-lpcm16` is the bundled example, or `getUserMedia` in a browser.
+2. Call `transcribe({ modelId, audioStream, metadata: true })`, iterate the segments with `for await`, and render each segment's text and timestamps as it is finalized.

@@ -1,0 +1,59 @@
+---
+title: "Stream TTS audio with bufferStream"
+platforms: ['node']
+tests:
+  - id: calls-text-to-speech
+    description: 'Calls textToSpeech with stream: true'
+    pattern: "textToSpeech\\s*\\(\\s*\\{[^}]*stream\\s*:\\s*true"
+  - id: iterates-buffer-stream
+    description: Iterates result.bufferStream with for-await
+    pattern: "for\\s*await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+result\\.bufferStream"
+  - id: no-buffer-await
+    description: Does not await result.buffer when streaming
+    pattern: "textToSpeech\\s*\\([\\s\\S]*?stream\\s*:\\s*true(?!.*await\\s+result\\.buffer)"
+hints:
+  - "textToSpeech({ stream: true }) returns { buffer, bufferStream, done }. bufferStream is an AsyncGenerator<number> that yields PCM samples as they're synthesized."
+  - "result.buffer is empty when stream: true. The samples come through the generator, not the promise."
+  - "Pipe each chunk to an audio sink (a writer, a player, a websocket). Don't accumulate them in memory if you want low-latency playback."
+expectedOutput:
+  - "▸ Streamed"
+  - "samples in chunks"
+---
+
+Now that we can synthesize a full utterance, we're going to surface the audio as it synthesizes. For low-latency voice, the reader wants each chunk as soon as the engine produces it.
+
+`textToSpeech({ stream: true })` returns `{ buffer, bufferStream, done }` instead of just `{ buffer }`. The samples live on `result.bufferStream` as an `AsyncGenerator<number>`.
+
+Setting `stream: true` is what flips the result shape to `{ buffer, bufferStream, done }`. You would call it like so:
+
+```ts
+const result = textToSpeech({
+  modelId,
+  text: "Streaming chunks as the engine synthesizes them is the right latency for low-latency voice.",
+  inputType: "text",
+  stream: true,
+});
+```
+
+Iterating `result.bufferStream` with `for await` is the canonical way to consume samples:
+
+```ts
+let totalSamples = 0;
+for await (const sample of result.bufferStream) {
+  void sample;
+  totalSamples += 1;
+}
+console.log(`▸ Streamed ${totalSamples} samples`);
+```
+
+Each `number` is a single PCM sample. Iterating with `for await` yields samples in the order they were synthesized. `result.buffer` is empty when `stream: true`; the samples live on the generator, not the promise.
+
+`result.done` is a `Promise<boolean>` that resolves when synthesis finishes. Await it from a separate branch if you need to know when the stream terminates.
+
+> Note: this is a different shape from `textToSpeechStream`, which is a duplex session for piping tokens from a streaming LLM into TTS. Use `textToSpeech({ stream: true })` when you already have the full text and want a stream of audio chunks.
+
+## Put it to the test
+
+1. Call `textToSpeech({ modelId, text, inputType: "text", stream: true })`.
+2. Iterate `result.bufferStream` with `for await (const sample of result.bufferStream)` and count the samples.
+3. Log the total sample count. Don't await `result.buffer`; it stays empty when streaming.

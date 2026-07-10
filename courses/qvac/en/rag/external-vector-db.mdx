@@ -1,0 +1,101 @@
+---
+title: "Build RAG with an external vector DB"
+sourceExample: "packages/sdk/examples/rag/rag-sqlite.ts"
+platforms: ['node']
+tests:
+  - id: creates-table
+    description: 'Creates a documents table with id, text, embedding columns'
+    pattern: "CREATE\\s+TABLE[^;]*documents"
+  - id: inits-vector-index
+    description: 'Calls vector_init on the documents table'
+    pattern: "vector_init\\s*\\("
+  - id: quantizes-vectors
+    description: 'Calls vector_quantize to optimize the index'
+    pattern: "vector_quantize\\s*\\("
+  - id: scans-for-results
+    description: 'Uses vector_quantize_scan to find top-K results'
+    pattern: "vector_quantize_scan\\s*\\("
+hints:
+  - "The external vector DB path is opt-in. You write the embed call, the storage layer, and the scan. The QVAC SDK only contributes the embedding model."
+  - "Match the schema to the embedding dimension: GTE Large is 1024. SQLite-Vector's `vector_as_f32(?)` takes a JSON-stringified number[]."
+  - "Call vector_init once after bulk inserts, vector_quantize to optimize the index, then vector_quantize_scan to query by distance."
+expectedOutput:
+  - "▸ Query:"
+  - "1. [ID:"
+  - "distance:"
+---
+
+Production setups usually want their own vector store. SQLite-Vector is the example here, but the same pattern works with pgvector, LanceDB, or ChromaDB. This lesson builds the RAG flow against SQLite-Vector directly: `embed()` and `loadModel()` are the SDK pieces, the storage layer and the scan are yours.
+
+The pipeline has four steps: initialize SQLite with the vector extension, embed + insert each document, register and quantize the index, then run a top-K scan on the query.
+
+The setup is two parts. `sqlite3InitModule()` registers the vector extension so SQLite knows about the `FLOAT32[1024]` type, and `loadModel()` brings in the embedder. The CREATE TABLE is a vanilla SQLite schema with `id`, `text`, and an `embedding` BLOB:
+
+```ts
+const sqlite3 = await sqlite3InitModule();
+const db = new sqlite3.oo1.DB(":memory:", "c");
+const modelId = await loadModel({ modelSrc: GTE_LARGE_FP16 });
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY,
+    text TEXT NOT NULL,
+    embedding BLOB NOT NULL
+  )
+`);
+```
+
+Each document gets one row. `embed()` returns `number[]`, and `vector_as_f32(?)` takes a JSON-stringified array as the bind parameter, so the loop wraps the embed and INSERT together like this:
+
+```ts
+for (const sample of samples) {
+  const { embedding } = await embed({ modelId, text: sample.text });
+  db.exec({
+    sql: "INSERT INTO documents VALUES (?, ?, vector_as_f32(?))",
+    bind: [sample.id, sample.text, JSON.stringify(embedding)],
+  });
+}
+```
+
+Before any scan, the index needs two calls. `vector_init` registers the column as a `FLOAT32[1024]` vector type, and `vector_quantize` builds the actual search index. Without these, scans fall back to byte-level comparison:
+
+```ts
+db.exec(`SELECT vector_init('documents', 'embedding', 'type=FLOAT32,dimension=1024')`);
+db.exec(`SELECT vector_quantize('documents', 'embedding')`);
+```
+
+The search path mirrors the ingest: embed the query, run `vector_quantize_scan` to find the top-K nearest by distance, then log each result. The scan joins back to the row so we get the readable text:
+
+```ts
+const { embedding: queryEmbedding } = await embed({ modelId, text: query });
+const results: { id: number; text: string; distance: number }[] = [];
+db.exec({
+  sql: `
+    SELECT d.id, d.text, v.distance
+    FROM documents d
+    JOIN vector_quantize_scan('documents', 'embedding', vector_as_f32(?), 3) v
+    ON d.id = v.rowid
+  `,
+  bind: [JSON.stringify(queryEmbedding)],
+  rowMode: "object",
+  callback: (row) => {
+    results.push(row as { id: number; text: string; distance: number });
+  },
+});
+
+for (const [i, r] of results.entries()) {
+  console.log(`${i + 1}. [ID: ${r.id}] (distance: ${r.distance.toFixed(4)})`);
+  console.log(`   ${r.text}`);
+}
+```
+
+The dimension in `vector_init` must match the embedding model. `GTE_LARGE_FP16` produces 1024-dim vectors. A different model would need a different `dimension=N`. Mismatches fail at index time. The error shows up on `vector_init`, not on the first `vector_quantize_scan`.
+
+> Note: SQLite-Vector is one option. The same pattern works with pgvector, LanceDB, ChromaDB, or any store that takes a `number[]` per row and exposes a top-K-by-distance query.
+
+## Put it to the test
+
+1. Initialize SQLite with `sqlite3InitModule()` and `new sqlite3.oo1.DB(":memory:", "c")`. `loadModel({ modelSrc: GTE_LARGE_FP16 })` and `CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT NOT NULL, embedding BLOB NOT NULL)`.
+2. For each `samples[i]`, call `await embed({ modelId, text: samples[i].text })` and `INSERT INTO documents VALUES (?, ?, vector_as_f32(?))` with the JSON-stringified embedding.
+3. Run `SELECT vector_init('documents', 'embedding', 'type=FLOAT32,dimension=1024')` and `SELECT vector_quantize('documents', 'embedding')`.
+4. `await embed({ modelId, text: query })` for the query, then a `vector_quantize_scan` join for top-3, and console.log each result's id, distance, and text.

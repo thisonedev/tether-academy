@@ -1,0 +1,68 @@
+---
+title: Build a tiny semantic search
+sourceExample: "packages/sdk/examples/embed-multi-gpu.ts"
+platforms: ['node']
+tests:
+  - id: embeds-corpus-once
+    description: Embeds the document corpus with a single batch call
+    pattern: "embed\\s*\\(\\s*\\{[^}]*text\\s*:\\s*corpus"
+  - id: embeds-query
+    description: Embeds the query as a separate single call
+    pattern: "embed\\s*\\(\\s*\\{[^}]*text\\s*:\\s*query"
+  - id: ranks-by-cosine
+    description: Tracks the best score across corpus vectors
+    pattern: "bestScore|cosineSimilarity\\s*\\(\\s*queryEmbedding"
+  - id: prints-best-match
+    description: Prints the best matching document title
+    pattern: "console\\.log\\s*\\([^)]*(?:bestIdx|bestMatch)"
+hints:
+  - "Embed the whole corpus in one batch. Embed the query in a separate call."
+  - "Loop through the corpus, track the highest cosine similarity."
+  - "Print the document title that had the highest score. That's the answer."
+expectedOutput:
+  - "Query: How do I make a peanut butter sandwich?"
+  - "Best match: How to assemble a peanut butter and jelly sandwich (score 0.8412)"
+---
+
+Now that we can compare two vectors, we're ready to build the smallest useful search engine.
+
+A semantic search is just three steps: embed a small corpus once, embed the query separately, then loop through the corpus picking the highest score. The corpus doesn't have to be perfect. Three documents are enough to see the pattern.
+
+Embedding the whole corpus in a single batch call would look like this:
+
+```ts
+const { embedding: corpusVectors } = await embed({ modelId, text: corpus });
+```
+
+The query goes through the same `embed()` API with a single string, destructured into a one-element array. Note that the `[queryEmbedding]` array-destructure is the same shape as the corpus destructure, just with a single element:
+
+```ts
+const { embedding: [queryEmbedding] } = await embed({ modelId, text: query });
+```
+
+With the corpus and query both embedded, the loop does the work: it scores every corpus vector against the query, tracks the highest score, and remembers its index. The whole thing runs in O(N·d), N cosine calls each touching d dimensions, and that's the brute-force shape `ragSearch` generalizes to a vector index for O(log N):
+
+```ts
+let bestIdx = 0;
+let bestScore = -Infinity;
+for (let i = 0; i < corpusVectors.length; i++) {
+  const score = cosineSimilarity(queryEmbedding, corpusVectors[i]!);
+  if (score > bestScore) {
+    bestScore = score;
+    bestIdx = i;
+  }
+}
+console.log(`Query: ${query}`);
+console.log(`Best match: ${titles[bestIdx]} (score ${bestScore.toFixed(4)})`);
+```
+
+After the loop, `bestIdx` holds the position of the highest-scoring corpus vector, and `titles[bestIdx]` is the document title closest in meaning to the query.
+
+> Note: the same pattern scales to thousands of documents. The only thing that changes is where the vectors live. In memory for a few hundred, on disk for the rest. Chapter 4 shows the on-disk version.
+
+## Put it to the test
+
+1. Call `embed({ modelId, text: corpus })` to embed the corpus as a single batch.
+2. Call `embed({ modelId, text: query })` to embed the query as a separate single call.
+3. Loop through the corpus vectors, computing `cosineSimilarity(queryEmbedding, corpusVectors[i])` and tracking `bestIdx` and `bestScore`.
+4. Log the query and the best-matching title with the score formatted to 4 decimals.

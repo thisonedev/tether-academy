@@ -1,0 +1,80 @@
+---
+title: "Stream-transcribe a sliding window over a neural signal"
+sourceExample: "packages/sdk/examples/bci/bci-filesystem-streaming.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: opens-stream
+    description: 'Calls bciTranscribeStream and stores the session'
+    pattern: "bciTranscribeStream\\s*\\("
+  - id: consumes-session
+    description: 'Iterates over the session in a for-await'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+session"
+  - id: writes-chunks
+    description: 'Calls session.write(chunk) in a loop'
+    pattern: "session\\.write"
+  - id: ends-session
+    description: 'Calls session.end() and awaits the consume task'
+    pattern: "session\\.end\\s*\\(\\)"
+hints:
+  - "bciTranscribeStream({ modelId, emit: 'delta' }) opens a duplex stream. Writing neural bytes into session.write(chunk) feeds the sliding window; iterating the session reads the decoded text."
+  - "Drain the session concurrently with writing: start the consume task before the write loop, await it after session.end(). The sliding window can't decode until you give it the next chunk."
+  - "CHUNK_SIZE around 64 * 1024 bytes is the example's default. A small sleep between writes (10ms) is enough to simulate a real stream without back-pressuring the decoder."
+expectedOutput:
+  - "▸ Loading BCI model..."
+  - "▸ BCI model loaded with ID: model-7f2a"
+  - "  the first decoded segment"
+  - "  the second decoded segment"
+---
+
+The previous lesson decoded a neural file in one shot. This one feeds it chunk by chunk to simulate a live stream.
+
+`bciTranscribeStream` opens a duplex session. Writing bytes into `session.write(chunk)` feeds the sliding window, and iterating the session reads the decoded text as the window advances. The session is fully streaming on both sides: writes don't have to wait for the previous decode to finish, and the reader doesn't have to wait for a full file.
+
+Loading the BCI model is the first step. The `whisperConfig` and `bciConfig` tell the engine which day of neural data we're transcribing. The load is the same shape as the previous lesson:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: BCI_WINDOWED,
+  modelConfig: {
+    whisperConfig: { language: "en", n_threads: 4, temperature: 0.0 },
+    bciConfig: { day_idx: 1 },
+  },
+});
+```
+
+For this, `emit: "delta"` is the flag that switches the session from "emit the full transcript on every read" to "emit just the new text since the last read". The session open looks like this:
+
+```ts
+const session = await bciTranscribeStream({ modelId, emit: "delta" });
+```
+
+Let's look at the concurrent reader + writer pattern. Sequential read-then-write would deadlock, so the consume task runs as an IIFE in parallel with the write loop: IIFE consume task, writes in main flow, `await consume` after `session.end()`. Let's look at the 64KB-chunk pipeline example:
+
+```ts
+const consume = (async () => {
+  for await (const text of session) {
+    process.stdout.write(text);
+  }
+})();
+
+const data = readFileSync(neuralFilePath);
+for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
+  const chunk = data.subarray(offset, offset + CHUNK_SIZE);
+  session.write(chunk);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+session.end();
+await consume;
+
+await unloadModel({ modelId });
+```
+
+`emit: "delta"` is the mode that streams the running transcript (each iteration is the new text since the last read). The alternative mode emits the full transcript on every read.
+
+> Note: a 64KB chunk is a reasonable starting size for the example, but a real device driver usually has a buffer of its own. If your source is producing frames continuously, the write loop forwards each frame as it comes in.
+
+## Put it to the test
+
+1. Call `loadModel` with `BCI_WINDOWED` and the same `whisperConfig` + `bciConfig` as the previous lesson.
+2. Open `bciTranscribeStream({ modelId, emit: "delta" })` and start the consumer in the background.
+3. Read the file with `readFileSync`, write `CHUNK_SIZE` chunks to `session.write(chunk)` in a loop with a 10ms sleep, call `session.end()`, `await consume`, then `unloadModel`.

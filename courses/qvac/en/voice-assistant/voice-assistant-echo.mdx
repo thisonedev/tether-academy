@@ -1,0 +1,120 @@
+---
+title: "Stop the voice assistant from hearing itself"
+sourceExample: "packages/sdk/examples/voice-assistant/voice-assistant.ts"
+platforms: ['desktop']
+tests:
+  - id: has-vad-params
+    description: 'Sets vad_params in the ASR modelConfig'
+    pattern: "vad_params\\s*[:=]"
+  - id: speaks-flag
+    description: 'Tracks an isSpeaking flag through the turn'
+    pattern: "isSpeaking\\s*=\\s*true|isSpeaking\\s*=\\s*false|let\\s+isSpeaking|const\\s+isSpeaking"
+  - id: meaningful-filter
+    description: 'Filters transcripts through a meaningful-transcript check'
+    pattern: "isMeaningfulTranscript|userText\\.length\\s*[<>=]"
+  - id: cooldown
+    description: 'Adds a post-playback cooldown before listening resumes'
+    pattern: "POST_PLAYBACK_COOLDOWN_MS|sleep\\s*\\(\\s*\\d"
+hints:
+  - "Set vad_params in the WHISPER_TINY modelConfig: threshold 0.6, min_speech_duration_ms 300, min_silence_duration_ms 700, max_speech_duration_s 15, speech_pad_ms 200."
+  - "Wrap the LLM+TTS block in a try/finally that flips isSpeaking = true at the start and false at the end. Anything that arrives from the mic while isSpeaking is true is dropped."
+  - "After the TTS finishes, sleep(POST_PLAYBACK_COOLDOWN_MS) so Whisper doesn't transcribe the speaker reverb as the tail of our own voice."
+  - "isMeaningfulTranscript(text) returns false for empty strings, for '[No speech detected]', and for transcripts with fewer than MIN_UTTERANCE_CHARS letters. Whisper emits short phantom words from near-silence (single tokens like 'you' or 'Thanks.'); dropping them is what breaks the feedback loop."
+expectedOutput:
+  - "▸ You: hello there"
+  - "▸ Assistant:"
+  - "Hi! How can I help?"
+  - "▸ Listening..."
+---
+
+The voice assistant from the previous lesson works for a turn or two, then the feedback loop takes over: the TTS output gets picked up by the mic, Whisper transcribes it as a new user turn, and the LLM answers it. Each turn triggers the next with no real user input.
+
+Four things drive that loop. The default VAD commits segments too eagerly for long-running use. The mic keeps recording through TTS, so the TTS output comes back as a new user turn. VAD occasionally commits phantom transcripts from near-silence, single tokens like "you" or "Thanks." with no real speech behind them. And the TTS audio rings through the speaker into the mic for a moment after the model finishes, getting transcribed as the tail of the user's next turn.
+
+The defaults are tuned for one-shot dictation, not a loop, so the first fix is to override `vad_params` in the ASR `modelConfig`:
+
+```ts
+const vad_params = {
+  threshold: 0.6,
+  min_speech_duration_ms: 300,
+  min_silence_duration_ms: 700,
+  max_speech_duration_s: 15.0,
+  speech_pad_ms: 200,
+};
+```
+
+`min_silence_duration_ms: 700` is the value that matters. VAD uses it to decide when the user stopped talking, so a longer quiet window keeps the TTS tail ringing through the speaker from getting folded into the user's turn.
+
+VAD handles the first cause. The other three happen in the loop body, so the fix is three helpers defined right before the main loop:
+- `isSpeaking` flag — the loop checks it at the top of each iteration to skip frames while TTS plays
+- `isMeaningfulTranscript` filter that drops the empty and phantom transcripts before they reach the LLM
+- `sleep(ms)` helper — the main loop calls it to wait for the post-playback cooldown.
+
+Here's how that looks in code:
+
+```ts
+const POST_PLAYBACK_COOLDOWN_MS = 300;
+const MIN_UTTERANCE_CHARS = 3;
+
+function isMeaningfulTranscript(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed.includes("[No speech detected]")) return false;
+  if (/^\[[^\]]+\]$/.test(trimmed)) return false;
+  const letters = trimmed.replace(/[^\p{L}\p{N}]/gu, "");
+  return letters.length >= MIN_UTTERANCE_CHARS;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let isSpeaking = false;
+```
+
+Wired into the loop from the previous lesson: `isSpeaking` and `isMeaningfulTranscript` `continue` early at the top of each iteration, and `sleep(POST_PLAYBACK_COOLDOWN_MS)` sits after `ttsResult.buffer` resolves to let the TTS tail decay. The `try/finally` around the LLM+TTS block flips `isSpeaking` back to false even if the LLM throws, so a crashed turn doesn't leave the mic muted:
+
+```ts
+for await (const rawText of transcribeStream({ modelId: asrModelId })) {
+  if (isSpeaking) continue;
+  if (!isMeaningfulTranscript(rawText)) continue;
+  const userText = rawText.trim();
+
+  history.push({ role: "user", content: userText });
+
+  isSpeaking = true;
+  try {
+    const llmResult = completion({ modelId: llmModelId, history, stream: true });
+    let assistantText = "";
+    for await (const token of llmResult.tokenStream) {
+      process.stdout.write(token);
+      assistantText += token;
+    }
+    history.push({ role: "assistant", content: assistantText });
+
+    const spoken = assistantText.trim();
+    if (spoken.length > 0) {
+      const ttsResult = textToSpeech({
+        modelId: ttsModelId,
+        text: spoken,
+        inputType: "text",
+        stream: false,
+      });
+      await ttsResult.buffer;
+      await sleep(POST_PLAYBACK_COOLDOWN_MS);
+    }
+  } finally {
+    isSpeaking = false;
+  }
+}
+```
+
+Two tuning knobs to revisit if the loop still misbehaves. If VAD commits segments while the user is still talking, raise `min_silence_duration_ms`. If VAD commits segments out of near-silence, raise `threshold` to 0.7.
+
+> Note: the `isSpeaking` flag drops the transcripts after Whisper processes them, but the mic is still recording the whole time. Pausing the ffmpeg pipe would let the buffer pile up, so we keep the pipe draining and drop the transcripts in software. The trade-off is a little extra VAD work on audio we'll throw away, in exchange for never stalling on a full buffer.
+
+## Put it to the test
+
+1. Add `vad_params` (threshold 0.6, min_speech_duration_ms 300, min_silence_duration_ms 700, max_speech_duration_s 15, speech_pad_ms 200) to the ASR `modelConfig`.
+2. Define `POST_PLAYBACK_COOLDOWN_MS = 300`, `MIN_UTTERANCE_CHARS = 3`, `isMeaningfulTranscript(text)`, `sleep(ms)`, and `let isSpeaking = false`.
+3. In the `for await (const rawText of transcribeStream(...))` loop, skip transcripts while `isSpeaking`, skip non-meaningful ones, push user turn into `history`, wrap completion + textToSpeech in a `try/finally` that flips `isSpeaking = true` at the start and `false` at the end, then `await sleep(POST_PLAYBACK_COOLDOWN_MS)` after `await ttsResult.buffer`.

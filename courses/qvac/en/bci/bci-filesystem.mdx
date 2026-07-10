@@ -1,0 +1,83 @@
+---
+title: "Batch decode a neural signal file"
+sourceExample: "packages/sdk/examples/bci/bci-filesystem.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: loads-bci
+    description: 'Calls loadModel with BCI_WINDOWED and a bciConfig.day_idx'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*BCI_WINDOWED[\\s\\S]*?day_idx"
+  - id: calls-bci-transcribe
+    description: 'Calls bciTranscribe({ modelId, neuralData, metadata: true })'
+    pattern: "bciTranscribe\\s*\\(\\s*\\{[^}]*modelId[^}]*neuralData"
+  - id: iterates-segments
+    description: 'Loops over the segments and logs each with timestamps'
+    pattern: "for\\s*\\(\\s*const\\s+\\w+\\s+of\\s+segments"
+hints:
+  - "loadModel takes { modelSrc: BCI_WINDOWED, modelConfig: { whisperConfig: {...}, bciConfig: { day_idx } } }."
+  - "bciTranscribe({ modelId, neuralData: <path>, metadata: true }) returns an array of segments, each with startMs, endMs, id, append, and text."
+  - "day_idx selects the day-specific projection matrices. Set it to match the recording session your neural file came from. Day 1 is the example default."
+expectedOutput:
+  - "▸ Loading BCI model..."
+  - "▸ BCI model loaded with ID: model-7f2a"
+  - "▸ Transcribing neural signal..."
+  - "  [0.00s → 2.10s] (id=0, append=false) the first decoded segment"
+  - "  [2.10s → 4.40s] (id=1, append=false) the second decoded segment"
+---
+
+This lesson looks at a much more unusual capability, the brain-computer interface.
+
+BCI models interpret neural signals into something the rest of the SDK can consume. The shape is the same as every other capability: load a model, hand it input, read back the structured result. The inputs and outputs are unusual, but the workflow isn't.
+
+The model that drives this chapter is `BCI_WINDOWED`. It bundles a Whisper-style decoder with a brain-computer-interface projection layer that turns a raw neural-signal `.bin` file into the same audio-token space Whisper expects. The output is the same kind of timed transcript you'd get from a microphone recording.
+
+The BCI model has TWO configs in one `modelConfig`: `whisperConfig` for the decoder, `bciConfig` for the neural data. The two-config block would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: BCI_WINDOWED,
+  modelConfig: {
+    whisperConfig: {
+      language: "en",
+      n_threads: 4,
+      temperature: 0.0,
+    },
+    bciConfig: {
+      day_idx: 1,
+    },
+  },
+});
+```
+
+`bciTranscribe` returns an array of segments, each with timestamp, id, `append` flag, and decoded text. You would call it like so:
+
+```ts
+const segments = await bciTranscribe({
+  modelId,
+  neuralData: neuralFilePath,
+  metadata: true,
+});
+```
+
+Each segment carries a timestamp and a metadata block. We iterate and log the text, the start/end in seconds, and the confidence:
+
+```ts
+for (const segment of segments) {
+  const start = (segment.startMs / 1000).toFixed(2);
+  const end = (segment.endMs / 1000).toFixed(2);
+  console.log(
+    `  [${start}s → ${end}s] (id=${segment.id}, append=${segment.append}) ${segment.text}`,
+  );
+}
+```
+
+The `bciConfig.day_idx` field picks which day-specific projection matrices the model uses. Set it to match the recording session your neural file came from. Day 1 is the example default.
+
+The `append` field on each segment tells you whether the new text continues the previous segment or starts a new one. A live UI uses it to decide between overwriting the last caption and appending.
+
+> Note: the Whisper half of the BCI pipeline takes the same `whisperConfig` knobs the standalone Whisper model does (language, n_threads, temperature). For batch decode, `n_threads: 4` and `temperature: 0.0` are sensible defaults.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelSrc: BCI_WINDOWED`, a `whisperConfig` block (`language: "en"`, `n_threads: 4`, `temperature: 0.0`), and `bciConfig: { day_idx: 1 }`.
+2. Call `await bciTranscribe({ modelId, neuralData: neuralFilePath, metadata: true })`.
+3. Iterate the segments with a `for` loop and console.log each with its `[start → end]` timestamp and `id` and `append` fields.

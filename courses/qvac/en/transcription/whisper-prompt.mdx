@@ -1,0 +1,44 @@
+---
+title: "Transcribe an audio file with a Whisper prompt"
+sourceExample: "packages/sdk/examples/transcription/whispercpp-prompt.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: passes-prompt
+    description: Passes a prompt to transcribe()
+    pattern: "transcribe\\s*\\(\\s*\\{[\\s\\S]*?prompt\\s*:"
+  - id: awaits-text
+    description: Awaits the transcribe result as a string
+    pattern: "await\\s+transcribe|transcribe\\s*\\([\\s\\S]*?\\)\\s*;"
+hints:
+  - "transcribe accepts a `prompt` field on top of modelId and audioChunk. The prompt is a short string, not a system message."
+  - "Use the prompt for names, formatting, or domain vocabulary: 'Dr. Patel', 'QVAC SDK', 'machine learning'. Whisper biases the decoder toward the words you supply."
+  - "Keep the prompt short. A 20-word prompt steers well; a 200-word prompt dilutes the bias."
+expectedOutput:
+  - "▸ Transcription result:"
+  - "The quick brown fox jumps over the clean windowsill."
+---
+
+Now that we can transcribe a file, we're going to steer the decoder with a prompt.
+
+Whisper takes a short prompt string before it commits to a transcription. The prompt isn't a system instruction. It's a list of words and phrases the decoder should prefer. Names, jargon, and formatting you put in the prompt appear correctly in the output, even when the audio mumbles them.
+
+Whisper's decoder bias comes from the `prompt` option. You would call it like so:
+
+```ts
+const text = await transcribe({
+  modelId,
+  audioChunk: "./examples/audio/sample-16khz.wav",
+  prompt: "This is a test recording with clear speech and proper punctuation.",
+});
+
+console.log("▸ Transcription result:");
+console.log(text);
+```
+
+`prompt` is a string. Whisper tokenizes it and conditions the first few decoder steps on it. Any word in the prompt gets a head start. Any word that conflicts with the audio gets overridden.
+
+> Note: the prompt doesn't change the model's language. Set `modelConfig.language: "en"` (or whatever target language you need) at load time. The prompt only steers vocabulary.
+
+## Put it to the test
+
+1. Call `transcribe({ modelId, audioChunk: <path>, prompt: "..." })`, await the result, and log `"▸ Transcription result:"` followed by the text.

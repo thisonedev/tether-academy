@@ -1,0 +1,45 @@
+---
+title: Load a multimodal model and projection
+sourceExample: "packages/sdk/examples/llamacpp-multimodal.ts"
+platforms: ['node']
+tests:
+  - id: passes-projection
+    description: Passes the projection model via modelConfig.projectionModelSrc
+    pattern: "projectionModelSrc\\s*:"
+  - id: stores-id
+    description: Stores the loaded model in a multimodalId variable
+    pattern: "multimodalId\\s*=\\s*await\\s+loadModel"
+hints:
+  - "Multimodal needs two GGUF files: the LLM (like SMOLVLM2_500M_MULTIMODAL_Q8_0) and its matching mmproj projector."
+  - "Both come from @qvac/sdk as named constants. Pass the projector via modelConfig.projectionModelSrc."
+  - "The pair has to match. SmolVLM2 pairs with mmproj-smolvlm2. You can't mix an LLM constant with a different model's projector."
+expectedOutput:
+  - "multimodalId: model-7f2a"
+---
+
+We're starting a new chapter on multimodal models, and we're going to load a model that takes images alongside text.
+
+Text-only LLMs load from one file. Multimodal LLMs need two: the language model itself, and a small "projection" model that turns an image into the same kind of vector space the language model operates in.
+
+`loadModel()` accepts both at once. The main file goes in `modelSrc`. The projector goes in `modelConfig.projectionModelSrc`.
+
+Multimodal = LLM in `modelSrc` + mmproj projector in `projectionModelSrc`. Both files must be from the same model family. You would load them like so:
+
+```ts
+const multimodalId = await loadModel({
+  modelSrc: SMOLVLM2_500M_MULTIMODAL_Q8_0,
+  modelConfig: {
+    projectionModelSrc: MMPROJ_SMOLVLM2_500M_MULTIMODAL_Q8_0,
+  },
+});
+console.log("multimodalId:", multimodalId);
+```
+
+`multimodalId` looks the same as every other `modelId`. The difference is hidden in how `completion()` will treat `attachments` on history messages, which we'll see in the next two lessons.
+
+> Note: the two constants have to come from the same model family. `SMOLVLM2` pairs with `MMPROJ_SMOLVLM2`. Mixing an LLM constant with the wrong projector (or a non-multimodal LLM with a projector) produces nonsense output.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelSrc` set to the LLM constant and `modelConfig.projectionModelSrc` set to the matching mmproj.
+2. Store the result in a variable called `multimodalId` and log it.

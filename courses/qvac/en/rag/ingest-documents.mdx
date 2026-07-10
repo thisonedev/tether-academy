@@ -1,0 +1,49 @@
+---
+title: "Ingest documents into a workspace"
+sourceExample: "packages/sdk/examples/rag/rag-hyperdb/ingest.ts"
+platforms: ['node']
+tests:
+  - id: ingests-with-modelid
+    description: 'Calls ragIngest with modelId'
+    pattern: "ragIngest\\s*\\(\\s*\\{[^}]*modelId"
+  - id: names-workspace
+    description: 'Names a workspace string'
+    pattern: "workspace\\s*=\\s*[`'\"][^`'\"]+[`'\"]"
+  - id: sets-chunk-false
+    description: 'Sets chunk: false for short docs'
+    pattern: "ragIngest\\s*\\(\\s*\\{[\\s\\S]*?chunk\\s*:\\s*false"
+hints:
+  - "ragIngest is a top-level export, import it alongside loadModel and GTE_LARGE_FP16."
+  - 'The workspace is a string you pick: "my-docs", "tech". It is the namespace your vectors live under.'
+  - "Pass chunk: false for short documents so the SDK does not try to split them."
+expectedOutput:
+  - "Ingested 3 documents"
+---
+
+Now that we've built the smallest useful search engine in chapter 3, we're going to scale it up to a workspace that lives on disk.
+
+Real search needs persistence: we build the index once, query it many times. The chapter 3 search kept everything in memory; `ragIngest` writes the vectors to a folder under the SDK's data directory and reads them back on the next call.
+
+`ragIngest({ modelId, documents, workspace, chunk: false })` runs the whole pipeline in one call: chunk (skip, in this lesson), embed, save.
+
+Without chunking, each document becomes one entry. This is especially useful for long documents. You would call it like so:
+
+```ts
+const result = await ragIngest({
+  modelId,
+  workspace,
+  documents: samples,
+  chunk: false,
+});
+console.log(`Ingested ${result.processed.length} documents`);
+console.log("First entry:", result.processed[0]);
+```
+
+`chunk: false` tells the SDK to skip splitting. The next lesson uses chunking for longer text.
+
+> Note: re-running `ragIngest` against the same workspace doesn't double-ingest. The SDK identifies already-embedded documents and skips them. The first run takes the longest; the second is faster.
+
+## Put it to the test
+
+1. Call `ragIngest({ modelId, workspace, documents: samples, chunk: false })`.
+2. Console.log `result.processed.length` and inspect the first entry to confirm chunking was off.

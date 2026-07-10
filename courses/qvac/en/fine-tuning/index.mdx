@@ -1,0 +1,19 @@
+---
+title: Fine-tuning
+description: Four lessons that train a LoRA adapter on top of an LLM and stack it back on at inference time.
+---
+
+Nice, the whole RAG flow works.
+
+Now that we can search a workspace, we're going to train our own adapter.
+
+Fine-tuning takes a base model and produces a small LoRA (low-rank adaptation) file alongside it. The adapter is a small file with the trained weight deltas; the base model stays untouched. At inference time we hand the adapter back to `loadModel()` and the resulting completions reflect the trained behavior.
+
+[Start Lesson 1 →](/courses/qvac/en/fine-tuning/check-eligibility)
+
+### All lessons in this chapter
+
+1. [Check if a model is fine-tunable](/courses/qvac/en/fine-tuning/check-eligibility)
+2. [Run a fine-tune](/courses/qvac/en/fine-tuning/run-finetune)
+3. [Pause, resume, and cancel a fine-tune](/courses/qvac/en/fine-tuning/pause-resume-cancel)
+4. [Use the fine-tuned adapter at inference time](/courses/qvac/en/fine-tuning/use-adapter)

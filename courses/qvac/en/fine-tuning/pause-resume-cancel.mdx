@@ -1,0 +1,62 @@
+---
+title: "Pause, resume, and cancel a fine-tune"
+sourceExample: "packages/sdk/examples/finetune/llamacpp-finetune.ts"
+platforms: ['node']
+tests:
+  - id: pauses-with-operation
+    description: 'Calls finetune({ operation: "pause", modelId })'
+    pattern: "finetune\\s*\\(\\s*\\{[^}]*operation\\s*:\\s*[`\"']pause[`\"']"
+  - id: resumes-with-operation
+    description: 'Calls finetune({ ..., operation: "resume" })'
+    pattern: "finetune\\s*\\(\\s*\\{[^}]*operation\\s*:\\s*[`\"']resume[`\"']"
+  - id: cancels-with-operation
+    description: 'Calls finetune({ operation: "cancel", modelId })'
+    pattern: "finetune\\s*\\(\\s*\\{[^}]*operation\\s*:\\s*[`\"']cancel[`\"']"
+hints:
+  - "Pause mid-run: finetune({ operation: 'pause', modelId }). Returns a promise that resolves when the trainer hits a checkpoint."
+  - "Resume from saved checkpoint: call finetune({ ...originalOptions, operation: 'resume' }). A new handle is returned."
+  - "Cancel: finetune({ operation: 'cancel', modelId }) returns { status: 'CANCELLED' } immediately. Use it to free GPU memory when training goes off the rails."
+expectedOutput:
+  - "▸ Pausing..."
+  - "▸ Resumed status: COMPLETED"
+  - "▸ Cancelled status: CANCELLED"
+---
+
+Now that we've started a fine-tune, we're going to see how to control it.
+
+A fine-tune takes minutes to hours. We don't want to wait around to find out the loss is exploding. The QVAC SDK exposes a small operation surface on `finetune()` itself:
+
+- `pause` saves the current state, stops the trainer, and resolves a promise we can await
+- `resume` picks up from the latest checkpoint, the same call shape as the original `finetune()`, just with `operation: "resume"`
+- `cancel` is the hard kill: it frees GPU memory immediately and resolves with `{ status: "CANCELLED" }`.
+
+Pausing is the soft stop. The await blocks until the trainer hits a checkpoint and acknowledges, so we know the saved state is on disk. You would call it like so:
+
+```ts
+// Pause: returns when the trainer hits a checkpoint.
+await finetune({ operation: "pause", modelId });
+```
+
+Resuming: same `finetune()` call shape with `operation: "resume"`, picks up from the latest checkpoint:
+
+```ts
+// Resume: new handle, same options.
+const resumedHandle = finetune({ ...baseOptions, operation: "resume" });
+```
+
+Cancelling frees GPU memory immediately, resolves with `{ status: "CANCELLED" }`. Use when the loss is exploding. Here's how you would call it:
+
+```ts
+// Cancel: hard kill.
+await finetune({ operation: "cancel", modelId });
+```
+
+Pause and resume both keep our saved checkpoints under `outputParametersDir`. Cancel drops the in-flight run but leaves any completed checkpoints intact, so we don't lose what we've already trained.
+
+> Note: pause and cancel are both fire-and-forget at the SDK level. We `await` them to confirm the operation completed, but the returned promise resolves as soon as the trainer acknowledges the request.
+
+## Put it to the test
+
+1. Inside the progress loop, call `finetune({ operation: "pause", modelId })` after a few ticks.
+2. After it resolves, call `finetune({ ...baseOptions, operation: "resume" })` and await the new handle.
+3. On a separate path (or after a few more ticks), call `finetune({ operation: "cancel", modelId })` and log `result.status`.

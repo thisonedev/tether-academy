@@ -1,0 +1,56 @@
+---
+title: Extract text from an image
+sourceExample: "packages/sdk/examples/ocr-fasttext.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: calls-ocr
+    description: 'Calls ocr({ modelId, image })'
+    pattern: "ocr\\s*\\(\\s*\\{[^}]*modelId[^}]*image"
+  - id: iterates-blocks
+    description: Iterates over the OCR blocks
+    pattern: "for\\s*\\(\\s*const\\s+\\w+\\s+of\\s+\\w+|\\.forEach\\s*\\(\\s*\\(?\\s*\\w+\\s*=>"
+hints:
+  - "OCR_LATIN is the Latin-script OCR model in the SDK. Import it alongside loadModel and ocr."
+  - "ocr({ modelId, image: <path>, options: { paragraph: false } }) returns { blocks }, a Promise of an array of text blocks."
+  - "Each block has text, bbox (bounding box coordinates), and confidence. Use bbox to draw a highlight overlay."
+expectedOutput:
+  - "Hello, world!"
+  - "BBox: [12, 34, 250, 56]"
+  - "Confidence: 0.9623"
+---
+
+We're starting a new chapter on OCR, and we're going to extract text from an image.
+
+OCR (optical character recognition) extracts printed text from images. The `OCR_LATIN` model in the SDK handles any Latin-script language. The result is an array of text blocks, each with the recognized string, a bounding box on the image, and a confidence score.
+
+`paragraph: false` asks for one block per visual line, useful for a UI that highlights one line at a time. With `true`, the engine merges adjacent lines into paragraphs. You would call it like so:
+
+```ts
+const { blocks } = ocr({
+  modelId,
+  image: "./examples/image/basic_test.bmp",
+  options: { paragraph: false },
+});
+const result = await blocks;
+```
+
+Each block in `result` carries `text`, a `bbox` (the rectangle in pixel coordinates, for drawing a highlight overlay), and a `confidence` score:
+
+```ts
+for (const block of result) {
+  console.log(block.text);
+  if (block.bbox) console.log(`BBox: [${block.bbox.join(", ")}]`);
+  if (block.confidence !== undefined) {
+    console.log(`Confidence: ${block.confidence.toFixed(4)}`);
+  }
+}
+```
+
+`paragraph: false` returns one block per visual line. Set it to `true` and the SDK groups lines into paragraphs based on spacing.
+
+> Note: the `bbox` field is in pixel coordinates relative to the input image. We use it to draw highlight overlays or to extract individual words for downstream processing.
+
+## Put it to the test
+
+1. Call `ocr({ modelId, image: <path>, options: { paragraph: false } })` and `await blocks`.
+2. Loop through the blocks and log the text, bbox, and confidence.

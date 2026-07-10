@@ -1,0 +1,63 @@
+---
+title: "Generate image with FLUX.2-klein split layout"
+sourceExample: "packages/sdk/examples/diffusion-flux2-klein.ts"
+platforms: ['node']
+tests:
+  - id: passes-llm-model-src
+    description: Passes llmModelSrc inside modelConfig
+    pattern: "llmModelSrc\\s*:"
+  - id: passes-vae-model-src
+    description: Passes vaeModelSrc inside modelConfig
+    pattern: "vaeModelSrc\\s*:"
+  - id: loads-with-sdcpp
+    description: Loads with modelType sdcpp-generation
+    pattern: "sdcpp-generation"
+hints:
+  - "FLUX.2-klein is a split-layout model. It needs three files: the diffusion model, the LLM text encoder, and the VAE."
+  - "The diffusion model goes in the top-level modelSrc. The LLM and the VAE go in modelConfig.llmModelSrc and modelConfig.vaeModelSrc."
+  - "The SDK only downloads files that aren't already on disk. The second run with the same constants skips the download and goes straight to inference."
+expectedOutput:
+  - "Generated 1 image"
+---
+
+We've used a single model file so far. FLUX.2-klein needs three: a diffusion model, a text encoder, and a VAE.
+
+The diffusion model is the inference engine. It iteratively refines a noise field step by step until the result matches your prompt. The text encoder produces the tokens the engine reads. The VAE encodes the working state in latent space and decodes the final image back to pixels.
+
+The three files are independent. The SDK downloads each one on its own schedule, then wires them together at load time.
+
+FLUX.2-klein split-layout is three files in one `loadModel` call: diffusion model, LLM encoder, VAE. The pipeline: LLM → tokens → diffusion → latent → VAE → pixels. The combined load would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: FLUX_2_KLEIN_4B_Q4_0,
+  modelType: "sdcpp-generation",
+  modelConfig: {
+    llmModelSrc: QWEN3_4B_Q4_K_M,
+    vaeModelSrc: FLUX_2_KLEIN_4B_VAE,
+  },
+});
+```
+
+From the caller's perspective, split-layout vs single-file is invisible. The `outputs` array is the same shape as for a single-file model: a `Promise<Uint8Array[]>` of PNG bytes:
+
+```ts
+const result = diffusion({ modelId, prompt: "a quiet harbor at dawn" });
+const outputs = await result.outputs;
+```
+
+`outputs[0]` is the first PNG, `fs.writeFileSync` writes raw bytes (no header needed), and an empty array means the call failed silently. Here's how an example would look like:
+
+```ts
+const first = outputs[0];
+if (first) fs.writeFileSync("harbor.png", first);
+console.log(`Generated ${outputs.length} image`);
+```
+
+> Note: the SDK only downloads the files that aren't already on disk. The second run with the same constants skips the download and goes straight to inference.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelType: "sdcpp-generation"`, `modelSrc: FLUX_2_KLEIN_4B_Q4_0`, and a `modelConfig` block holding the LLM encoder and VAE.
+2. Call `diffusion({ modelId, prompt })` and `await result.outputs`.
+3. Write `outputs[0]` to a PNG and log the image count.

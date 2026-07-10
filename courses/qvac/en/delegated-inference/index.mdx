@@ -1,0 +1,15 @@
+---
+title: Delegated inference
+description: Delegate inference to a peer and consume the result.
+---
+
+Now that we've seen how models download over P2P, we're going to look at the other side of the same network.
+
+Delegated inference sends a completion request to a peer and reads back the response, instead of running the model locally. Useful when the requester's hardware is too small for the model, or when the data needs to stay on the closer-to-source peer. The two halves of the flow are a long-running provider and a short-lived consumer.
+
+[Start Lesson 1 →](/courses/qvac/en/delegated-inference/delegated-provider)
+
+### All lessons in this chapter
+
+1. [Run a delegated-inference provider](/courses/qvac/en/delegated-inference/delegated-provider)
+2. [Connect a delegated-inference consumer](/courses/qvac/en/delegated-inference/delegated-consumer)

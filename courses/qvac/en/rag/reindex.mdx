@@ -1,0 +1,40 @@
+---
+title: "Reindex a RAG workspace after many writes"
+sourceExample: "packages/sdk/examples/rag/rag-hyperdb/workspaces.ts"
+platforms: ['node']
+tests:
+  - id: calls-reindex
+    description: 'Calls ragReindex with workspace and modelId'
+    pattern: "ragReindex\\s*\\(\\s*\\{[^}]*workspace[^}]*\\}|ragReindex\\s*\\(\\s*\\{[^}]*modelId[^}]*\\}"
+  - id: waits-for-result
+    description: 'Awaits the reindex result'
+    pattern: "await\\s+ragReindex"
+hints:
+  - "ragReindex takes { workspace, modelId }. It processes the stored text in the workspace and re-embeds everything."
+  - "Use it after many writes (hundreds of deletes and re-ingests) when scores feel off."
+  - "The reindex is idempotent, running it twice in a row is safe, the second run is a no-op."
+expectedOutput:
+  - "▸ Reindexing recipes workspace..."
+  - "▸ Reindex completed"
+---
+
+After enough `ragDeleteEmbeddings` and re-ingest cycles, scores can drift. The index no longer reflects the source text. `ragReindex({ workspace, modelId })` processes the stored text for that workspace and regenerates every embedding from scratch.
+
+The reindex is idempotent: running it twice in a row is safe, the second run finds nothing to do.
+
+Now we use it. `ragReindex({ workspace, modelId })` returns `{ reindexed, details: { reason } }`, where `reindexed: true` means anything was rebuilt and `false` carries a `reason`. The call is one line:
+
+```ts
+console.log(`▸ Reindexing ${workspace} workspace...`);
+const result = await ragReindex({ workspace, modelId });
+console.log(`▸ Reindex ${result.reindexed ? "completed" : "returned false"}`);
+if (!result.reindexed) {
+  console.log("Reason:", result.details?.reason ?? "unknown");
+}
+```
+
+> Note: a reindex on a large workspace takes roughly the same time as the original ingest. Plan to run it during a quiet window or as a one-shot maintenance task.
+
+## Put it to the test
+
+1. Call `await ragReindex({ workspace, modelId })` and console.log `result.reindexed` plus the reason from `result.details?.reason` when it's `false`.

@@ -1,0 +1,22 @@
+---
+title: RAG
+description: Nine lessons that wire the embedding pipeline into a persistent workspace, then search, reindex, list, save, delete, drop, or hand the vectors to an external vector DB.
+---
+
+Now that we can do an in-memory search, we're going to add persistence.
+
+The tiny search engine from chapter 3 lived entirely in memory, and the corpus was rebuilt every run. RAG (Retrieval-Augmented Generation) gives us a workspace: a folder on disk where vectors are stored between runs, indexed by name, and ready to query. The `rag*` family covers the full lifecycle: ingest, search, chunk, reindex, list, save pre-computed vectors, delete individual entries, drop a whole workspace. When the built-in store isn't enough, the same `embed()` call feeds an external vector DB.
+
+[Start Lesson 1 →](/courses/qvac/en/rag/ingest-documents)
+
+### All lessons in this chapter
+
+1. [Ingest documents into a workspace](/courses/qvac/en/rag/ingest-documents)
+2. [Search a RAG workspace](/courses/qvac/en/rag/search-workspace)
+3. [Chunk documents for RAG](/courses/qvac/en/rag/chunk-documents)
+4. [Reindex a RAG workspace after many writes](/courses/qvac/en/rag/reindex)
+5. [List and close workspaces](/courses/qvac/en/rag/list-and-close)
+6. [Save pre-computed embeddings to a RAG workspace](/courses/qvac/en/rag/save-embeddings)
+7. [Delete documents from a RAG workspace](/courses/qvac/en/rag/delete-embeddings)
+8. [Delete a RAG workspace and its data](/courses/qvac/en/rag/delete-workspace)
+9. [Build RAG with an external vector DB](/courses/qvac/en/rag/external-vector-db)

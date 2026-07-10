@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+references
+db
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# fumadocs-mdx generated
+.source/
+
+# misc
+.DS_Store
+*.pem
+.env
+.env*.local
+
+# build logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# typescript
+*.tsbuildinfo
+
+# biome
+.cache/

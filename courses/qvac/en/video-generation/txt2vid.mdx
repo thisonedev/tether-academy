@@ -1,0 +1,78 @@
+---
+title: "Build a video from text"
+sourceExample: "packages/sdk/examples/diffusion-txt2vid.ts"
+platforms: ['node']
+tests:
+  - id: calls-video
+    description: 'Calls video() with mode txt2vid'
+    pattern: "video\\s*\\(\\s*\\{[^}]*mode\\s*:\\s*[`'\"]txt2vid[`'\"]"
+  - id: passes-frames
+    description: 'Sets video_frames option'
+    pattern: "video_frames\\s*:\\s*\\d+"
+  - id: passes-fps
+    description: 'Sets fps option'
+    pattern: "fps\\s*:\\s*\\d+"
+  - id: writes-avi
+    description: 'Awaits outputs and writes an .avi file'
+    pattern: "writeFileSync\\s*\\([^)]*\\.avi|outputs\\[0\\]!"
+hints:
+  - "video({ mode: 'txt2vid', prompt, video_frames, fps }) is the basic call. Same result.outputs Promise of Uint8Array of AVI bytes."
+  - "video_frames must satisfy 4*k + 1, so 17, 33, 49, 65, 81 are valid. Going beyond 81 can degrade quality on smaller models."
+  - "At 16 fps, 17 frames is about 1.06 s, 33 frames is about 2.06 s. Pick short and refine later."
+expectedOutput:
+  - "Generated 1 video"
+---
+
+Now that we have a video model in memory, let's make our first clip.
+
+`video()` returns the same return type as `diffusion()`: `outputs` is a `Promise<Uint8Array[]>`, and outputs is `AVI` bytes instead of `PNG`. We save it to disk with the same `fs.writeFileSync` pattern.
+
+Frame count and framerate together determine video length. `video_frames: 17, fps: 16` is roughly one second of video. We bump `video_frames` and we get longer clips at proportionally higher inference cost.
+
+Wan 2.1 T2V is three files: T5-XXL (text encoder), VAE (decoder), diffusion model. The `loadModel()` call mirrors I2V's, but T5-XXL replaces the vision tower:
+
+```ts
+const videoId = await loadModel({
+  modelSrc: WAN2_1_T2V_1_3B_FP16,
+  modelType: "sdcpp-generation",
+  modelConfig: {
+    mode: "video",
+    t5XxlModelSrc: UMT5_XXL_FP16,
+    vaeModelSrc: WAN_2_1_COMFYUI_REPACKAGED_VAE,
+  },
+});
+```
+
+The txt2vid `video({ ... })` matches img2vid's, with `mode: "txt2vid"` and no `init_image`:
+
+```ts
+const result = video({
+  modelId: videoId,
+  mode: "txt2vid",
+  prompt: "a colorful bird flapping its wings",
+  width: 480,
+  height: 832,
+  video_frames: 17,
+  fps: 16,
+});
+```
+
+Once `await result.outputs` resolves, write `outputs[0]` to a `.avi` file with `fs.writeFileSync`, the extension picks the container. Note that the `if (!firstClip)` guard throws if the result is empty as follows:
+
+```ts
+const outputs = await result.outputs;
+const firstClip = outputs[0];
+if (!firstClip) throw new Error("No video returned from video()");
+fs.writeFileSync("bird.avi", firstClip);
+console.log(`Generated ${outputs.length} video`);
+```
+
+Open the AVI in any player. That's our one-second text-prompted clip. The next lesson animates a still image instead of starting from text.
+
+> Note: `width` and `height` on video calls are smaller than image calls. 480×832 keeps the per-frame memory budget reasonable on a 1.3B video model.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelSrc: WAN2_1_T2V_1_3B_FP16`, `modelType: "sdcpp-generation"`, and `modelConfig.mode: "video"` (plus `t5XxlModelSrc` and `vaeModelSrc`).
+2. Call `video({ modelId, mode: "txt2vid", prompt, width, height, video_frames: 17, fps: 16 })` and `await result.outputs`.
+3. Write `outputs[0]` to a `.avi` file and console.log the count.

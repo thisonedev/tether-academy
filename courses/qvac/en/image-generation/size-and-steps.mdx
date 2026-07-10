@@ -1,0 +1,61 @@
+---
+title: "Set image width, height, and steps"
+sourceExample: "packages/sdk/examples/diffusion-flux2-klein.ts"
+platforms: ['node']
+tests:
+  - id: passes-width
+    description: Passes a width number
+    pattern: "width\\s*:\\s*\\d+"
+  - id: passes-height
+    description: Passes a height number
+    pattern: "height\\s*:\\s*\\d+"
+  - id: passes-steps
+    description: Passes a steps number
+    pattern: "steps\\s*:\\s*\\d+"
+  - id: passes-seed
+    description: 'Optionally pins the seed for reproducibility'
+    pattern: "seed\\s*:\\s*-?\\d+"
+hints:
+  - "All three are top-level options on the same diffusion() call. Width, height, then steps."
+  - "Pick width and height that are multiples of 16. The SDK clips or rejects anything else."
+  - "More steps = slower but more refined. 20-30 is a good range for SD/SDXL; Flux can go lower. The seed defaults to -1 (random); pin it if you want reproducibility."
+expectedOutput:
+  - "Generated 1 image"
+---
+
+The previous lesson made our first image. This one tunes the size and the step count.
+
+`diffusion()` takes a handful of options besides `prompt`. The three you'll reach for first are `width`, `height`, and `steps`. Width and height control the output resolution in pixels. `steps` controls how many denoising iterations the model runs. More steps means more refine work, and eventually the image stops changing much.
+
+A 512×512 image at 20 steps runs in a few seconds on a GPU. Doubling resolution roughly quadruples the work. The `seed` option lets us pin the random noise, so we can pass any integer and get the same image twice.
+
+Four knobs on the same `diffusion()` call: `width` / `height` (multiples of 16) set resolution, `steps` is denoising iterations, `seed` pins the noise. The four-knob call would look like:
+
+```ts
+const result = diffusion({
+  modelId,
+  prompt: "a watercolor cat on a sunny windowsill",
+  width: 512,
+  height: 512,
+  steps: 20,
+  seed: 42,
+});
+```
+
+Same seed and same prompt, two calls produce byte-identical output like so:
+
+```ts
+const outputs = await result.outputs;
+const first = outputs[0];
+if (first) fs.writeFileSync("cat-watercolor.png", first);
+console.log(`Generated ${outputs.length} image`);
+```
+
+Run it twice with the same seed and we get byte-identical output. Change the prompt and we get a different image from the same starting noise.
+
+> Note: the seed is per-call, not per-model. Two `diffusion()` calls with the same `seed` and the same `prompt` produce identical output; changing either breaks the reproducibility.
+
+## Put it to the test
+
+1. Call `diffusion({ modelId, prompt, width: 512, height: 512, steps: 20, seed: 42 })`.
+2. `await result.outputs` and write `outputs[0]` to disk.

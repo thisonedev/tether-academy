@@ -1,0 +1,98 @@
+---
+title: "Run a pi05 action inference"
+sourceExample: "packages/sdk/examples/vla-pi05.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: loads-pi05
+    description: 'Loads PI05_BASE_Q_AGGRESSIVE with modelType ggml-vla'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelType\\s*:\\s*[`\"']ggml-vla[`\"']"
+  - id: reads-num-cameras
+    description: 'Reads hparams.numCameras to size the images array'
+    pattern: "hparams\\.numCameras"
+  - id: empty-state
+    description: 'Passes an empty Float32Array as the state buffer'
+    pattern: "new\\s+Float32Array\\s*\\(\\s*0\\s*\\)"
+  - id: calls-vla
+    description: 'Calls vla({ modelId, images, state, tokens, mask, noise })'
+    pattern: "vla\\s*\\(\\s*\\{[^}]*modelId[^}]*images[^}]*state"
+hints:
+  - "loadModel({ modelSrc: PI05_BASE_Q_AGGRESSIVE, modelType: 'ggml-vla', modelConfig: { backend: 'cpu' } }) pulls the π₀.₅ model from the registry."
+  - "π₀.₅ expects hparams.numCameras frames, default 3. Build that many synthetic frames with vlaPreprocessImage."
+  - "The state buffer is empty: `new Float32Array(0)`. The discrete-state input mode means the state is tokenised into the prompt and the buffer is ignored."
+expectedOutput:
+  - "▸ Loading π₀.₅ model..."
+  - "▸ Model loaded: model-7f2a"
+  - "▸ Backend: ggml-vla"
+  - "▸ Running VLA inference..."
+  - "▸ Got 50 action steps of dim 32."
+  - "▸ Timing: vision=180ms prefill=1240ms ode=410ms total=1860ms"
+---
+
+SmolVLA was the previous lesson's model. This lesson runs π₀.₅ from Physical Intelligence. The API surface is the same `vla()` call, but two hparams drive a different input shape.
+
+`loadModel` pulls π₀.₅ into memory, and `vlaHparams` reads the input dimensions (`visionImageSize`, `numCameras`, `tokenizerMaxLength`, `chunkSize`, `maxActionDim`) for the next step:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: PI05_BASE_Q_AGGRESSIVE,
+  modelType: "ggml-vla",
+  modelConfig: { backend: "cpu" },
+});
+
+const { hparams } = await vlaHparams({ modelId });
+const size = hparams.visionImageSize;
+const numCameras = hparams.numCameras ?? 3;
+```
+
+The four input buffers π₀.₅ expects: `numCameras` synthetic camera frames via `vlaPreprocessImage`, a BOS-only `tokens` and `mask` (the model starts decoding from a single BOS token), an empty state buffer (the state is tokenised into the prompt in this model, so the buffer is ignored), and a `chunkSize × maxActionDim` zero-filled noise buffer the diffusion step denoises:
+
+```ts
+const dummyPixels = new Uint8Array(size * size * 3).fill(128);
+const images = Array.from({ length: numCameras }, () =>
+  vlaPreprocessImage(dummyPixels, size, size, { size }),
+);
+
+const tokens = new Int32Array(hparams.tokenizerMaxLength);
+const mask = new Uint8Array(hparams.tokenizerMaxLength);
+tokens[0] = 1;
+mask[0] = 1;
+
+const state = new Float32Array(0);
+const noise = new Float32Array(hparams.chunkSize * hparams.maxActionDim);
+```
+
+`vla()` takes the model id and prebuilt inputs and returns `{ actions, actionDim, chunkSize, stats }`, the four fields the SmolVLA lesson destructured from the result. The `stats` keys differ in π₀.₅: `*_ms` snake_case, with the LM field as `prefill_total_ms` instead of `lmMs` because the language model is a different one.
+
+```ts
+const { actions, actionDim, chunkSize, stats } = await vla({
+  modelId,
+  images,
+  imgWidth: size,
+  imgHeight: size,
+  state,
+  tokens,
+  mask,
+  noise,
+});
+
+console.log(`▸ Got ${chunkSize} action steps of dim ${actionDim}.`);
+console.log(Array.from(actions.subarray(0, actionDim)));
+if (stats) {
+  console.log(
+    `▸ Timing: vision=${stats.vision_ms?.toFixed(0)}ms ` +
+      `prefill=${stats.prefill_total_ms?.toFixed(0)}ms ` +
+      `ode=${stats.ode_ms?.toFixed(0)}ms ` +
+      `total=${stats.total_ms?.toFixed(0)}ms`,
+  );
+}
+```
+
+The four `stats` fields are reported in pipeline order: vision encoder, language-model prefill, ODE solver, then wall-clock total. The optional chaining handles a stage that wasn't run. If a model short-circuits a phase, the field is `undefined` rather than missing from the object.
+
+> Note: π₀.₅ is a larger model (~3.9 GB) than SmolVLA (~1.9 GB) and the inference time reflects that. On a desktop CPU, expect several seconds per call. The `backend: "cpu"` flag is the default and the only supported target in this SDK release.
+
+## Put it to the test
+
+1. Call `loadModel({ modelSrc: PI05_BASE_Q_AGGRESSIVE, modelType: "ggml-vla", modelConfig: { backend: "cpu" } })` and `vlaHparams({ modelId })`. Read `hparams.visionImageSize`, `hparams.numCameras`, `hparams.tokenizerMaxLength`, `hparams.chunkSize`, and `hparams.maxActionDim`.
+2. Build `numCameras` `vlaPreprocessImage` frames, a BOS-only `tokens` and `mask`, an empty `new Float32Array(0)` state, and a zero-filled noise buffer of size `chunkSize * maxActionDim`.
+3. Call `await vla({ modelId, images, imgWidth, imgHeight, state, tokens, mask, noise })` and console.log the action chunk and per-stage `stats`.

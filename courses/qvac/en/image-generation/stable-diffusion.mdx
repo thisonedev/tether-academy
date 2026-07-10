@@ -1,0 +1,64 @@
+---
+title: "Generate image with Stable Diffusion"
+sourceExample: "packages/sdk/examples/diffusion-simple.ts"
+platforms: ['node']
+tests:
+  - id: sets-prediction-v
+    description: 'Sets modelConfig.prediction to v'
+    pattern: "prediction\\s*:\\s*[\"']v[\"']"
+  - id: loads-with-sdcpp
+    description: 'Loads with modelType sdcpp-generation'
+    pattern: "sdcpp-generation"
+  - id: calls-diffusion
+    description: 'Calls diffusion({ modelId, prompt })'
+    pattern: "diffusion\\s*\\(\\s*\\{[^}]*modelId[^}]*prompt"
+hints:
+  - "SD 1.x and SD 2.x are single-GGUF models. You pass the model constant as modelSrc and skip the companion files."
+  - "modelConfig.prediction: 'v' tells the engine to use the v-prediction sampling path, the default for SD 2.1."
+  - "The model is smaller and downloads in a single file, which is faster to load on a fresh device than a split-layout model."
+expectedOutput:
+  - "Generated 1 image"
+---
+
+FLUX.2 is one model family. Stable Diffusion is another, and the older of the two. SD 1.x and SD 2.x are available as a single all-in-one GGUF. There's no LLM encoder and no VAE to download alongside it.
+
+That single-file layout is the trade. SD 2.1 in this format is much smaller on disk than FLUX.2-klein, so it loads faster on a fresh device and fits in less VRAM. The generation quality is lower than FLUX.2-klein at the same step count, but for short prompts and quick iteration it's the path of least resistance.
+
+Stable Diffusion supports two sampling targets: `epsilon` (default) and `v` (the velocity, the change in noise). At high guidance, `v` is the cleaner choice with fewer artifacts. The `modelConfig` block setting `v` would look like so:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: SD_V2_1_1B_Q8_0,
+  modelType: "sdcpp-generation",
+  modelConfig: { prediction: "v" },
+});
+```
+
+The generation call is the same `diffusion({ modelId, prompt })` as the FLUX.2 lessons:
+
+```ts
+const result = diffusion({
+  modelId,
+  prompt: "a photo of a cat sitting on a windowsill",
+});
+```
+
+Once the awaited PNG is in hand, write the first one and log the count:
+
+```ts
+const outputs = await result.outputs;
+const first = outputs[0];
+if (!first) throw new Error("No image returned from diffusion");
+fs.writeFileSync("cat.png", first);
+console.log(`Generated ${outputs.length} image`);
+```
+
+SD 2.1 was trained for v-prediction; epsilon would produce a noisier result on this model.
+
+> Note: SD 2.1 doesn't support the in-context `init_image` path that FLUX.2 uses. For img2img with SD, set `strength` instead. The next chapter covers that.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelType: "sdcpp-generation"`, `modelSrc: SD_V2_1_1B_Q8_0`, and `modelConfig: { prediction: "v" }`.
+2. Call `diffusion({ modelId, prompt: "..." })` and `await result.outputs`.
+3. Write `outputs[0]` to a PNG file and console.log the image count.

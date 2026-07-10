@@ -1,0 +1,50 @@
+---
+title: Embed a single string
+sourceExample: "packages/sdk/examples/embed-multi-gpu.ts"
+platforms: ['node']
+tests:
+  - id: passes-modelid
+    description: Calls embed() with modelId from the previous lesson
+    pattern: "embed\\s*\\(\\s*\\{[^}]*modelId"
+  - id: passes-text
+    description: Passes a `text` option
+    pattern: "embed\\s*\\(\\s*\\{[^}]*text\\s*:"
+  - id: destructures-embedding
+    description: Destructures `embedding` from the result
+    pattern: "embedding\\s*:|\\{\\s*embedding"
+hints:
+  - "embed is a top-level export from @qvac/sdk. It takes { modelId, text }."
+  - "It returns { embedding } where embedding is a number[]. For GTE_LARGE_FP16 it is 1024 numbers long."
+  - "You probably don't want to print every number. Print the length and the first 10 values to check it's real."
+expectedOutput:
+  - "Input: 'Hello, world!'"
+  - "Embedding dimensions: 1024"
+  - "First 10 values: [ 0.0123 ... ]"
+---
+
+Now that we have a model in memory, let's hand it a string and see what comes back.
+
+`embed({ modelId, text: "..." })` resolves to `{ embedding: number[] }`. For `GTE_LARGE_FP16` the array has 1024 numbers, one per feature the model learned during training. Each number is a small float, mostly between -1 and 1.
+
+We don't need to understand what each number means yet. We're going to compare vectors in the next lessons. For now, the part to remember is that every input produces a 1024-number array on `GTE_LARGE_FP16`.
+
+The `embed()` call for one text takes a modelId and a single `text` string. For `GTE_LARGE_FP16` the return is a 1024-number array. You would call it like so:
+
+```ts
+const { embedding } = await embed({
+  modelId,
+  text: "Hello, world!",
+});
+console.log("Input:", "Hello, world!");
+console.log("Embedding dimensions:", embedding.length);
+console.log("First 10 values:", embedding.slice(0, 10));
+```
+
+`embedding` is a `number[]`. Use `.length` for the dimension and `.slice(0, 10)` to peek at the first few values without spamming the console.
+
+> Note: the SDK always returns the same `number[]` shape regardless of how long the input text is. Short sentences and paragraphs both produce a 1024-number vector for `GTE_LARGE_FP16`. The numbers are different, but the shape is identical.
+
+## Put it to the test
+
+1. Call `embed({ modelId, text: "Hello, world!" })` and destructure `embedding` from the result.
+2. Log the input, the dimensions, and the first 10 values.

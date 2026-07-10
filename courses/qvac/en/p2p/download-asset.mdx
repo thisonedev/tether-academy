@@ -1,0 +1,62 @@
+---
+title: "Pre-download a model with downloadAsset"
+platforms: ['node', 'desktop']
+tests:
+  - id: calls-download-asset
+    description: Calls downloadAsset with a modelSrc
+    pattern: "downloadAsset\\s*\\(\\s*\\{[^}]*assetSrc"
+  - id: loads-after-download
+    description: Calls loadModel after the download completes
+    pattern: "await\\s+loadModel|loadModel\\s*\\("
+hints:
+  - "downloadAsset takes { assetSrc: <model constant> }. It downloads and caches the model files without loading them into memory."
+  - "Run downloadAsset once at install or app startup. Subsequent loadModel calls reuse the cache."
+  - "Use the same onProgress shape as loadModel: it hands you a { percentage, downloaded, total } object on each tick."
+expectedOutput:
+  - "▸ Downloading 100% (740.0/740.0 MB)"
+  - "▸ Model loaded: model-7f2a"
+  - "▸ Performance Stats: { tokensPerSecond: 47.31 }"
+---
+
+We're starting a new chapter on P2P, and we're going to decouple download from load.
+
+`loadModel()` does two things: download the model file (if not cached), then load it into memory. For multi-hundred-megabyte models, that's a long wait on the first user request.
+
+`downloadAsset()` separates the two steps. We call it once at install or app startup, then `loadModel()` skips straight to the in-memory part.
+
+`downloadAsset()` pre-caches the model without loading it. Next `loadModel()` skips the download and goes straight to the in-memory load. You would call it like so:
+
+```ts
+await downloadAsset({
+  assetSrc: LLAMA_3_2_1B_INST_Q4_0,
+  onProgress: (p) => {
+    const mb = (n: number) => (n / 1e6).toFixed(1);
+    const line = `▸ Downloading ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)`;
+    process.stderr.write(process.stderr.isTTY ? `\r${line}` : `${line}\n`);
+  },
+});
+```
+
+`clearStorage: false` keeps the file cached so the next run doesn't re-download. Note that the cache is keyed by `assetSrc`; the second run with the same constant is a no-op. Here's how the post-cache lifecycle would look like:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: LLAMA_3_2_1B_INST_Q4_0,
+  modelConfig: { device: "gpu", ctx_size: 2048 },
+});
+
+const history = [{ role: "user", content: "Explain quantum computing in one sentence." }];
+const result = completion({ modelId, history, stream: true });
+for await (const token of result.tokenStream) process.stdout.write(token);
+
+await unloadModel({ modelId, clearStorage: false });
+```
+
+The `onProgress` callback uses the same `{ percentage, downloaded, total }` shape as `loadModel()`.
+
+> Note: re-running `downloadAsset` against an already-cached model is a no-op. The SDK checks the local cache before hitting the network.
+
+## Put it to the test
+
+1. Call `downloadAsset({ assetSrc, onProgress })` and `await` it. The model is now cached on disk.
+2. Call `loadModel({ modelSrc: <same constant> })` and stream a small completion, then `unloadModel({ modelId, clearStorage: false })` to free GPU memory without deleting the cache.

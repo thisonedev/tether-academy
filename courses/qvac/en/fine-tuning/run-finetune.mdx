@@ -1,0 +1,62 @@
+---
+title: Run a fine-tune
+sourceExample: "packages/sdk/examples/finetune/llamacpp-finetune.ts"
+platforms: ['node']
+tests:
+  - id: passes-options
+    description: 'Calls finetune with modelId and an options block'
+    pattern: "finetune\\s*\\(\\s*\\{[^}]*options"
+  - id: sets-train-dataset
+    description: 'Sets trainDatasetDir inside options'
+    pattern: "trainDatasetDir\\s*:"
+  - id: awaits-result
+    description: 'Awaits handle.result'
+    pattern: "await\\s+handle\\.result|\\.result\\s*[\\s\\S]*?await"
+hints:
+  - "finetune() takes { modelId, options: {...} } and returns a handle. The handle has progressStream and result."
+  - "options.trainDatasetDir points at a HuggingFace chat JSONL file (one JSON object per line with messages: [{role, content}, ...])."
+  - "options.numberOfEpochs controls how many full passes through the dataset. 2 is a sensible first run; 4+ overfits small datasets fast."
+expectedOutput:
+  - "▸ epoch=1 step=10 batch=2/2 train loss=1.2345 acc=0.6123"
+  - "▸ Result status: COMPLETED"
+---
+
+Now that we've confirmed the base model is fine-tunable, it's time to actually run a training job.
+
+`finetune({ modelId, options })` starts a LoRA training run against a chat dataset. The handle exposes a `progressStream` we can iterate to watch training tick by tick, with a `result` promise that resolves with the final status.
+
+The simplest input format is a HuggingFace chat JSONL: one JSON object per line, each with a `messages` array of `{role, content}` pairs. The trainer handles tokenization internally.
+
+`finetune()` returns a handle with a `progressStream` and a `result` promise. Simplest input is an HF chat JSONL. You would call it as follows:
+
+```ts
+const handle = finetune({
+  modelId,
+  options: {
+    trainDatasetDir: "./data/train.jsonl",
+    numberOfEpochs: 2,
+    learningRate: 1e-4,
+  },
+});
+```
+
+The `progressStream` ticks once per training step, each item carrying `global_steps`, `loss`, and the batch index. `await handle.result` returns the final status (`COMPLETED`, `CANCELLED`, or a failure mode):
+
+```ts
+for await (const tick of handle.progressStream) {
+  console.log(`▸ step=${tick.global_steps} loss=${tick.loss?.toFixed(4)}`);
+}
+
+const result = await handle.result;
+console.log("▸ Result status:", result.status);
+```
+
+`tick` carries the current step, batch index, loss, accuracy, and a `progressStream` we can break out of when we want to stop logging.
+
+> Note: `learningRate: 1e-4` is a reasonable starting point for LoRA on a Qwen3 600M. If you're training a larger model or a smaller one, scale by the parameter count or follow the dataset author's recommendation.
+
+## Put it to the test
+
+1. Call `finetune({ modelId, options: { trainDatasetDir, numberOfEpochs: 2, learningRate: 1e-4 } })` and store the handle.
+2. Loop through `handle.progressStream`, logging the global step and loss for each tick.
+3. Await `handle.result` and log `result.status`.

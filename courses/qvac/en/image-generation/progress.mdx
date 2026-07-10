@@ -1,0 +1,57 @@
+---
+title: "Track diffusion progress"
+sourceExample: "packages/sdk/examples/diffusion-flux2-klein.ts"
+platforms: ['node']
+tests:
+  - id: reads-progress-stream
+    description: Iterates result.progressStream
+    pattern: "progressStream"
+  - id: prints-step
+    description: Logs step / totalSteps
+    pattern: "step\\s*/\\s*totalSteps|console\\.log\\s*\\([^)]*progress\\.step"
+hints:
+  - "result.progressStream is an AsyncIterable. Each item is { step, totalSteps }, the current step and the total."
+  - "Print every step for small runs, sample one-in-N for long ones, keeps the console readable."
+  - "The model continues to refine after each tick; await result.outputs still runs the same inference end-to-end."
+expectedOutput:
+  - "1/20"
+  - "..."
+  - "20/20"
+  - "Generated 1 image"
+---
+
+Now that we're running diffusion calls that take real time, let's see how to show progress.
+
+`diffusion()` runs for tens of seconds. Without feedback, the user thinks it crashed. The same `result` we used in the previous lesson has a second property: `progressStream`.
+
+`progressStream` ticks once per denoising step. Each item is `{ step, totalSteps }`. The total tells us the upper bound. The step tells us where the model is right now.
+
+We loop the stream in parallel with the final `await result.outputs`, since they don't block each other.
+
+The per-step progress stream carries `{ step, totalSteps }` once per denoising tick, same `for await` shape as the `tokenStream` drain in the text lessons like so:
+
+```ts
+if (result.progressStream) {
+  for await (const progress of result.progressStream) {
+    console.log(`${progress.step}/${progress.totalSteps}`);
+  }
+}
+```
+
+The progress stream and the output promise don't block each other, so you can run them in parallel:
+
+```ts
+const outputs = await result.outputs;
+const first = outputs[0];
+if (first) fs.writeFileSync("skyline.png", first);
+console.log(`Generated ${outputs.length} image`);
+```
+
+We wire this stream into our app's progress bar and the user sees "5/20, 6/20, ..." tick up while the model works.
+
+> Note: `progressStream` is optional in the type system. The check `if (result.progressStream)` is defensive; older model versions didn't expose it. New models all do.
+
+## Put it to the test
+
+1. After calling `diffusion`, iterate `result.progressStream` with `for await`.
+2. Log each tick as `${progress.step}/${progress.totalSteps}`, then `await result.outputs` and write the PNG.

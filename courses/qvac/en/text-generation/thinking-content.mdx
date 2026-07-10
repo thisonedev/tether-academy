@@ -1,0 +1,84 @@
+---
+title: "Capture thinking content from a completion"
+sourceExample: "packages/sdk/examples/completion-events.ts"
+platforms: ['node']
+tests:
+  - id: has-capture-thinking
+    description: 'completion options include captureThinking: true'
+    pattern: "captureThinking\\s*:\\s*true"
+  - id: handles-thinking-delta
+    description: 'Switch or branch handles the thinkingDelta event type'
+    pattern: "case\\s*[\"']thinkingDelta[\"']|event\\.type\\s*===?\\s*[\"']thinkingDelta[\"']"
+  - id: still-handles-content
+    description: 'Switch or branch still handles the contentDelta event'
+    pattern: "case\\s*[\"']contentDelta[\"']|event\\.type\\s*===?\\s*[\"']contentDelta[\"']"
+  - id: optional-think-output
+    description: 'Routes thinkingDelta tokens somewhere visible (stderr, log, etc.)'
+    pattern: "(?:stderr|console)\\.(?:write|log|error)[\\s\\S]*?thinkingDelta|thinkingDelta[\\s\\S]*?(?:stderr|console)\\.(?:write|log|error)"
+  - id: reads-thinking-aggregate
+    description: 'Reads final.thinkingText after the stream ends'
+    pattern: "final\\.thinkingText|final\\.\\s*thinkingText"
+hints:
+  - "captureThinking is a top-level option on completion(), alongside stream: true. Set it once for the entire call; you cannot enable it mid-stream."
+  - "When thinking is captured, the model emits thinkingDelta events interleaved with contentDelta events. Both have a text field carrying a token chunk."
+  - "Pipe thinkingDelta to process.stderr (or console.log with a [think] prefix) so the model's reasoning is visible separately from the final answer, which still goes to stdout."
+  - "final.thinkingText is a convenience aggregation of every thinkingDelta token. Read it after the events loop exits to grab the full reasoning block at once."
+expectedOutput:
+  - "[think] The user is asking about Rayleigh scattering in the atmosphere."
+  - "The sky appears blue because of Rayleigh scattering: shorter wavelengths of sunlight scatter more"
+  - "▸ Thinking: The user is asking about Rayleigh scattering. I should mention wavelength dependence and the blue/short-wave preference."
+  - "▸ done (118 tokens, 4.31s)"
+---
+
+Chapter 2 starts with one specific feature of the `completion()` surface: thinking content.
+
+Some models emit a `<think>...</think>` reasoning block before the final answer. The reasoning arrives in the same token stream that produces the response. Without capture, that reasoning either ends up inside the response text, mixed into the user-visible answer, or the chat-template layer strips it and you can't recover it from the SDK surface.
+
+`captureThinking: true` tells the SDK to parse `<think>` blocks out of the raw model output and surface them as their own event type, separate from the final answer.
+
+Setting `captureThinking: true` on the options object is what asks the SDK to parse `<think>` blocks out and surface them as their own event type. You would call it like so:
+
+```ts
+const result = completion({
+  modelId,
+  history: [{ role: "user", content: "Why is the sky blue?" }],
+  stream: true,
+  captureThinking: true,
+});
+```
+
+That single boolean changes the shape of the events stream. A model that emits `<think>The user is asking about Rayleigh scattering.</think>The sky appears blue because...` will fire `thinkingDelta` events, one per reasoning token, before the answer. Then `contentDelta` events fire, one per answer token, after the reasoning completes. Then `completionDone` at the end with `stopReason: "eos"`.
+
+`contentDelta` goes to stdout, `thinkingDelta` routes to stderr with a `[think]` prefix so it doesn't mix with the response. Both event types carry the same `text` field. The event loop for this kind of call would look like:
+
+```ts
+for await (const event of result.events) {
+  switch (event.type) {
+    case "contentDelta":
+      process.stdout.write(event.text);
+      break;
+    case "thinkingDelta":
+      process.stderr.write(`[think] ${event.text}`);
+      break;
+  }
+}
+```
+
+After the loop, the joined reasoning sits in `final.thinkingText`. Reading the full reasoning block at once is one `await` away:
+
+```ts
+const final = await result.final;
+if (final.thinkingText) {
+  console.log(`\n▸ Thinking: ${final.thinkingText}`);
+}
+```
+
+For convenience, the aggregated `final.thinkingText` joins every reasoning token into one string. We read it after the events loop exits.
+
+> Note: `process.stdout` is reserved for the user-visible answer across this curriculum. Reasoning is part of the model's behaviour but not the answer, so it goes to `process.stderr` with a `[think]` prefix. If you'd rather show both interleaved to the user, write both to stdout with different prefixes.
+
+## Put it to the test
+
+1. Set `captureThinking: true` in the `completion()` options.
+2. Handle `thinkingDelta` by writing `event.text` to `process.stderr` with a `[think] ` prefix.
+3. After the events loop, await `result.final` and log `final.thinkingText` with a `▸ Thinking:` prefix.

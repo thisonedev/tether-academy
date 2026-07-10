@@ -1,0 +1,48 @@
+---
+title: Embed many strings at once
+sourceExample: "packages/sdk/examples/embed-multi-gpu.ts"
+platforms: ['node']
+tests:
+  - id: passes-array
+    description: 'Passes a `text` array to embed()'
+    pattern: "embed\\s*\\(\\s*\\{[^}]*text\\s*:\\s*texts"
+  - id: destructures-batch
+    description: 'Reads `embedding` from the batch result'
+    pattern: "embedding:\\s*batchEmbeddings|\\{\\s*embedding"
+  - id: prints-counts
+    description: 'Logs how many embeddings came back'
+    pattern: "console\\.log\\s*\\([^)]*batchEmbeddings"
+hints:
+  - "embed({ modelId, text: ['a', 'b'] }) resolves to { embedding: number[][] }, an array of arrays."
+  - "Same modelId works for one text or many. Don't reload between batches."
+  - "Use batchEmbeddings.length to print how many vectors came back, and batchEmbeddings[0].length for the dimension."
+expectedOutput:
+  - "Input: 3 texts"
+  - "Output: 3 embeddings"
+  - "Each embedding dimensions: 1024"
+---
+
+In the previous lesson we embedded one string at a time. That works for learning, but if we've got a thousand documents we don't want a thousand round-trips.
+
+`embed()` accepts a string or a string array. Pass an array, get back an array of vectors.
+
+The array overload of `embed()` is the same call with `text` as `string[]`. Pass a `string[]` and the batch call returns `{ embedding: number[][] }` like so:
+
+```ts
+const { embedding: batchEmbeddings } = await embed({
+  modelId,
+  text: texts,
+});
+console.log(`Input: ${texts.length} texts`);
+console.log(`Output: ${batchEmbeddings.length} embeddings`);
+console.log(`Each embedding dimensions: ${batchEmbeddings[0]!.length}`);
+```
+
+Each inner array is one 1024-number vector, in the same order as the input. The model stays loaded, so the second call is much faster than the first (only the embedding step runs).
+
+> Note: `batchEmbeddings[0]` is the first vector, `batchEmbeddings[0][0]` is the very first number of that vector. Mind your brackets if you start indexing.
+
+## Put it to the test
+
+1. Call `await embed({ modelId, text: texts })` and destructure `{ embedding: batchEmbeddings }`.
+2. `console.log` the input count (`texts.length`), the output count (`batchEmbeddings.length`), and the dimension of the first vector (`batchEmbeddings[0]!.length`).

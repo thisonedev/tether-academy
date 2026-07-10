@@ -1,0 +1,53 @@
+---
+title: Load a video model
+sourceExample: "packages/sdk/examples/diffusion-txt2vid.ts"
+platforms: ['node']
+tests:
+  - id: sets-mode-video
+    description: 'Sets modelConfig.mode to "video"'
+    pattern: "mode\\s*:\\s*[`'\"]video[`'\"]"
+  - id: includes-t5xxl
+    description: Includes t5XxlModelSrc in modelConfig
+    pattern: "t5XxlModelSrc"
+  - id: includes-vae
+    description: Includes vaeModelSrc in modelConfig
+    pattern: "vaeModelSrc"
+hints:
+  - "Video diffusion uses sdcpp-generation with modelConfig.mode set to 'video'."
+  - "Video models need a T5-XXL text encoder and a VAE decoder, the same engine as image gen but with different file roles."
+  - "Once the model loads, every video() call uses the same modelId. No reload between runs."
+expectedOutput:
+  - "videoId: model-7f2a"
+---
+
+We're starting a new chapter on video generation, and we're going to load a model that turns prompts into short clips.
+
+Text-to-image takes three files: the diffusion model, a text encoder, and a VAE. Video works the same way. We use the same files, but with `modelConfig.mode: "video"` so the engine knows to emit frames instead of pixels.
+
+Wan 2.1 T2V (`WAN2_1_T2V_1_3B_FP16`) is the text-to-video model in the SDK. The text encoder is `UMT5_XXL_FP16`. The VAE is `WAN_2_1_COMFYUI_REPACKAGED_VAE`. We load all three in one call.
+
+The first call takes the longest, since the three GGUF files together run hundreds of megabytes. Subsequent `video()` calls reuse the loaded model.
+
+`mode: "video"` switches the diffusion engine from image generation to video generation (a sequence of frames). Note that without `mode: "video"`, the engine tries to render a single image instead of a clip. The `loadModel` call looks like:
+
+```ts
+const videoId = await loadModel({
+  modelSrc: WAN2_1_T2V_1_3B_FP16,
+  modelType: "sdcpp-generation",
+  modelConfig: {
+    mode: "video",
+    t5XxlModelSrc: UMT5_XXL_FP16,
+    vaeModelSrc: WAN_2_1_COMFYUI_REPACKAGED_VAE,
+  },
+});
+console.log("videoId:", videoId);
+```
+
+The next lesson writes a real `video()` call against this `videoId`.
+
+> Note: `mode: "video"` is required. Without it, the engine tries to render a single image instead of a clip.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelType: "sdcpp-generation"`, `modelConfig.mode: "video"`, and the T5-XXL and VAE src fields.
+2. Log the resulting `videoId`.

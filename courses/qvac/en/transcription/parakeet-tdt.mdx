@@ -1,0 +1,53 @@
+---
+title: "Transcribe multilingual audio with Parakeet TDT"
+sourceExample: "packages/sdk/examples/transcription/parakeet-tdt-filesystem.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: sets-parakeet-type
+    description: 'Sets modelType to parakeet-transcription'
+    pattern: "modelType\\s*:\\s*[`\"']parakeet-transcription[`\"']"
+  - id: calls-transcribe
+    description: 'Calls transcribe with modelId and audioChunk'
+    pattern: "transcribe\\s*\\(\\s*\\{[^}]*modelId[^}]*audioChunk"
+  - id: no-language-flag
+    description: 'Does not pass a language or prompt option to transcribe'
+    pattern: "transcribe\\s*\\(\\s*\\{[^}]*\\}(?!.*language)"
+hints:
+  - "Parakeet TDT handles 25+ languages out of the box. No language code, no prompt, no VAD config."
+  - "Set modelType: 'parakeet-transcription'. The SDK auto-detects TDT vs CTC vs Sortformer from the GGUF metadata."
+  - "transcribe returns a single string. For timestamped segments, set the metadata flag the same way as the Whisper lesson."
+expectedOutput:
+  - "The quick brown fox jumps over the lazy dog."
+---
+
+Whisper handles English well and several other languages adequately. For multilingual audio where accuracy matters, we switch to Parakeet TDT.
+
+Parakeet TDT is a single GGUF that handles 25+ languages out of the box. The same model file transcribes French, German, Spanish, Mandarin, and more without a language code. The addon auto-detects TDT vs CTC vs Sortformer from the GGUF's internal metadata, so the load is the same as Whisper's.
+
+`modelType: "parakeet-transcription"` tells the engine which Parakeet family to load: TDT (default), CTC (smaller), Sortformer (diarization). The load with that flag set would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0,
+  modelType: "parakeet-transcription",
+});
+```
+
+TDT returns a single string per file, no per-segment data. Note that without overrides the call is minimal. For example:
+
+```ts
+const text = await transcribe({
+  modelId,
+  audioChunk: "./examples/audio/sample-16khz.wav",
+});
+console.log(text);
+```
+
+No `modelConfig.language`. No prompt. No VAD. The only flag you need is `modelType: "parakeet-transcription"` so the SDK routes the call to the right addon.
+
+> Note: Parakeet handles VAD internally, so no separate VAD model is needed. If you need explicit end-of-utterance detection for conversation, load `PARAKEET_EOU_120M_V1_Q8_0` alongside and pass `parakeetStreamingConfig` to `transcribeStream`.
+
+## Put it to the test
+
+1. Call `loadModel({ modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0, modelType: "parakeet-transcription" })` and `transcribe({ modelId, audioChunk: "./examples/audio/sample-16khz.wav" })`. No `language` or `prompt` field.
+2. `console.log` the returned text.

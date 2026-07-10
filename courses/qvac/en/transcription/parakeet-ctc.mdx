@@ -1,0 +1,42 @@
+---
+title: "Transcribe English audio with Parakeet CTC"
+sourceExample: "packages/sdk/examples/transcription/parakeet-ctc-filesystem.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: sets-parakeet-type
+    description: 'Sets modelType to parakeet-transcription'
+    pattern: "modelType\\s*:\\s*[`\"']parakeet-transcription[`\"']"
+  - id: calls-transcribe
+    description: 'Calls transcribe with modelId and audioChunk'
+    pattern: "transcribe\\s*\\(\\s*\\{[^}]*modelId[^}]*audioChunk"
+hints:
+  - "Parakeet CTC is the English-only sibling of TDT. It's smaller and faster but only handles English."
+  - "Use CTC when you know the audio is English and you want the lowest-latency transcribe. Switch to TDT for multilingual."
+  - "The load shape and transcribe call are identical to TDT, except the modelSrc constant changes."
+expectedOutput:
+  - "The quick brown fox jumps over the lazy dog."
+---
+
+When you know the audio is English and latency matters, Parakeet CTC is faster than TDT. The trade is that CTC is English-only; Parakeet CTC rejects non-English audio rather than mistranslating it.
+
+CTC is the English-only sibling of TDT. The model file is smaller and the inference path is shorter, so `transcribe` returns a few hundred milliseconds sooner.
+
+The editor prefills the model load (Parakeet CTC with `modelType: "parakeet-transcription"`). The new piece is the transcribe call.
+
+CTC is the English-only TDT variant: same call shape, same options, just a different `modelId`. The transcribe call we'd make would look like:
+
+```ts
+const text = await transcribe({
+  modelId,
+  audioChunk: "./examples/audio/sample-16khz.wav",
+});
+console.log(text);
+```
+
+The call shape and the constants are the only differences from TDT.
+
+> Note: CTC is also the right Parakeet variant for the `transcribeStream` duplex session when the audio is English. The next lesson covers diarization with Sortformer.
+
+## Put it to the test
+
+1. Call `transcribe({ modelId, audioChunk: "./examples/audio/sample-16khz.wav" })`, await the result, and `console.log` the returned text.

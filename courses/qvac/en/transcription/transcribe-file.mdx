@@ -1,0 +1,49 @@
+---
+title: Transcribe an audio file
+sourceExample: "packages/sdk/examples/transcription/whispercpp-filesystem.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: calls-transcribe
+    description: Calls transcribe with modelId and audioChunk
+    pattern: "transcribe\\s*\\(\\s*\\{[^}]*modelId[^}]*audioChunk"
+  - id: iterates-segments
+    description: Iterates over the segments array
+    pattern: "for\\s*\\(\\s*const\\s+\\w+\\s+of\\s+segments|segments\\.forEach"
+hints:
+  - "WHISPER_TINY is the Whisper model constant in the SDK. Import it alongside loadModel and transcribe."
+  - "transcribe({ modelId, audioChunk: path }) takes a path to a WAV file on disk."
+  - "The result is an array of segments with text, startMs, endMs, id, and append fields. Loop through them to print or stream."
+expectedOutput:
+  - "[0.00s → 2.80s] The quick brown fox jumps over the lazy dog."
+  - "[2.80s → 5.20s] A fast auburn fox leaps over a sleepy canine."
+---
+
+We're starting a new chapter on transcription, and we're going to turn a WAV file into text.
+
+Whisper takes a WAV file and returns the spoken text. The SDK wraps it in one `transcribe()` call. The result is an array of segments with start and end timestamps, so we can render captions, search inside audio, or chunk the transcript by speaker turn.
+
+`WHISPER_TINY` is the smallest Whisper model in the SDK.
+
+Setting `metadata: true` is what brings back the per-segment timestamps. You would call it like so:
+
+```ts
+const segments = await transcribe({
+  modelId,
+  audioChunk: "./examples/audio/sample-16khz.wav",
+  metadata: true,
+});
+
+for (const segment of segments) {
+  const start = (segment.startMs / 1000).toFixed(2);
+  const end = (segment.endMs / 1000).toFixed(2);
+  console.log(`[${start}s → ${end}s] ${segment.text}`);
+}
+```
+
+The `metadata: true` flag keeps the per-segment timing fields. We set it to `false` if we only need the joined text.
+
+> Note: the audio must be a WAV file at 16 kHz mono PCM. Other formats work with extra conversion, but the SDK takes the most common shape directly.
+
+## Put it to the test
+
+1. Call `transcribe({ modelId, audioChunk: <path>, metadata: true })`, await the segments, and loop through them logging each with its `[start → end]` timestamp.

@@ -1,0 +1,61 @@
+---
+title: "Send a single image to a completion"
+sourceExample: "packages/sdk/examples/llamacpp-multimodal.ts"
+platforms: ['node']
+tests:
+  - id: has-attachments-array
+    description: 'Uses an attachments array on a history message'
+    pattern: "attachments\\s*:\\s*\\[\\s*\\{[^}]*path"
+  - id: points-to-file
+    description: 'The path field is a string ending in an image extension'
+    pattern: "path\\s*:\\s*[`'\"][\\s\\S]*?\\.(?:jpg|jpeg|png|webp)"
+  - id: runs-completion
+    description: 'Calls completion with the multimodal modelId'
+    pattern: "completion\\s*\\(\\s*\\{[^}]*modelId\\s*:\\s*multimodalId"
+  - id: streams-tokenStream
+    description: 'Streams result.tokenStream to stdout'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+result\\.tokenStream"
+hints:
+  - "Add attachments: [{ path: '/abs/path/to/image.jpg' }] to any user message. The file must exist on disk."
+  - "The path is a string, not a buffer. The SDK reads the file for you."
+  - "Same completion({ modelId, history, stream }) shape as text. One extra field on the message."
+expectedOutput:
+  - "(streamed completion output describing the image)"
+---
+
+Now that we have a multimodal model in memory, it's time to give it an image.
+
+The multimodal model takes a prompt that includes an image as well as text. We tell it what to look at by attaching an image file to a user message. `attachments[].path` is the only thing it needs, a string path to a real file on disk.
+
+We don't swap the chat shape. We add `attachments` to the existing `history` message we already use for text completions.
+
+`attachments[].path` is the multimodal engine's API surface. The SDK reads the bytes; the projector runs before the message reaches the LLM. Adding an attachment to a user message is one extra field on the existing history entry:
+
+```ts
+attachments: [{ path: "./examples/multimodal/input/cat.jpg" }],
+```
+
+Calling `completion()` with the same shape as a text call is what kicks off the multimodal run. The only new field is the `attachments` array on the user message:
+
+```ts
+const result = completion({ modelId: multimodalId, history, stream: true });
+```
+
+Once the call returns, drain the tokens same as text-only. Note that the drain uses `process.stdout.write("\n")` at the end to flush a newline. The drain looks like:
+
+```ts
+for await (const token of result.tokenStream) {
+  process.stdout.write(token);
+}
+process.stdout.write("\n");
+```
+
+The path is relative to where we run the script from, or absolute if we prefer. We drop any local `.jpg` or `.png` at the path we pass in.
+
+> Note: the multimodal model needs the projector loaded (from the previous lesson) to interpret the image. If `projectionModelSrc` was missing, the model would silently ignore the attachment and respond as if no image was attached.
+
+## Put it to the test
+
+1. Add `attachments: [{ path: "./examples/multimodal/input/cat.jpg" }]` to the user message in `history`.
+2. Call `completion({ modelId: multimodalId, history, stream: true })`.
+3. Iterate `result.tokenStream` and write each token to stdout.

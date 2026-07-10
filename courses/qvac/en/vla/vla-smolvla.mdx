@@ -1,0 +1,97 @@
+---
+title: "Run a SmolVLA action inference"
+sourceExample: "packages/sdk/examples/vla-smolvla.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: loads-vla
+    description: 'Loads SmolVLA with modelType ggml-vla'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelType\\s*:\\s*[`\"']ggml-vla[`\"']"
+  - id: fetches-hparams
+    description: 'Calls vlaHparams to read the model hyperparameters'
+    pattern: "vlaHparams"
+  - id: preprocesses-images
+    description: 'Calls vlaPreprocessImage to build the two camera frames'
+    pattern: "vlaPreprocessImage"
+  - id: calls-vla
+    description: 'Calls vla({ modelId, images, state, tokens, mask, noise })'
+    pattern: "vla\\s*\\(\\s*\\{[^}]*modelId[^}]*images"
+hints:
+  - "loadModel({ modelSrc: SMOLVLA_LIBERO_VISION_Q8, modelType: 'ggml-vla', modelConfig: { backend: 'cpu' } })."
+  - "vlaHparams({ modelId }) returns the model-specific inputs: visionImageSize, numCameras, tokenizerMaxLength, chunkSize, maxStateDim, maxActionDim, and (for some models) stateInputMode."
+  - "Build synthetic inputs sized to the hparams. For SmolVLA, the state buffer is real (six floats, padded to maxStateDim) and the model expects two camera frames."
+expectedOutput:
+  - "▸ Loading SmolVLA model..."
+  - "▸ Model loaded: model-7f2a"
+  - "▸ Backend: ggml-vla"
+  - "▸ Running VLA inference..."
+  - "▸ Got 5 action steps of dim 7."
+  - "▸ Timing: vision=120ms smollm2=850ms ode=240ms total=1230ms"
+---
+
+VLA (vision-language-action) models are the model class for robot control.
+
+VLA (vision-language-action) models take a camera frame and a task description and produce an action chunk the robot should take. The training data covers real-world manipulation tasks: grasping, picking, placing. The SDK includes two families: SmolVLA (a small, fast model from Hugging Face) and π₀.₅ (a larger model from Physical Intelligence). They share the same API surface but the input shapes differ.
+
+The first call loads SmolVLA into memory. SmolVLA is the smaller of the two VLAs in the SDK. The first load would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: SMOLVLA_LIBERO_VISION_Q8,
+  modelType: "ggml-vla",
+  modelConfig: { backend: "cpu" },
+});
+```
+
+Each VLA model has different input shapes; reading them up front is the canonical pre-call move:
+
+```ts
+const { hparams } = await vlaHparams({ modelId });
+```
+
+The hparams tell you the input shapes. For SmolVLA, you need two camera frames of `visionImageSize × visionImageSize × 3`, a state vector padded to `maxStateDim`, tokens of length `tokenizerMaxLength`, and a noise buffer of length `chunkSize × maxActionDim`.
+
+SmolVLA wants state as a separate field, unlike π₀.₅ which tokenises it. The synthetic inputs sized to hparams would look like:
+
+```ts
+const size = hparams.visionImageSize;
+const dummyPixels = new Uint8Array(size * size * 3).fill(128);
+const front = vlaPreprocessImage(dummyPixels, size, size, { size });
+const wrist = vlaPreprocessImage(dummyPixels, size, size, { size });
+
+const tokens = new Int32Array(hparams.tokenizerMaxLength);
+const mask = new Uint8Array(hparams.tokenizerMaxLength);
+tokens[0] = 1;
+mask[0] = 1;
+
+const state = vlaPadState([0, 0, 0, 0, 0, 0], hparams.maxStateDim);
+const noise = new Float32Array(hparams.chunkSize * hparams.maxActionDim);
+```
+
+`vla()` takes the model id and the prebuilt inputs, returns an action chunk plus per-stage timings:
+
+```ts
+const { actions, actionDim, chunkSize, stats } = await vla({
+  modelId,
+  images: [front, wrist],
+  imgWidth: size,
+  imgHeight: size,
+  state,
+  tokens,
+  mask,
+  noise,
+});
+
+console.log(`▸ Got ${chunkSize} action steps of dim ${actionDim}.`);
+console.log(`▸ Timing: vision=${stats.visionMs}ms smollm2=${stats.lmMs}ms ode=${stats.odeMs}ms total=${stats.totalMs}ms`);
+```
+
+The `stats` object has per-stage timings: vision encoder, language model, ODE solver, and the wall-clock total. They're useful for spotting which stage is the bottleneck on a given machine.
+
+> Note: `vlaPadState` is the helper that pads a short state vector to the model's `maxStateDim`. For SmolVLA, the state is six floats (end-effector pose). For π₀.₅ the state is tokenised into the prompt instead, the state buffer is ignored.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelSrc: SMOLVLA_LIBERO_VISION_Q8`, `modelType: "ggml-vla"`, and `modelConfig: { backend: "cpu" }`.
+2. Call `vlaHparams({ modelId })` and read `hparams.visionImageSize`, `hparams.tokenizerMaxLength`, `hparams.chunkSize`, and `hparams.maxStateDim`.
+3. Build two `vlaPreprocessImage` frames, a BOS-only `tokens` and `mask` array, a `vlaPadState([0,0,0,0,0,0], hparams.maxStateDim)` state, and a `chunkSize × maxActionDim` zero-filled action buffer.
+4. Call `vla({ modelId, images: [front, wrist], imgWidth, imgHeight, state, tokens, mask, noise })` and log the action chunk and the per-stage timings.

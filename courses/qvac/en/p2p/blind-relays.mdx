@@ -1,0 +1,61 @@
+---
+title: Connect through blind relays
+sourceExample: "packages/sdk/examples/download-with-blind-relays.ts"
+platforms: ['desktop']
+tests:
+  - id: mentions-relays
+    description: Configuration includes swarmRelays
+    pattern: "swarmRelays"
+hints:
+  - "Set QVAC_CONFIG_PATH to your custom config file BEFORE importing @qvac/sdk. The SDK reads the config during initialization."
+  - "Inside qvac.config.js, add swarmRelays: ['<relay-public-key>', ...]. The bundled example uses the public Hyperswarm relay list."
+  - "Blind relays act as intermediaries, they don't see your traffic, just relay the connection setup through NATs and firewalls."
+expectedOutput:
+  - "▸ Starting model download from Hyperdrive..."
+  - "▸ Model loaded with ID: model-7f2a"
+  - "▸ Model downloaded successfully using blind relays!"
+---
+
+The previous lesson pre-downloaded a model from a regular Hyperdrive seed. This one makes sure peers behind NATs can find each other.
+
+Most peers are behind NATs or firewalls, so they can't accept incoming connections, which makes peer-to-peer model downloads hard. Blind relays solve this: they're public Hyperswarm nodes that help two peers find each other without seeing the actual traffic.
+
+The SDK reads its config during initialization. The `QVAC_CONFIG_PATH` env var has to be set *before* the `import "@qvac/sdk"` line, since module evaluation reads the config at import time.
+
+The configuration file is a regular JavaScript module that exports the relay list. Note that `swarmRelays` is the only field, an array of `host:port:pubkey` strings:
+
+```js
+// blind-relay.config.js
+export default {
+  swarmRelays: [
+    // Public Hyperswarm relay public keys
+    "rs1.example.com:1234:abcdef...",
+    "rs2.example.com:1234:fedcba...",
+  ],
+};
+```
+
+`QVAC_CONFIG_PATH` must be set BEFORE `import '@qvac/sdk'`, since module evaluation reads the config at import time. The env-then-import sequence looks like:
+
+```ts
+process.env["QVAC_CONFIG_PATH"] = "./blind-relay.config.js";
+
+const modelId = await loadModel({ modelSrc: LLAMA_3_2_1B_INST_Q4_0 });
+await unloadModel({ modelId });
+
+await downloadAsset({
+  assetSrc: LLAMA_3_2_1B_INST_Q4_0,
+  onProgress: (p) => {
+    const mb = (n: number) => (n / 1e6).toFixed(1);
+    process.stderr.write(`▸ ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)\n`);
+  },
+});
+```
+
+The relays help establish the peer connection through NAT. They don't see the actual model data. The download happens peer-to-peer once the connection is set up.
+
+> Note: blind relays only help with NAT traversal. They do not anonymize traffic or change what's downloaded.
+
+## Put it to the test
+
+1. Set up the relay config (file + env var) and call `loadModel` followed by `downloadAsset`. Both should succeed via the configured relays.

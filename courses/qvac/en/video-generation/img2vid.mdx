@@ -1,0 +1,82 @@
+---
+title: "Build a video from a still image"
+sourceExample: "packages/sdk/examples/diffusion-img2vid.ts"
+platforms: ['node']
+tests:
+  - id: loads-i2v-model
+    description: 'Loads Wan2_1 I2V with clipVisionModelSrc'
+    pattern: "clipVisionModelSrc"
+  - id: passes-init-image
+    description: 'Reads an init image and passes it as init_image Uint8Array'
+    pattern: "fs\\.readFileSync\\s*\\([^)]*\\.(png|jpg|jpeg)[\\s\\S]{0,200}init_image\\s*:"
+  - id: uses-mode-img2vid
+    description: 'Sets mode: img2vid'
+    pattern: "mode\\s*:\\s*[`'\"]img2vid[`'\"]"
+  - id: sets-strength
+    description: 'Sets strength between 0 and 1'
+    pattern: "strength\\s*:\\s*0?\\.[0-9]+"
+hints:
+  - "Use WAN2_1_I2V_14B_Q4_K_M as the main model, and pass clipVisionModelSrc: CLIP_VISION_H. That's the vision encoder that lets the model read the first frame."
+  - "init_image is a Uint8Array of the still image. strength 0.85 keeps the first frame readable while letting motion happen, go lower and motion dies."
+  - "Same `outputs` shape as txt2vid: a `Promise<Uint8Array[]>` of encoded video bytes. Save with `fs.writeFileSync('out.mp4', outputs[0])`; the container is decided by the file extension."
+expectedOutput:
+  - "Generated 1 video"
+---
+
+The previous lesson built a video from text. This one builds one from a still image.
+
+`txt2vid` builds the clip from text. `img2vid` starts from a still and animates it forward. The first frame becomes the input; the rest of the clip is generated from the prompt.
+
+The still comes in via `init_image`. `strength` controls how much motion happens, and at `0` we get a frozen frame, and at `1` we lose all resemblance to the source. Most clips sit somewhere around `0.6` to `0.85`.
+
+For img2vid, the model needs a vision encoder alongside the diffusion model. `WAN2_1_I2V_14B_Q4_K_M` is the I2V model, with `CLIP_VISION_H` as the vision encoder:
+
+The I2V model needs a vision tower as a side file (CLIP-style encoder), in the same slot T2V uses for T5-XXL. You would load it like so:
+
+```ts
+const videoId = await loadModel({
+  modelSrc: WAN2_1_I2V_14B_Q4_K_M,
+  modelType: "sdcpp-generation",
+  modelConfig: {
+    mode: "video",
+    t5XxlModelSrc: UMT5_XXL_FP16,
+    vaeModelSrc: WAN_2_1_COMFYUI_REPACKAGED_VAE,
+    clipVisionModelSrc: CLIP_VISION_H,
+  },
+});
+```
+
+`init_image` is the first frame the diffusion model starts denoising from; the vision tower encodes it, the diffusion model adds motion, and the VAE decodes:
+
+```ts
+const initImage = new Uint8Array(fs.readFileSync("./examples/diffusion/input/portrait.png"));
+```
+
+`video({ mode: "img2vid", ... })` kicks off the animation; awaiting `outputs` resolves to the encoded video bytes. Note that `init_image` is the first frame and `strength` is how much it can change. Here's an example that reads a portrait PNG, animates it forward, and writes the first clip to disk:
+
+```ts
+const result = video({
+  modelId: videoId,
+  mode: "img2vid",
+  prompt: "the subject slowly turns and smiles, soft natural lighting, cinematic",
+  init_image: initImage,
+  strength: 0.85,
+  width: 480,
+  height: 832,
+  video_frames: 17,
+  fps: 16,
+});
+const outputs = await result.outputs;
+const firstClip = outputs[0];
+if (!firstClip) throw new Error("No video returned from video()");
+fs.writeFileSync("portrait.mp4", firstClip);
+console.log(`Generated ${outputs.length} video`);
+```
+
+> Note: `clipVisionModelSrc` is the vision encoder that comes alongside the I2V model. Pairing it with the wrong model (or omitting it) means the first frame isn't in the input and the output has nothing to anchor on, so the result drifts frame-to-frame.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelSrc: WAN2_1_I2V_14B_Q4_K_M`, `modelType: "sdcpp-generation"`, and the T5-XXL / VAE / CLIP vision sources in `modelConfig`.
+2. Read a portrait PNG into a `Uint8Array` with `fs.readFileSync`.
+3. Call `video({ modelId, mode: "img2vid", prompt, init_image, strength: 0.85, width, height, video_frames, fps })`, await the outputs, write `outputs[0]` to a `.mp4` file, and console.log the count.

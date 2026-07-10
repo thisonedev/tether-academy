@@ -1,0 +1,82 @@
+---
+title: "Diarize speakers with Parakeet Sortformer"
+sourceExample: "packages/sdk/examples/transcription/parakeet-sortformer.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: loads-sortformer
+    description: 'Loads the Sortformer model first'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*PARAKEET_SORTFORMER"
+  - id: loads-tdt
+    description: 'Loads the TDT model second'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*PARAKEET_TDT_0_6B_V3_Q8_0"
+  - id: parses-speaker-lines
+    description: "Parses 'Speaker N: start - end' lines from the Sortformer output"
+    pattern: "Speaker\\s+\\d+|match\\s*\\(\\s*[/\\\\]Speaker"
+hints:
+  - "Sortformer outputs a text block where each line is 'Speaker N: <start>s - <end>s'. Parse the lines into segments."
+  - "After the diarization pass, unload Sortformer and load TDT. TDT does the actual transcription per segment."
+  - "The upstream example slices the audio per segment. We call transcribe on the full file as a stand-in; the slicing code lives in the upstream example."
+expectedOutput:
+  - "Speaker 1 (0.50s - 3.20s): Hello, how are you today?"
+  - "Speaker 2 (3.40s - 6.10s): I'm doing well, thanks for asking."
+---
+
+When a single audio file has more than one speaker, we want a transcript that says who said what. Sortformer diarizes the audio into speaker-attributed segments, then TDT transcribes each segment into text.
+
+The pipeline runs in two passes. Sortformer returns a text block where each line is `Speaker N: <start>s - <end>s`. TDT transcribes each segment and we attach the text to the speaker metadata.
+
+Each `Speaker N: <start>s - <end>s` line becomes a `{ speaker, start, end }` object. The Sortformer-to-TDT chain starts with the diarization pass. The first pass would look like the following:
+
+```ts
+const sfModelId = await loadModel({
+  modelSrc: PARAKEET_SORTFORMER_4SPK_V2_1_Q8_0,
+  modelType: "parakeet-transcription",
+});
+
+const diarization = await transcribe({
+  modelId: sfModelId,
+  audioChunk: audioFilePath,
+});
+await unloadModel({ modelId: sfModelId });
+
+const segments = diarization
+  .split("\n")
+  .map((line) => line.match(/Speaker (\d+): ([\d.]+)s - ([\d.]+)s/))
+  .filter((m): m is RegExpMatchArray => m !== null)
+  .map((m) => ({ speaker: +m[1]!, start: +m[2]!, end: +m[3]! }))
+  .sort((a, b) => a.start - b.start);
+```
+
+Second pass: load TDT, transcribe each diarized segment. The example transcribes the full file as a stand-in; the upstream slices per segment (better accuracy, N× the inference):
+
+```ts
+const tdtModelId = await loadModel({
+  modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0,
+  modelType: "parakeet-transcription",
+});
+
+const results: { speaker: number; start: number; end: number; text: string }[] = [];
+for (const seg of segments) {
+  const text = await transcribe({ modelId: tdtModelId, audioChunk: audioFilePath });
+  results.push({ ...seg, text });
+}
+await unloadModel({ modelId: tdtModelId });
+```
+
+One log line per diarized result, with the speaker label and time range:
+
+```ts
+for (const r of results) {
+  console.log(`Speaker ${r.speaker} (${r.start.toFixed(2)}s - ${r.end.toFixed(2)}s): ${r.text}`);
+}
+```
+
+The example above calls `transcribe` against the full file as a stand-in for per-segment slicing. The upstream `parakeet-sortformer.ts` slices the audio per segment by reading the WAV bytes and writing a new WAV for each segment, then calls `transcribe` once per slice. Both produce per-speaker transcripts. The slicing approach is the production-ready version.
+
+> Note: Sortformer v2.1 supports up to 4 speakers. For more speakers, split the audio or run the diarization in overlapping windows.
+
+## Put it to the test
+
+1. Load `PARAKEET_SORTFORMER_4SPK_V2_1_Q8_0` with `modelType: "parakeet-transcription"`, call `await transcribe({ modelId, audioChunk: audioFilePath })`, then `unloadModel`. Parse the output lines into `{ speaker, start, end }` objects.
+2. Load `PARAKEET_TDT_0_6B_V3_Q8_0` and for each segment call `await transcribe({ modelId: tdtModelId, audioChunk: audioFilePath })`, attaching the text.
+3. Console.log one line per result: `Speaker N (start - end): text`.

@@ -1,0 +1,75 @@
+---
+title: "Read the stop reason from a completion"
+sourceExample: "packages/sdk/examples/completion-stop-reason.ts"
+platforms: ['node']
+tests:
+  - id: awaits-final
+    description: Awaits result.final to read the aggregate
+    pattern: "await\\s+result\\.final"
+  - id: reads-stopreason
+    description: Reads final.stopReason
+    pattern: "final\\.stopReason"
+  - id: branches
+    description: 'Branches on the stopReason value'
+    pattern: "stopReason\\s*===\\s*\"(length|cancelled)\""
+  - id: sets-budget
+    description: Sets a token budget via generationParams.predict
+    pattern: "predict\\s*:"
+hints:
+  - "result.final is a Promise<CompletionFinal>. Await it to get the aggregate after the stream ends."
+  - "stopReason is undefined on a natural end-of-sequence, 'length' when the token budget was hit, 'cancelled' if the request was cancelled."
+  - "Set a tight token budget with generationParams: { predict: 10 } so the lesson's simulated output shows the truncated path."
+  - "A small prompt like 'Say hi in one word.' with predict: 10 lets you see the truncated path reliably."
+expectedOutput:
+  - "▸ Completion started (predict: 10)"
+  - "▸ Stream ended (10 tokens emitted)"
+  - "▸ truncated: model hit the token budget"
+---
+
+Now that we know how to iterate the event stream, let's look at what we get when the stream ends.
+
+Every `CompletionFinal` carries a `stopReason` that explains how the model stopped generating:
+
+- `undefined`, natural end of sequence (EOS). The model finished on its own. This is the common case.
+- `"length"`, the `predict` token budget was exhausted. Output is truncated, the model did not reach a natural stopping point.
+- `"cancelled"`, the request was cancelled via `cancel({ requestId })`.
+
+Setting `predict: 10` forces the truncated path. You would call it in the following way:
+
+```ts
+const result = completion({
+  modelId,
+  history: [{ role: "user", content: "Say hi in one word." }],
+  generationParams: { predict: 10 },
+  stream: true,
+});
+```
+
+The drain is necessary even when we only care about `final`. Note that without it, the stream backs up and `result.final` never resolves. You would write the drain like so:
+
+```ts
+for await (const token of result.tokenStream) process.stdout.write(token);
+```
+
+After the drain, we read the aggregate. `result.final` is the canonical surface for it. Note that the `await` is what fetches the aggregated `contentText`, `thinkingText`, `toolCalls`, `stats`, and `stopReason`:
+
+```ts
+const final = await result.final;
+```
+
+Branching on `stopReason === "length"` is how we surface the truncation. Note that the only "length" value here is the budget-truncation path; `"cancelled"` is a separate branch. Consider the following example:
+
+```ts
+if (final.stopReason === "length") {
+  console.log("▸ truncated: model hit the token budget");
+}
+```
+
+> Note: a tight `predict` budget on a short prompt is the easiest way to see the truncation path. In production you usually want a generous budget and rely on EOS, but reading `stopReason` is how you tell the two apart after the fact.
+
+## Put it to the test
+
+1. Use `generationParams: { predict: 10 }` so the response truncates before it finishes.
+2. Iterate `result.tokenStream` to completion.
+3. After the loop, await `result.final` and read `final.stopReason`.
+4. Branch on `final.stopReason`. For `"length"`, log that the token budget cut off the response.

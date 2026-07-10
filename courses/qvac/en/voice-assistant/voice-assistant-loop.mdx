@@ -1,0 +1,115 @@
+---
+title: "Build a real-time voice assistant loop"
+sourceExample: "packages/sdk/examples/voice-assistant/voice-assistant.ts"
+platforms: ['desktop']
+tests:
+  - id: loads-asr
+    description: 'Loads Whisper with a Silero VAD model'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc\\s*:\\s*WHISPER_TINY[\\s\\S]*?vadModelSrc"
+  - id: loads-llm
+    description: 'Loads an LLM with modelId'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc\\s*:\\s*LLAMA_3_2_1B_INST_Q4_0"
+  - id: loads-tts
+    description: 'Loads a TTS model with the supertonic engine flag'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc\\s*:\\s*TTS_EN_SUPERTONIC_Q8_0[\\s\\S]*?ttsEngine"
+  - id: transcribes-stream
+    description: 'Opens a transcribeStream session and iterates the result'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+transcribeStream"
+  - id: runs-completion
+    description: 'Calls completion() against the LLM model'
+    pattern: "completion\\s*\\(\\s*\\{[^}]*modelId\\s*:\\s*llmModelId"
+  - id: runs-tts
+    description: 'Calls textToSpeech() against the TTS model'
+    pattern: "textToSpeech\\s*\\(\\s*\\{[^}]*modelId\\s*:\\s*ttsModelId"
+hints:
+  - "Three loadModel() calls: WHISPER_TINY with a vadModelSrc, LLAMA_3_2_1B_INST_Q4_0 with a ctx_size, and TTS_EN_SUPERTONIC_Q8_0 with ttsEngine: 'supertonic'."
+  - "The main loop iterates transcribeStream({ modelId: asrModelId }), pushes each user turn into history, then runs completion() with stream: true."
+  - "After streaming the assistant's text, push it into history and call textToSpeech() with inputType: 'text' and stream: false. await ttsResult.buffer before the next turn."
+expectedOutput:
+  - "▸ Loading whisper-tiny + Silero VAD..."
+  - "▸ Loading Llama 3.2 1B..."
+  - "▸ Loading Supertonic TTS..."
+  - "▸ All models loaded."
+  - "▸ Listening. Speak a question and pause. Ctrl+C to quit."
+---
+
+Now that we've seen speech-to-text, text generation, and text-to-speech separately, we're going to put them together.
+
+A voice assistant is a loop: listen, transcribe, answer, speak. Each piece lives in a chapter we've already done. This lesson wires the three pieces into a streaming conversation.
+
+Three models to load: ASR with Whisper + Silero VAD, LLM with Llama 3.2 1B, TTS with Supertonic English. You would load them in this sequence:
+
+```ts
+const asrModelId = await loadModel({
+  modelSrc: WHISPER_TINY,
+  modelConfig: {
+    vadModelSrc: VAD_SILERO_5_1_2,
+    audio_format: "f32le",
+    language: "en",
+  },
+});
+const llmModelId = await loadModel({
+  modelSrc: LLAMA_3_2_1B_INST_Q4_0,
+  modelConfig: { ctx_size: 4096 },
+});
+const ttsModelId = await loadModel({
+  modelSrc: TTS_EN_SUPERTONIC_Q8_0,
+  modelConfig: {
+    ttsEngine: "supertonic",
+    language: "en",
+    voice: "F1",
+    ttsSpeed: 1.05,
+    ttsNumInferenceSteps: 5,
+  },
+});
+```
+
+The system prompt is what tells the model how to behave: short answers (TTS takes ~1s per sentence), no markdown (asterisks sound bad read aloud), no lists (hard to follow mid-task). The system prompt might look as follows:
+
+```ts
+const history: Array<{
+  role: "system" | "user" | "assistant";
+  content: string;
+}> = [{ role: "system", content: SYSTEM_PROMPT }];
+```
+
+The main loop is one async `for await` over the stream of transcripts. Each iteration produces a user turn, runs the LLM, then speaks the answer. The main loop looks like this:
+
+```ts
+for await (const rawText of transcribeStream({ modelId: asrModelId })) {
+  const userText = rawText.trim();
+  if (userText.length === 0) continue;
+
+  history.push({ role: "user", content: userText });
+
+  const llmResult = completion({
+    modelId: llmModelId,
+    history,
+    stream: true,
+  });
+  let assistantText = "";
+  for await (const token of llmResult.tokenStream) {
+    process.stdout.write(token);
+    assistantText += token;
+  }
+  history.push({ role: "assistant", content: assistantText });
+
+  const ttsResult = textToSpeech({
+    modelId: ttsModelId,
+    text: assistantText.trim(),
+    inputType: "text",
+    stream: false,
+  });
+  await ttsResult.buffer;
+}
+```
+
+The three calls in the loop body — `transcribeStream`, `completion({ stream: true })`, and `textToSpeech({ stream: false })` — are the same shapes from the transcription, text-generation, and text-to-speech chapters. The new piece is the wiring: one `for await` driving one turn at a time, the `history` array shared across turns, and `assistantText.trim()` flowing straight from the LLM stream into the TTS call.
+
+> Note: the system prompt bans markdown and lists because the output is spoken aloud. A `### heading` or a `1. ` list reads as a stuttery mess through TTS.
+
+## Put it to the test
+
+1. Make three `loadModel()` calls for the ASR (Whisper + Silero VAD), LLM (Llama 3.2 1B), and TTS (Supertonic English) models.
+2. Declare `history` with the system prompt as the first message.
+3. Open a `for await (const rawText of transcribeStream({ modelId: asrModelId }))` loop. Each iteration: trim, push user turn into `history`, call `completion()` with `stream: true`, push assistant turn into `history`, then call `textToSpeech()` and `await ttsResult.buffer`. After the loop, `unloadModel()` the three models.

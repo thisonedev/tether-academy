@@ -1,0 +1,40 @@
+---
+title: Load an embedding model
+sourceExample: "packages/sdk/examples/embed-multi-gpu.ts"
+platforms: ['node']
+tests:
+  - id: calls-loadmodel
+    description: 'Calls loadModel with { modelSrc: GTE_LARGE_FP16 }'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc"
+  - id: stores-modelid
+    description: Awaits the result into a modelId variable
+    pattern: "modelId\\s*=\\s*await\\s+loadModel"
+hints:
+  - "loadModel is a top-level export from @qvac/sdk. Same function that loads LLMs loads embedding models."
+  - "GTE_LARGE_FP16 is the embedding model constant in @qvac/sdk. Import it the same way you imported the LLM constants in chapter 1."
+  - "loadModel returns a modelId. Store it in a variable so the next lessons can reuse the same loaded model."
+expectedOutput:
+  - "modelId: model-7f2a"
+---
+
+Now that we've finished chapter 2, we're going to start a new line of work: embeddings.
+
+An embedding is a list of numbers that encodes what a piece of text means. A real model maps a sentence to a 1024-number array. We can't read the numbers, but we can compare them with math, and two similar sentences end up with similar numbers.
+
+The QVAC SDK loads embedding models through the same `loadModel()` we used in chapter 1. Same import, same options, same `modelId` pattern. The only thing that changes is the constant we hand to `modelSrc`.
+
+`GTE_LARGE_FP16` is the SDK's embedding model. The call is the same `loadModel` from chapter 1, with `GTE_LARGE_FP16` in `modelSrc`:
+
+```ts
+const modelId = await loadModel({ modelSrc: GTE_LARGE_FP16 });
+console.log("modelId:", modelId);
+```
+
+Save the `modelId`. The next lessons vectorize text against the same loaded model, and reloading between calls would be wasteful.
+
+> Note: the import line changes too. We'll have both `loadModel` and `GTE_LARGE_FP16` in the same `import { ... }` statement, since they come from the same `@qvac/sdk` package.
+
+## Put it to the test
+
+1. Inside `main()`, call `loadModel` with `{ modelSrc: GTE_LARGE_FP16 }`.
+2. `await` the result and store it in a variable called `modelId`. Log `modelId` to stdout.

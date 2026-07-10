@@ -1,0 +1,74 @@
+---
+title: "Handle event types in a completion stream"
+sourceExample: "packages/sdk/examples/completion-events.ts"
+platforms: ['node']
+tests:
+  - id: iterates-events
+    description: 'Iterates `result.events` with `for await`'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+[^)]*events"
+  - id: switches-on-event-type
+    description: 'Switches on `event.type` for each event kind'
+    pattern: "switch\\s*\\(\\s*event\\.type|case\\s*[\"']contentDelta[\"']|case\\s*[\"']thinkingDelta[\"']|case\\s*[\"']toolCall[\"']|case\\s*[\"']completionDone[\"']"
+  - id: handles-content-delta
+    description: 'Handles the `contentDelta` event'
+    pattern: "case\\s*[\"']contentDelta[\"']|event\\.type\\s*===?\\s*[\"']contentDelta[\"']"
+  - id: reads-final
+    description: 'Reads aggregated fields from `await result.final`'
+    pattern: "await\\s+result\\.final"
+hints:
+  - "result.events is an AsyncIterable<CompletionEvent>. Each event has a type discriminator: contentDelta, thinkingDelta, toolCall, toolError, completionStats, completionDone, rawDelta."
+  - "Use a switch on event.type instead of multiple if (event.type === ...) checks. The compiler narrows event per case so you get the right payload without casting."
+  - "await result.final resolves once the stream ends and gives you aggregated contentText, thinkingText, toolCalls, stats, and raw.fullText, the same fields the events tell you one token at a time."
+expectedOutput:
+  - "▸ Streaming..."
+  - "Paris is the capital of France."
+  - "▸ Final contentText: Paris is the capital of France."
+  - "▸ Stop reason: eos"
+---
+
+Now that we've seen the basic contentDelta and thinkingDelta events, let's look at the full event surface.
+
+The `events` stream on a completion run is the canonical surface. Each event has a typed payload: a token delta, a thinking block, a tool call, a stats frame, the final `done`, or the raw text for debug.
+
+We use a `switch` on `event.type` to handle each kind.
+
+Putting the `for await` loop and the `switch` together, here's the full dispatch:
+
+```ts
+for await (const event of result.events) {
+  switch (event.type) {
+    case "contentDelta":
+      process.stdout.write(event.text);
+      break;
+    case "thinkingDelta":
+      process.stderr.write(`[think] ${event.text}`);
+      break;
+    case "toolCall":
+      console.log(`▸ tool ${event.call.name}(${JSON.stringify(event.call.arguments)})`);
+      break;
+    case "completionStats":
+      console.log(`▸ ${event.stats.tokensPerSecond?.toFixed(1)} tok/s`);
+      break;
+    case "completionDone":
+      break;
+  }
+}
+```
+
+`contentDelta` is the model's text token-by-token, written to stdout. `thinkingDelta` is the chain-of-thought stream, written to stderr with a `[think]` prefix so the reasoning doesn't get mixed into the user-visible response. `toolCall` marks a function-call emission in the response stream. `completionStats` carries throughput numbers.
+
+After the loop, `await result.final` joins the event stream into one object: `contentText`, `thinkingText`, `toolCalls`, `stats`, `stopReason`, `raw.fullText`. Reading the aggregate would look like this:
+
+```ts
+console.log();
+const final = await result.final;
+console.log(`▸ Final contentText: ${final.contentText}`);
+console.log(`▸ Stop reason: ${final.stopReason}`);
+```
+
+> Note: the older `tokenStream` and `text` shortcuts still work but are deprecated. New code should consume `events` for streaming and await `final.contentText` for the aggregated result.
+
+## Put it to the test
+
+1. Walk `result.events` with a `for await ... { switch (event.type) { ... } }`. Cases: `contentDelta` writes `event.text` to stdout, `thinkingDelta` writes `[think] ${event.text}` to stderr, `completionDone` breaks.
+2. After the loop, `await result.final` and log `final.contentText` and `final.stopReason`.

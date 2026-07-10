@@ -1,0 +1,48 @@
+---
+title: "Check if a model is fine-tunable"
+platforms: ['node']
+tests:
+  - id: reads-quantization
+    description: Reads the quantization field from getModelInfo
+    pattern: "info\\.quantization|\\.quantization"
+  - id: uses-fine-tunable-model
+    description: Uses QWEN3_600M_INST_Q4 (Q4_0 quantization, fine-tunable)
+    pattern: "QWEN3_600M_INST_Q4"
+  - id: prints-eligibility
+    description: Logs whether the model is fine-tunable
+    pattern: "console\\.log\\s*\\([^)]*fineTunable|console\\.log\\s*\\([^)]*Fine-tunable"
+hints:
+  - "getModelInfo takes { modelId } and returns the loaded model's quantization, isLoaded, cacheFiles, and other metadata."
+  - "Fine-tuning only works with F32, F16, Q4_0, Q8_0, TQ1_0, or TQ2_0. Q4_K_M (used by many larger Qwen3 constants) is rejected."
+  - "Check quantization first, the finetune() call would fail halfway through a multi-hour training run otherwise."
+expectedOutput:
+  - "Quantization: Q4_0"
+  - "Fine-tunable: yes"
+---
+
+We're starting a new chapter on fine-tuning.
+
+A trained LoRA adapter only helps if we can stack it on a base model that supports fine-tuning. The QVAC SDK accepts `Q4_K_M` for inference but rejects that quantization for training. We'd see the error halfway through a multi-hour run.
+
+`getModelInfo({ modelId })` returns the loaded model's `quantization` string. We decide on the base model first, call `getModelInfo` to confirm, then start the trainer.
+
+For a 600M-parameter Qwen3 model (`QWEN3_600M_INST_Q4`) the quantization is `Q4_0`, which is fine-tunable. Larger Qwen3-4B and Qwen3-8B constants come in as `Q4_K_M` and aren't fine-tunable without re-quantizing the GGUF.
+
+`info.quantization` tells us whether the trainer can update this model. The allowlist is `F32`, `F16`, `Q4_0`, `Q8_0`, `TQ1_0`, `TQ2_0`. You would write the check like so:
+
+```ts
+const info = await getModelInfo({ modelId });
+const fineTunable = ["F32", "F16", "Q4_0", "Q8_0", "TQ1_0", "TQ2_0"];
+
+console.log("Quantization:", info.quantization);
+console.log("Fine-tunable:", fineTunable.includes(info.quantization) ? "yes" : "no");
+```
+
+Swap `QWEN3_600M_INST_Q4` for a `Q4_K_M` constant and the second line flips to `no`. Pick a fine-tunable model before you start training.
+
+> Note: the allowlist covers the quantizations the trainer knows how to update. Other quantizations might work someday but aren't supported in this version of the SDK.
+
+## Put it to the test
+
+1. Call `getModelInfo({ modelId })` and read `info.quantization` into a local variable.
+2. Check the quantization against the allowlist `["F32", "F16", "Q4_0", "Q8_0", "TQ1_0", "TQ2_0"]` and log the verdict.

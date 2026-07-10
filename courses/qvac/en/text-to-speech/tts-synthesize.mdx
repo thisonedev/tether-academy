@@ -1,0 +1,61 @@
+---
+title: Synthesize speech from text
+sourceExample: "packages/sdk/examples/tts/supertonic.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: sets-tts-engine
+    description: 'Sets modelConfig.ttsEngine to "supertonic"'
+    pattern: "ttsEngine\\s*:\\s*[`\"']supertonic[`\"']"
+  - id: calls-text-to-speech
+    description: 'Calls textToSpeech({ modelId, text })'
+    pattern: "textToSpeech\\s*\\(\\s*\\{[^}]*modelId[^}]*text"
+  - id: awaits-buffer
+    description: 'Awaits result.buffer'
+    pattern: "await\\s+result\\.buffer"
+hints:
+  - "textToSpeech takes { modelId, text, inputType: 'text', stream: false }. The result has a buffer (Promise<Int16Array>) holding the audio samples."
+  - "Set modelConfig.ttsEngine: 'supertonic', pick a voice and a language. The bundled voices are F1, F2, M1, M2, see the supertonic example for the full list."
+  - "Write the Int16Array to disk as a WAV by adding the WAV header yourself (44 bytes) or use the helper from the supertonic example."
+expectedOutput:
+  - "▸ TTS complete. Total samples: 22050"
+---
+
+We're starting a new chapter on text-to-speech, and we're going to turn text into audio.
+
+Text-to-speech runs the Supertonic engine on the supplied text and hands us back raw audio samples. The result is an `Int16Array` (one sample per array slot), 44100 Hz by default. We write it to disk as a WAV with a 44-byte header prepended.
+
+Supertonic needs three knobs at first load: `ttsEngine` (backend), `language`, `voice` (F1/F2/M1/M2). All three are required. The first load with them set would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: TTS_MULTILINGUAL_SUPERTONIC3_Q8_0,
+  modelConfig: {
+    ttsEngine: "supertonic",
+    language: "en",
+    voice: "F1",
+  },
+});
+```
+
+`textToSpeech()` is fire-and-await. Returns a 44.1 kHz mono `Int16Array`, the unit a WAV writer expects as follows:
+
+```ts
+const result = textToSpeech({
+  modelId,
+  text: "Hello, world.",
+  inputType: "text",
+  stream: false,
+});
+const audioBuffer = await result.buffer;
+console.log(`▸ TTS complete. Total samples: ${audioBuffer.length}`);
+```
+
+To save it as a `.wav` file, we prepend a 44-byte header (see the supertonic example's `createWav` helper). The samples themselves are `Int16Array` values at the engine's sample rate.
+
+> Note: the `ttsSpeed` and `ttsNumInferenceSteps` fields in `modelConfig` trade latency against quality. `ttsSpeed: 1.05` and `ttsNumInferenceSteps: 5` are the defaults in the SDK and a good starting point.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelConfig.ttsEngine: "supertonic"`, a `language`, and a `voice`.
+2. Call `textToSpeech({ modelId, text, inputType: "text", stream: false })` and `await result.buffer`.
+3. Log the buffer length.

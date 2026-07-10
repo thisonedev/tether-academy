@@ -1,0 +1,67 @@
+---
+title: "Stream transcripts with VAD and end-of-turn events"
+sourceExample: "packages/sdk/examples/transcription/whispercpp-microphone-conversation.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: enables-vad-events
+    description: 'Passes emitVadEvents: true to transcribeStream'
+    pattern: "transcribeStream\\s*\\(\\s*\\{[^}]*emitVadEvents\\s*:\\s*true"
+  - id: switches-on-event-type
+    description: 'Switches on event.type in a for-await loop'
+    pattern: "switch\\s*\\(\\s*event\\.type|case\\s+[`\"'](text|vad|endOfTurn)[`\"']"
+hints:
+  - "transcribeStream returns a duplex session. Write audio with session.write(chunk) and iterate with for-await (const event of session)."
+  - "Events are a discriminated union: { type: 'text', text }, { type: 'vad', speaking, probability }, { type: 'endOfTurn', silenceDurationMs }."
+  - "Pair the Whisper model with VAD_SILERO_5_1_2 in modelConfig. Without a VAD model, endOfTurn events never fire."
+expectedOutput:
+  - "▸ Listening..."
+  - "▸ [vad] speaking=true probability=0.87"
+  - "▸ [endOfTurn] silence 800ms"
+---
+
+Now that we can stream transcripts from a microphone, we're going to surface the VAD and end-of-turn events the engine already tracks.
+
+`transcribeStream` returns a duplex session. Audio goes in via `session.write(chunk)`, and the session yields a discriminated union of events: text chunks, voice-activity state, and turn boundaries. A real-time voice assistant builds on top of those three event types.
+
+Setting `emitVadEvents: true` and an `endOfTurnSilenceMs` of 800 surfaces VAD and end-of-turn events. The session open looks like this:
+
+```ts
+const session = await transcribeStream({
+  modelId,
+  emitVadEvents: true,
+  endOfTurnSilenceMs: 800,
+});
+
+void (async () => {
+  for await (const chunk of audioStream()) {
+    session.write(chunk);
+  }
+})();
+```
+
+Three event types on the same duplex stream, one `for await` + `switch` is the canonical consume pattern:
+
+```ts
+for await (const event of session) {
+  switch (event.type) {
+    case "text":
+      console.log(`> ${event.text.trim()}`);
+      break;
+    case "vad":
+      console.log(`▸ [vad] speaking=${event.speaking} probability=${event.probability.toFixed(2)}`);
+      break;
+    case "endOfTurn":
+      console.log(`▸ [endOfTurn] silence ${event.silenceDurationMs}ms\n`);
+      break;
+  }
+}
+```
+
+The `vad` event fires while the speaker is talking. The `endOfTurn` event fires after the speaker pauses for `endOfTurnSilenceMs` milliseconds. That silence window is the conversation-equivalent of "they're done; now I can answer."
+
+> Note: `endOfTurn` measures silence from the VAD, not from a parakeet EOU token. Pair the Whisper model with `VAD_SILERO_5_1_2` in `modelConfig.vadModelSrc` so the silence window is measured accurately.
+
+## Put it to the test
+
+1. Open `transcribeStream({ modelId, emitVadEvents: true, endOfTurnSilenceMs: 800 })`, pipe the mic stream's Float32Array frames into `session.write(chunk)` in a background task, then iterate `for await (const event of session)`.
+2. Switch on `event.type`. Console.log `text` events as transcript lines, `vad` events as VAD ticks, and `endOfTurn` events as turn boundaries.

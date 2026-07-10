@@ -1,0 +1,58 @@
+---
+title: Translate text between languages
+sourceExample: "packages/sdk/examples/translation/translation-bergamot.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: sets-engine
+    description: 'Sets engine: "Bergamot" in modelConfig'
+    pattern: "engine\\s*:\\s*[`\"']Bergamot[`\"']"
+  - id: calls-translate
+    description: 'Calls translate({ modelId, text })'
+    pattern: "translate\\s*\\(\\s*\\{[^}]*modelId[^}]*text"
+hints:
+  - "BERGAMOT_EN_FR is the English-to-French translation model constant in the SDK. Import it alongside loadModel and translate."
+  - "Set modelConfig.engine to 'Bergamot' and pick the from and to languages, the model constant handles the file pair."
+  - "translate({ modelId, text, modelType: 'nmtcpp-translation', stream: false }) returns the translated string via result.text."
+expectedOutput:
+  - "Translated text EN -> FR: This is a test of the Bergamot translation model. -> \"Ceci est un test du modèle de traduction Bergamot.\""
+---
+
+We're starting a new chapter on translation, and we're going to translate a string between two languages.
+
+Bergamot is the on-device translation engine. Loading it looks like loading an LLM: pass a model constant, hand the engine a string, and get a translation back. Bergamot models are tiny (single-language pairs, around 30 MB), so they're cheap to keep in memory alongside other models.
+
+Bergamot is a tiny neural translation model from Mozilla, single-language pairs around 30 MB each. The `engine: "Bergamot"` flag picks the right backend. The Bergamot load would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: BERGAMOT_EN_FR,
+  modelConfig: {
+    engine: "Bergamot",
+    from: "en",
+    to: "fr",
+    beamsize: 1,
+  },
+});
+```
+
+The inference step picks up where `loadModel` left off: hand the `modelId` to `translate({ text })`, await `result.text`, get the translated string. The two new flags are `modelType` (which addon to route the call to) and `stream: false` (sync, no duplex session):
+
+```ts
+const result = translate({
+  modelId,
+  text: "Hello, world.",
+  modelType: "nmtcpp-translation",
+  stream: false,
+});
+const translatedText = await result.text;
+console.log(`EN -> FR: "${translatedText}"`);
+```
+
+The `modelType: "nmtcpp-translation"` flag tells the SDK which addon to route the call through. Without it, the SDK can't pick the right engine for translation vs transcription vs text generation.
+
+> Note: each translation model is a single language pair. For EN to DE you'd load `BERGAMOT_EN_DE` instead. The SDK doesn't translate between non-direct pairs without explicit pivot configuration.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelSrc: BERGAMOT_EN_FR` and `modelConfig.engine: "Bergamot"` (plus `from: "en"`, `to: "fr"`).
+2. Call `translate({ modelId, text, modelType: "nmtcpp-translation", stream: false })`, `await result.text`, and log the translated string.

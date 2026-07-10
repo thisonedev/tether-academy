@@ -1,0 +1,51 @@
+---
+title: "Delete documents from a RAG workspace"
+sourceExample: "packages/sdk/examples/rag/rag-hyperdb/workspaces.ts"
+platforms: ['node']
+tests:
+  - id: calls-ragdelete-with-ids
+    description: Calls ragDeleteEmbeddings with workspace and ids
+    pattern: "ragDeleteEmbeddings\\s*\\(\\s*\\{[^}]*workspace[^}]*ids"
+  - id: collects-ids
+    description: Collects fulfilled ids from ragIngest.processed
+    pattern: "ingest\\.processed|processed\\.filter"
+hints:
+  - "ragDeleteEmbeddings takes { workspace, ids: string[] }. The editor prefills the ingest + ids collection; the new piece is the delete call."
+  - "The ids argument is an array. Pass one or many. The operation is idempotent; deleting an id that doesn't exist is a no-op."
+  - "After deleting, ragSearch returns fewer results. Use a search to confirm the deletion took effect."
+expectedOutput:
+  - "▸ Before delete:"
+  - "matches"
+  - "▸ Deleted embedding"
+  - "▸ After delete:"
+---
+
+The previous lessons added documents to a workspace. This one removes them.
+
+`ragDeleteEmbeddings({ workspace, ids })` takes the workspace name and a list of ids to remove. The ids come from the `processed` array returned by `ragIngest`. The editor prefills the ingest call and the id collection; the new piece is the search + delete + re-search flow.
+
+Without a baseline, the second search is just a number. Counting search results before the delete would look as follows:
+
+```ts
+const before = await ragSearch({ modelId, workspace, query: "machine learning", topK: 5 });
+console.log(`▸ Before delete: ${before.length} matches`);
+```
+
+Now the delete. `ragDeleteEmbeddings({ workspace, ids })` removes each id in the list, and the call is idempotent: passing an id that doesn't exist is a no-op. Here's how that looks in code:
+
+```ts
+await ragDeleteEmbeddings({ workspace, ids: [ids[0]!] });
+console.log(`▸ Deleted embedding ${ids[0]}`);
+
+const after = await ragSearch({ modelId, workspace, query: "machine learning", topK: 5 });
+console.log(`▸ After delete: ${after.length} matches`);
+```
+
+In the call, `ids` is `string[]`. Pass one entry to delete a single document, or several to delete them in one call. After the delete, the workspace's index is updated. `ragSearch` returns one fewer result on the next call. If you're running repeated delete + ingest cycles, follow up with `ragReindex` after a few hundred writes to keep scores tight.
+
+> Note: `ragDeleteEmbeddings` removes the documents but doesn't shrink the on-disk index until you reindex. The next `ragSearch` skips the deleted ids, but the index file still occupies the original size until `ragReindex` is called.
+
+## Put it to the test
+
+1. The editor prefills the `ragIngest` + ids collection. Add a search before the delete and log the count.
+2. Call `ragDeleteEmbeddings({ workspace, ids: [firstId] })`, search again, and log the new count.

@@ -1,0 +1,69 @@
+---
+title: "Generate image with txt2img"
+sourceExample: "packages/sdk/examples/diffusion-txt2img.ts"
+platforms: ['node']
+tests:
+  - id: loads-diffusion-model
+    description: 'Loads a diffusion model with modelType sdcpp-generation'
+    pattern: "sdcpp-generation"
+  - id: calls-diffusion
+    description: 'Calls diffusion({ modelId, prompt })'
+    pattern: "diffusion\\s*\\(\\s*\\{[^}]*modelId[^}]*prompt"
+  - id: awaits-outputs
+    description: 'Awaits result.outputs'
+    pattern: "await\\s+result\\.outputs"
+hints:
+  - "Load with modelType 'sdcpp-generation' to get a diffusion model in memory. The SDK's diffusion() function only works against that type."
+  - "diffusion({ modelId, prompt }) returns a DiffusionResult. result.outputs is a Promise<Uint8Array[]> of PNG bytes."
+  - "Each Uint8Array in the array is one PNG. Write it to disk with fs.writeFileSync if you want a real file."
+expectedOutput:
+  - "Generated 1 image"
+---
+
+We're starting a new chapter on image generation, and we're going to make our first PNG.
+
+Diffusion models generate images by starting from noise and step-by-step turning it into what your prompt describes. The QVAC SDK wraps one inference pass into a single call: `diffusion({ modelId, prompt })`.
+
+The model needs to be loaded with the right `modelType`. `sdcpp-generation` is the official constant for the Diffusion engine. Anything else, and `diffusion()` either rejects the call or runs against the wrong backend.
+
+Result is a `DiffusionResult`. `outputs` is a `Promise<Uint8Array[]>`. Each array entry is one PNG. The default is a single image unless we ask for more.
+
+Standard FLUX.2 setup: a small diffusion model, a prompt encoder, a VAE. The whole pipeline (LLM → tokens → diffusion → latent → VAE → pixels) wires at load time. The combined `loadModel` would look like below:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: FLUX_2_KLEIN_4B_Q4_0,
+  modelType: "sdcpp-generation",
+  modelConfig: {
+    llmModelSrc: QWEN3_4B_Q4_K_M,
+    vaeModelSrc: FLUX_2_KLEIN_4B_VAE,
+  },
+});
+```
+
+Default is a single image. Same `diffusion()` shape as every other model in this chapter:
+
+```ts
+const result = diffusion({ modelId, prompt: "a cat sitting on a sofa" });
+```
+
+`outputs[0]` is the first image; `fs.writeFileSync` writes raw PNG bytes with no header needed. Note that the write needs the `if (firstImage)` guard to avoid a crash if the model fails to return an image:
+
+```ts
+const outputs = await result.outputs;
+const firstImage = outputs[0];
+if (!firstImage) throw new Error("No image returned from diffusion");
+fs.writeFileSync("cat.png", firstImage);
+
+console.log(`Generated ${outputs.length} image`);
+```
+
+Open `cat.png` after running. That's the model's answer to your prompt. The next lesson tunes the size and the step count.
+
+> Note: diffusion models are memory-heavy. A 4B-parameter Flux model in FP16 needs roughly 8 GB of VRAM. Make sure your machine has headroom before loading.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelType: "sdcpp-generation"` and the split-layout `modelConfig`.
+2. Call `diffusion({ modelId, prompt })` and `await result.outputs`.
+3. Write `outputs[0]` to `cat.png` and console.log the count.

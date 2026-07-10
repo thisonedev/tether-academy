@@ -1,0 +1,56 @@
+name: ci
+
+# Lint, build, and lesson tests on every push and PR. This is the
+# short-loop check; the `sync upstream` workflow handles the longer
+# cadence of comparing against the real SDK source.
+#
+# The prebuild hook runs the sample-sync report against a fresh clone
+# of github.com/tetherto/qvac (sparse-checkout, examples only) so the
+# build doesn't depend on the local gitignored `references/qvac/`
+# snapshot being up to date.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: install
+        run: npm ci
+
+      - name: clone upstream
+        env:
+          UPSTREAM_REPO: 'https://github.com/tetherto/qvac.git'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --filter=blob:none --sparse "$UPSTREAM_REPO" /tmp/qvac-upstream
+          cd /tmp/qvac-upstream
+          git sparse-checkout set packages/sdk/examples
+
+      - name: lint
+        env:
+          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
+        run: npm run lint
+
+      - name: verify lesson tests
+        env:
+          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
+        run: npm run verify:tests:check
+
+      - name: build
+        env:
+          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
+        run: npm run build

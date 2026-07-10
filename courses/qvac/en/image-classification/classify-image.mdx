@@ -1,0 +1,71 @@
+---
+title: Classify an image
+sourceExample: "packages/sdk/examples/classification/classify-image.ts"
+platforms: ['node', 'desktop']
+tests:
+  - id: starts-provider
+    description: 'Starts the QVAC provider before loading'
+    pattern: "startQVACProvider"
+  - id: loads-classification
+    description: 'Loads a model with modelType ggml-classification'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelType\\s*:\\s*[`\"']ggml-classification[`\"']"
+  - id: reads-image
+    description: 'Reads an image with fs.readFileSync'
+    pattern: "fs\\.readFileSync"
+  - id: calls-classify
+    description: 'Calls classify({ modelId, image })'
+    pattern: "classify\\s*\\(\\s*\\{[^}]*modelId[^}]*image"
+  - id: iterates-results
+    description: 'Loops over results and logs label and confidence'
+    pattern: "for\\s*\\(\\s*const\\s+(?:\\{|\\w+\\s+of\\s+)results|results\\.forEach|for\\s*\\(\\s*const\\s*\\{[^}]*\\}\\s*of\\s+results"
+hints:
+  - "Call startQVACProvider({}) before loadModel, and stopQVACProvider() at the end. The provider boots the local inference backend."
+  - "loadModel({ modelType: 'ggml-classification' }) with no modelSrc. The model is bundled inside @qvac/classification-ggml."
+  - "Read the image as a Buffer with fs.readFileSync(path). classify({ modelId, image }) returns an array of { label, confidence } sorted by score."
+expectedOutput:
+  - "Classification results:"
+  - "  food: 87.4%"
+  - "  report: 11.2%"
+  - "  other: 1.4%"
+---
+
+We're going to add one more image-based capability, separate from generation.
+
+Image classification takes an image and returns one or more category labels with confidence scores. The SDK includes a small bundled MobileNetV3-Small model that produces three classes: `food`, `report`, `other`. It's useful for routing (which model to invoke), filtering (does this image contain X?), and tagging at scale.
+
+The flow is similar to the other capabilities. The full lifecycle, with the provider started, the model loaded, the function called, and the provider stopped.
+
+Booting the provider is required before any model loads. The classification model is bundled in the addon, so `loadModel` takes no `modelSrc`:
+
+```ts
+await startQVACProvider({});
+const modelId = await loadModel({ modelType: "ggml-classification" });
+```
+
+The result is sorted by score descending, so `predictions[0]` is the top guess. The SDK returns a `confidence` score between 0 and 1, so multiplying by 100 will get you a percentage:
+
+```ts
+const image = fs.readFileSync("./examples/image/basic_test.jpg");
+const results = await classify({ modelId, image });
+
+for (const { label, confidence } of results) {
+  console.log(`  ${label}: ${(confidence * 100).toFixed(1)}%`);
+}
+```
+
+Freeing the model and shutting the provider back down is the cleanup. Both are explicit so the next caller doesn't see a half-running backend. You would clean up like so:
+
+```ts
+await unloadModel({ modelId });
+await stopQVACProvider();
+```
+
+The notable difference from other lessons: `loadModel` takes no `modelSrc`. The classification model is bundled inside the `@qvac/classification-ggml` addon, not downloaded from the registry. The `modelType: "ggml-classification"` flag tells the SDK which addon to route through.
+
+> Note: the bundled MobileNetV3-Small model is small on purpose. It runs in tens of milliseconds on a single CPU core. If you need a bigger or domain-specific classifier, you'd bring your own GGUF and add it to a custom addon.
+
+## Put it to the test
+
+1. Call `startQVACProvider({})` and `loadModel({ modelType: "ggml-classification" })`.
+2. Read the image with `fs.readFileSync`, call `classify({ modelId, image })`, and log each label with confidence.
+3. Call `unloadModel({ modelId })` and `stopQVACProvider()`.

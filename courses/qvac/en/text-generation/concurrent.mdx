@@ -1,0 +1,55 @@
+---
+title: "Run multiple completions in parallel"
+sourceExample: "packages/sdk/examples/concurrent-completion-collision.ts"
+platforms: ['node']
+tests:
+  - id: fires-completions-without-await
+    description: 'Calls completion() twice in the same tick before awaiting either'
+    pattern: "completion\\s*\\(\\s*\\{[^}]*modelId[^}]*\\}"
+  - id: uses-promise-all
+    description: 'Awaits both completions with Promise.all'
+    pattern: "Promise\\.all\\s*\\("
+  - id: logs-both-results
+    description: 'Logs the result of each completion with a label'
+    pattern: "console\\.log\\s*\\(\\s*[`\"'][^\"`']*\\$\\{[^}]*\\}|console\\.log\\s*\\(\\s*[`\"'][^\"`']*[`\"']"
+hints:
+  - "A loaded model is one native context. Two concurrent completions on the same model are queued by the SDK's per-(kind, modelId) FIFO, so both succeed in turn instead of colliding."
+  - "Calling completion() synchronously and only then awaiting is what puts a request 'in flight'. Promise.all([completion(...), completion(...)]) fires both at once."
+  - "Two completions on different models run in parallel. The queue is keyed per model, so distinct models never block each other."
+expectedOutput:
+  - "▸ req-A (model-A): Bitcoin is a decentralized digital currency."
+  - "▸ req-B (model-B): A hash function maps input data to a fixed-size string."
+  - "▸ Both completed."
+---
+
+In the previous lessons we've been calling `completion()` once at a time. Now let's see what happens when we fire two calls simultaneously.
+
+A loaded model is one native context under the hood: one KV-cache, one decode loop. Two completions on the same model cannot literally run at the same time. The SDK uses a per-`(kind, modelId)` FIFO admission queue, so the second request waits its turn instead of being rejected with `RequestRejectedByPolicyError`.
+
+The trick is calling `completion()` twice in the same tick before awaiting either.
+
+First we'd need to fire both `completion()` calls in the same tick, no `await` between. The two back-to-back calls look as follows:
+
+```ts
+const r1 = completion({ modelId, history, stream: false });
+const r2 = completion({ modelId, history, stream: false });
+```
+
+Next, we'd use the canonical pattern to await the results. `Promise.all` is the surface; the wait over both resolves to:
+
+```ts
+const [text1, text2] = await Promise.all([r1.text, r2.text]);
+console.log(`▸ req-A: ${text1}`);
+console.log(`▸ req-B: ${text2}`);
+console.log(`▸ Both completed.`);
+```
+
+Both `completion()` calls fire synchronously, so both end up "in flight" against the SDK's queue. `Promise.all` then waits for them. On the same model, the queue runs them in order. On different models, the per-model key means they run in parallel.
+
+> Note: if you `await` the first call before the second `completion()`, the second call never sees contention and the queue is bypassed. Fire both first, await together.
+
+## Put it to the test
+
+1. Call `completion({ modelId, history, stream: false })` twice in a row without awaiting either, assigning each to a variable.
+2. Wrap the awaits in `Promise.all([r1.text, r2.text])` and log the result of each with a label like `req-A` and `req-B`.
+3. After both finish, log `▸ Both completed.` so the output has a final line.

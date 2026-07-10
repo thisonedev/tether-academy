@@ -1,0 +1,43 @@
+---
+title: "Delete a RAG workspace and its data"
+platforms: ['node']
+tests:
+  - id: calls-ragdeleteworkspace
+    description: Calls ragDeleteWorkspace with a workspace name
+    pattern: "ragDeleteWorkspace\\s*\\(\\s*\\{[^}]*workspace"
+  - id: names-a-workspace
+    description: Names a workspace string for the ingest
+    pattern: "workspace\\s*=\\s*[`'\"][^`'\"]+[`'\"]"
+hints:
+  - "ragDeleteWorkspace({ workspace }) drops the workspace and its on-disk files in one call."
+  - "It's distinct from ragCloseWorkspace({ deleteOnClose: true }), which closes an in-memory handle. ragDeleteWorkspace removes the persistent state."
+  - "Use ragDeleteWorkspace when the workspace is no longer needed; use ragCloseWorkspace for a temporary release of the in-memory handle when you want to keep the data."
+expectedOutput:
+  - "▸ Created workspace"
+  - "▸ Deleted workspace"
+---
+
+The list-and-close lesson covered `ragCloseWorkspace`, which releases the in-memory handle. `ragDeleteWorkspace` is the heavier version. It removes the workspace and its on-disk files in one call.
+
+To delete a workspace, the SDK first needs to know which one. `workspace` is the namespace: the SDK uses it as a folder name under its data dir, so different workspaces can't see each other's data. Setting one up starts with a `ragIngest` call:
+
+```ts
+await ragIngest({ modelId, workspace, documents: samples, chunk: false });
+console.log(`▸ Created workspace '${workspace}' with ${samples.length} document`);
+```
+
+`ragDeleteWorkspace()` drops the whole folder in one go. Right call for "throw away the index and start over". Note that the call takes only `{ workspace }`. The one-call teardown looks as follows:
+
+```ts
+await ragDeleteWorkspace({ workspace });
+console.log(`▸ Deleted workspace '${workspace}' and its on-disk files`);
+```
+
+The function takes only `{ workspace }`. No `deleteOnClose` flag, no in-memory handle to release first. After it returns, the workspace is gone. The next `ragIngest` against the same name starts fresh; the next `ragSearch` returns "workspace not found" instead of empty results.
+
+> Note: `ragDeleteWorkspace` and `ragCloseWorkspace({ deleteOnClose: true })` produce the same end state, but they take different code paths. `ragDeleteWorkspace` is a single RPC. `ragCloseWorkspace` first releases the in-memory handle, then deletes the data. For a one-shot cleanup, `ragDeleteWorkspace` is simpler.
+
+## Put it to the test
+
+1. Call `ragIngest` to add a few documents to a named workspace, then log the workspace name and document count.
+2. Call `ragDeleteWorkspace({ workspace })` and log the deletion.

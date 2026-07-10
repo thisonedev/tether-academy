@@ -1,0 +1,81 @@
+---
+title: "Use tool calls from a completion"
+sourceExample: "packages/sdk/examples/tools/llamacpp-native-tools.ts"
+platforms: ['node']
+tests:
+  - id: defines-tools-array
+    description: 'Defines a `tools` array passed to completion()'
+    pattern: "completion\\s*\\(\\s*\\{[\\s\\S]*?tools\\s*[,}]"
+  - id: tool-has-name
+    description: 'Tool object has a `name` field'
+    pattern: "name\\s*:\\s*[`\"'][a-zA-Z_]+[`\"']"
+  - id: tool-has-description
+    description: 'Tool object has a `description` field'
+    pattern: "description\\s*:\\s*[`\"']"
+  - id: tool-has-parameters
+    description: 'Tool object has a `parameters` field'
+    pattern: "parameters\\s*:"
+  - id: reads-tool-calls
+    description: 'Reads result.toolCalls or events for toolCall type'
+    pattern: "toolCalls|toolCall"
+hints:
+  - "Define tools as { name, description, parameters }. The parameters field is a JSON Schema object describing what arguments the tool accepts."
+  - "Pass tools: [...] to completion(). The model emits toolCall events (or resolves result.toolCalls) when the sampled output is a tool call."
+  - "You don't execute the tool yourself, the SDK hands you the call, you run the function, and you push the result back into history as a role: 'tool' message."
+expectedOutput:
+  - "▸ Tool: get_weather({\"city\":\"Tokyo\"})"
+  - "▸ Model response after tool call: The weather in Tokyo is 8°C and rainy."
+---
+
+Now that we know how to hold a conversation, let's give the model a tool it can reach for.
+
+A tool is a function the model is allowed to call. We describe what the function does and what arguments it takes. The model calls it when the sampled output points to it.
+
+A tool definition has three fields: `name`, `description`, and `parameters` (a JSON Schema describing the arguments). The model emits `toolCall` events when the sampled output is a tool call. We handle the call ourselves and push the result back into `history` so the next call has the tool result in its input.
+
+A tool definition has three fields: `name`, `description`, `parameters` (JSON Schema). The shape declared with the SDK would look like the following:
+
+```ts
+const tools = [
+  {
+    name: "get_weather",
+    description: "Get current weather for a city",
+    parameters: {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+    },
+  },
+];
+```
+
+Passing the `tools` array is what makes them available to the model:
+
+```ts
+const result = completion({
+  modelId,
+  history: [{ role: "user", content: "What's the weather in Tokyo?" }],
+  tools,
+  stream: true,
+});
+```
+
+Arguments come back as a typed object matching the schema. Every time the model emits a tool call, we'd dispatch on `event.call.name` to run the matching function like so:
+
+```ts
+for await (const event of result.events) {
+  if (event.type === "toolCall") {
+    console.log(`▸ Tool: ${event.call.name}(${JSON.stringify(event.call.arguments)})`);
+  }
+}
+```
+
+The arguments come back as a parsed object matching our JSON Schema. We execute the function (call an API, query a database), then push `{ role: "tool", content: resultString }` back into history so the model can synthesize the final answer.
+
+> Note: tool support has to be enabled when loading the model. Set `modelConfig: { tools: true }` on the `loadModel()` call, otherwise the model will not understand how to use the tools array.
+
+## Put it to the test
+
+1. Define a `tools` array with one tool. Give it `name`, `description`, and `parameters` (JSON Schema).
+2. Pass `tools` to `completion()` with a user question that requires the tool, stream `result.events`, and log `toolCall` events with the function name and arguments.
+3. (Optional) After the loop, `await result.toolCalls` to get the full list and push tool results back as `{role: "tool"}` messages for the next turn.
