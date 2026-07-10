@@ -1,0 +1,53 @@
+name: Deploy to GitHub Pages
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: github.repository == 'thisonedev/tether-academy'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+      # prebuild runs sync:examples + verify:tests:check, both of which
+      # read from the upstream QVAC checkout via QVAC_REFERENCES_DIR
+      - name: Clone upstream
+        env:
+          UPSTREAM_REPO: 'https://github.com/tetherto/qvac.git'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --filter=blob:none --sparse "$UPSTREAM_REPO" /tmp/qvac-upstream
+          cd /tmp/qvac-upstream
+          git sparse-checkout set packages/sdk/examples
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        env:
+          NODE_ENV: production
+          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
+        run: npm run build
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
