@@ -1,52 +1,59 @@
 name: Deploy to GitHub Pages
+
+# Push-to-master / PR pipeline: lint, build, ship to GitHub Pages.
+
 on:
   push:
     branches: [master]
+  pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
   pages: write
   id-token: write
+
 concurrency:
   group: "pages"
   cancel-in-progress: false
+
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
-    if: github.repository == 'thisonedev/tether-academy'
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: "npm"
-      # prebuild runs sync:examples + verify:tests:check, both of which
-      # read from the upstream QVAC checkout via QVAC_REFERENCES_DIR
-      - name: Clone upstream
-        env:
-          UPSTREAM_REPO: 'https://github.com/tetherto/qvac.git'
-        run: |
-          set -euo pipefail
-          git clone --depth 1 --filter=blob:none --sparse "$UPSTREAM_REPO" /tmp/qvac-upstream
-          cd /tmp/qvac-upstream
-          git sparse-checkout set packages/sdk/examples
-      - name: Install dependencies
+          cache: npm
+
+      - name: install
         run: npm ci
-      - name: Build
+
+      - name: lint
+        run: npm run lint
+
+      - name: build
         env:
           NODE_ENV: production
-          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
-        run: npm run build
+        run: npx next build
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./out
+
   deploy:
+    needs: verify
+    if: github.event_name != 'pull_request' && github.repository == 'thisonedev/tether-academy'
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

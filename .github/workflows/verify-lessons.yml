@@ -1,23 +1,24 @@
-name: ci
+name: Verify lessons
 
-# Lint, build, and lesson tests on every push and PR. This is the
-# short-loop check; the `sync upstream` workflow handles the longer
-# cadence of comparing against the real SDK source.
-#
-# The prebuild hook runs the sample-sync report against a fresh clone
-# of github.com/tetherto/qvac (sparse-checkout, examples only) so the
-# build doesn't depend on the local gitignored `references/qvac/`
-# snapshot being up to date.
+# Daily check: do the vendored lesson files still match the
+# real QVAC SDK? Two checks in one job, sharing the upstream clone:
+#   - verify:tests:check — each lesson's frontmatter tests pass
+#     against its vendored answer.ts
+#   - sync:examples — vendored answer.ts files only use callables
+#     that still exist in the matched upstream file
+# Runs daily at 06:00 UTC. Manual dispatch for re-runs.
+# On drift, edit the matching examples/qvac/<lesson>.answer.ts + the
+# lesson text, then commit. Neither check ever modifies files.
 
 on:
-  push:
-    branches: [master]
-  pull_request:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
 
 jobs:
-  ci:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -40,17 +41,12 @@ jobs:
           cd /tmp/qvac-upstream
           git sparse-checkout set packages/sdk/examples
 
-      - name: lint
-        env:
-          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
-        run: npm run lint
-
       - name: verify lesson tests
         env:
           QVAC_REFERENCES_DIR: /tmp/qvac-upstream
         run: npm run verify:tests:check
 
-      - name: build
+      - name: sync check
         env:
           QVAC_REFERENCES_DIR: /tmp/qvac-upstream
-        run: npm run build
+        run: npm run sync:examples
