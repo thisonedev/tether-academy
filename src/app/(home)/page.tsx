@@ -55,8 +55,13 @@ export default function HomePage() {
             <li>Interactive lesson runner with simulated live preview</li>
             <li>Sample-sync against the upstream QVAC SDK examples</li>
             <li>
-              <code className="font-mono text-emerald-400">llms.txt</code> export
-              of the full curriculum
+              <a
+                href="/tether-academy/courses/llms-full.txt"
+                className="font-mono text-emerald-400"
+              >
+                llms.txt
+              </a>{' '}
+              export of the full curriculum
             </li>
           </ul>
         </section>

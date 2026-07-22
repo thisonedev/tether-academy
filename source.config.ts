@@ -33,5 +33,8 @@ export const docs = defineDocs({
   dir: 'courses',
   docs: {
     schema: lessonFrontmatter,
+    postprocess: {
+      includeProcessedMarkdown: true,
+    },
   },
 });
