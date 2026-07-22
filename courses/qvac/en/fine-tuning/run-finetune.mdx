@@ -40,7 +40,7 @@ const handle = finetune({
 });
 ```
 
-The `progressStream` ticks once per training step, each item carrying `global_steps`, `loss`, and the batch index. `await handle.result` returns the final status (`COMPLETED`, `CANCELLED`, or a failure mode):
+The `progressStream` ticks once per training step, each item carrying `global_steps`, `loss`, `current_epoch`, `total_epochs`, and `total_batches`. `await handle.result` returns the final status (`COMPLETED`, `CANCELLED`, or a failure mode):
 
 ```ts
 for await (const tick of handle.progressStream) {
@@ -51,7 +51,7 @@ const result = await handle.result;
 console.log("▸ Result status:", result.status);
 ```
 
-`tick` carries the current step, batch index, loss, accuracy, and a `progressStream` we can break out of when we want to stop logging.
+`tick` is one item from `handle.progressStream`, carrying `global_steps` and `loss` per step. Break out of the `for await` when you want to stop logging.
 
 > Note: `learningRate: 1e-4` is a reasonable starting point for LoRA on a Qwen3 600M. If you're training a larger model or a smaller one, scale by the parameter count or follow the dataset author's recommendation.
 

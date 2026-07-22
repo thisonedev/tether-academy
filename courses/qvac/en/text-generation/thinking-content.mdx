@@ -34,9 +34,7 @@ Chapter 2 starts with one specific feature of the `completion()` surface: thinki
 
 Some models emit a `<think>...</think>` reasoning block before the final answer. The reasoning arrives in the same token stream that produces the response. Without capture, that reasoning either ends up inside the response text, mixed into the user-visible answer, or the chat-template layer strips it and you can't recover it from the SDK surface.
 
-`captureThinking: true` tells the SDK to parse `<think>` blocks out of the raw model output and surface them as their own event type, separate from the final answer.
-
-Setting `captureThinking: true` on the options object is what asks the SDK to parse `<think>` blocks out and surface them as their own event type. You would call it like so:
+`captureThinking: true` tells the SDK to parse `<think>` blocks out of the raw model output and surface them as their own event type, separate from the final answer. The call would look like:
 
 ```ts
 const result = completion({
@@ -47,7 +45,7 @@ const result = completion({
 });
 ```
 
-That single boolean changes the shape of the events stream. A model that emits `<think>The user is asking about Rayleigh scattering.</think>The sky appears blue because...` will fire `thinkingDelta` events, one per reasoning token, before the answer. Then `contentDelta` events fire, one per answer token, after the reasoning completes. Then `completionDone` at the end with `stopReason: "eos"`.
+That single boolean changes the shape of the events stream. A model that emits `<think>The user is asking about Rayleigh scattering.</think>The sky appears blue because...` fires four event types: `thinkingDelta` for each reasoning token (before the answer), then `contentDelta` for each answer token (after the reasoning completes), then `completionStats` with throughput numbers, then `completionDone` with `stopReason: "eos"`.
 
 `contentDelta` goes to stdout, `thinkingDelta` routes to stderr with a `[think]` prefix so it doesn't mix with the response. Both event types carry the same `text` field. The event loop for this kind of call would look like:
 

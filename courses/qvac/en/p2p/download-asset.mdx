@@ -18,7 +18,7 @@ expectedOutput:
   - "▸ Performance Stats: { tokensPerSecond: 47.31 }"
 ---
 
-We're starting a new chapter on P2P, and we're going to decouple download from load.
+We're starting a new chapter on peer-to-peer (P2P), and we're going to decouple download from load.
 
 `loadModel()` does two things: download the model file (if not cached), then load it into memory. For multi-hundred-megabyte models, that's a long wait on the first user request.
 

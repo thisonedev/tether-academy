@@ -5,9 +5,9 @@ async function main() {
 
   // 1: define PERSON_SCHEMA as a JSON Schema
 
-  // 2: call completion() with responseFormat and stream contentDelta events
+  // 2: call completion() with responseFormat and accumulate raw text from contentDelta events
 
-  // 3: after the loop, await result.final and JSON.parse
+  // 3: after the loop, call JSON.parse raw.trim() and log the parsed object
 
   await unloadModel({ modelId });
 }

@@ -82,7 +82,7 @@ const { actions, actionDim, chunkSize, stats } = await vla({
 });
 
 console.log(`▸ Got ${chunkSize} action steps of dim ${actionDim}.`);
-console.log(`▸ Timing: vision=${stats.visionMs}ms smollm2=${stats.lmMs}ms ode=${stats.odeMs}ms total=${stats.totalMs}ms`);
+console.log(`▸ Timing: vision=${stats.vision_ms}ms prefill=${stats.prefill_total_ms}ms ode=${stats.ode_ms}ms total=${stats.total_ms}ms`);
 ```
 
 The `stats` object has per-stage timings: vision encoder, language model, ODE solver, and the wall-clock total. They're useful for spotting which stage is the bottleneck on a given machine.

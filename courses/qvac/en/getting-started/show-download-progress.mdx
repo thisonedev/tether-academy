@@ -43,14 +43,10 @@ const modelId = await loadModel({
     const mb = (n: number) => (n / 1e6).toFixed(1);
     const line = `▸ Downloading ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)`;
     process.stderr.write(process.stderr.isTTY ? `\r${line}` : `${line}\n`);
+    if (p.percentage >= 100) process.stderr.write("\n");
   },
 });
-```
-
-Without the trailing newline, the next log would start on the same line as the final 100% line. Adding it at 100 puts the next log on a fresh row:
-
-```ts
-    if (p.percentage >= 100) process.stderr.write("\n");
+console.log("modelId:", modelId);
 ```
 
 A few details worth pointing at:
@@ -61,5 +57,4 @@ A few details worth pointing at:
 
 ## Put it to the test
 
-1. Add `modelSrc: LLAMA_3_2_1B_INST_Q4_0` and an `onProgress` callback to the `loadModel` call. Inside the callback, write `▸ Downloading X% (Y/Z MB)` to `process.stderr`, choosing between overwriting the line (`isTTY`) and appending a newline (pipe).
-2. Inside the callback, when `p.percentage >= 100`, write a newline to `process.stderr` so the next log starts on a fresh row.
+1. Add `modelSrc: LLAMA_3_2_1B_INST_Q4_0` and an `onProgress` callback to the `loadModel` call. Inside the callback, write `▸ Downloading X% (Y/Z MB)` to `process.stderr`, choosing between overwriting the line (`isTTY`) and appending a newline (pipe). When `p.percentage >= 100`, write a trailing newline so the next log starts on a fresh row.

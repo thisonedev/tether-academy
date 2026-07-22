@@ -61,7 +61,7 @@ console.log(`Similarity between texts 1 and 2 (similar meaning): ${similarity1.t
 console.log(`Similarity between texts 1 and 3 (different topics): ${similarity2.toFixed(4)}`);
 ```
 
-> Note: `vecA[i]!` uses the non-null assertion (`!`) because TypeScript thinks the array might have a hole. For our case the array is dense, so `!` is safe. If you prefer to be defensive, write `vecA[i] ?? 0` instead.
+> Note: `vecA[i] ?? 0` defends against `undefined` if the array is ever sparse, which doesn't happen for our case. Drop the `?? 0` and use `vecA[i]!` if you want the leaner read.
 
 ## Put it to the test
 

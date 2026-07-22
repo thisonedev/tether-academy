@@ -33,7 +33,7 @@ A tool is a function the model is allowed to call. We describe what the function
 
 A tool definition has three fields: `name`, `description`, and `parameters` (a JSON Schema describing the arguments). The model emits `toolCall` events when the sampled output is a tool call. We handle the call ourselves and push the result back into `history` so the next call has the tool result in its input.
 
-A tool definition has three fields: `name`, `description`, `parameters` (JSON Schema). The shape declared with the SDK would look like the following:
+The shape declared with the SDK would look like the following:
 
 ```ts
 const tools = [

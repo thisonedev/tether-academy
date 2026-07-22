@@ -63,8 +63,10 @@ const result = completion({
   stream: true,
 });
 
+let raw = "";
 for await (const event of result.events) {
   if (event.type === "contentDelta") {
+    raw += event.text;
     process.stdout.write(event.text);
   }
 }
@@ -73,8 +75,7 @@ for await (const event of result.events) {
 Reading the schema-valid output back is the last step of the pipeline. Note that the `JSON.parse` step requires the loop to finish first. Use it as follows:
 
 ```ts
-const final = await result.final;
-const parsed = JSON.parse(final.contentText.trim()) as {
+const parsed = JSON.parse(raw.trim()) as {
   name: string;
   age: number;
   occupation: string;

@@ -29,7 +29,12 @@ expectedOutput:
 
 The voice assistant from the previous lesson works for a turn or two, then the feedback loop takes over: the TTS output gets picked up by the mic, Whisper transcribes it as a new user turn, and the LLM answers it. Each turn triggers the next with no real user input.
 
-Four things drive that loop. The default VAD commits segments too eagerly for long-running use. The mic keeps recording through TTS, so the TTS output comes back as a new user turn. VAD occasionally commits phantom transcripts from near-silence, single tokens like "you" or "Thanks." with no real speech behind them. And the TTS audio rings through the speaker into the mic for a moment after the model finishes, getting transcribed as the tail of the user's next turn.
+Four things drive that loop:
+
+- The default VAD commits segments too eagerly for long-running use.
+- The mic keeps recording through TTS, so the TTS output comes back as a new user turn.
+- VAD occasionally commits phantom transcripts from near-silence, single tokens like "you" or "Thanks." with no real speech behind them.
+- The TTS audio rings through the speaker into the mic for a moment after the model finishes, getting transcribed as the tail of the user's next turn.
 
 The defaults are tuned for one-shot dictation, not a loop, so the first fix is to override `vad_params` in the ASR `modelConfig`:
 
@@ -45,9 +50,9 @@ const vad_params = {
 
 `min_silence_duration_ms: 700` is the value that matters. VAD uses it to decide when the user stopped talking, so a longer quiet window keeps the TTS tail ringing through the speaker from getting folded into the user's turn.
 
-VAD handles the first cause. The other three happen in the loop body, so the fix is three helpers defined right before the main loop:
+VAD handles the first issue. The other three happen in the loop body, so the fix is three helpers defined right before the main loop:
 - `isSpeaking` flag — the loop checks it at the top of each iteration to skip frames while TTS plays
-- `isMeaningfulTranscript` filter that drops the empty and phantom transcripts before they reach the LLM
+- `isMeaningfulTranscript` — filter that drops the empty and phantom transcripts before they reach the LLM
 - `sleep(ms)` helper — the main loop calls it to wait for the post-playback cooldown.
 
 Here's how that looks in code:

@@ -61,7 +61,7 @@ const state = new Float32Array(0);
 const noise = new Float32Array(hparams.chunkSize * hparams.maxActionDim);
 ```
 
-`vla()` takes the model id and prebuilt inputs and returns `{ actions, actionDim, chunkSize, stats }`, the four fields the SmolVLA lesson destructured from the result. The `stats` keys differ in π₀.₅: `*_ms` snake_case, with the LM field as `prefill_total_ms` instead of `lmMs` because the language model is a different one.
+`vla()` takes the model id and prebuilt inputs and returns the same four fields the SmolVLA lesson destructured. `stats` uses the same snake_case `*_ms` shape on both models, so the per-stage timings are interchangeable between lessons.
 
 ```ts
 const { actions, actionDim, chunkSize, stats } = await vla({

@@ -104,7 +104,6 @@ for await (const rawText of transcribeStream({ modelId: asrModelId })) {
 }
 ```
 
-The three calls in the loop body — `transcribeStream`, `completion({ stream: true })`, and `textToSpeech({ stream: false })` — are the same shapes from the transcription, text-generation, and text-to-speech chapters. The new piece is the wiring: one `for await` driving one turn at a time, the `history` array shared across turns, and `assistantText.trim()` flowing straight from the LLM stream into the TTS call.
 
 > Note: the system prompt bans markdown and lists because the output is spoken aloud. A `### heading` or a `1. ` list reads as a stuttery mess through TTS.
 

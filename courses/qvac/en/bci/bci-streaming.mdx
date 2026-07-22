@@ -48,7 +48,7 @@ For this, `emit: "delta"` is the flag that switches the session from "emit the f
 const session = await bciTranscribeStream({ modelId, emit: "delta" });
 ```
 
-Let's look at the concurrent reader + writer pattern. Sequential read-then-write would deadlock, so the consume task runs as an IIFE in parallel with the write loop: IIFE consume task, writes in main flow, `await consume` after `session.end()`. Let's look at the 64KB-chunk pipeline example:
+Sequential read-then-write would deadlock, so the consume task runs as an IIFE in parallel with the write loop. Writes run in main flow, with `await consume` after `session.end()`. The 64KB-chunk pipeline looks like:
 
 ```ts
 const consume = (async () => {
