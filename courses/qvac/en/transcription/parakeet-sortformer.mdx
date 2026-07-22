@@ -15,7 +15,7 @@ tests:
 hints:
   - "Sortformer outputs a text block where each line is 'Speaker N: <start>s - <end>s'. Parse the lines into segments."
   - "After the diarization pass, unload Sortformer and load TDT. TDT does the actual transcription per segment."
-  - "The upstream example slices the audio per segment. We call transcribe on the full file as a stand-in; the slicing code lives in the upstream example."
+  - "Slice the audio per segment by reading the WAV PCM and writing a per-segment WAV. The slicing helpers (readPcm, writeWavSlice) live in the prefilled scaffold."
 expectedOutput:
   - "Speaker 1 (0.50s - 3.20s): Hello, how are you today?"
   - "Speaker 2 (3.40s - 6.10s): I'm doing well, thanks for asking."
@@ -23,7 +23,9 @@ expectedOutput:
 
 When a single audio file has more than one speaker, we want a transcript that says who said what. Sortformer diarizes the audio into speaker-attributed segments, then TDT transcribes each segment into text.
 
-The pipeline runs in two passes. Sortformer returns a text block where each line is `Speaker N: <start>s - <end>s`. TDT transcribes each segment and we attach the text to the speaker metadata.
+The pipeline runs in two passes:
+- Sortformer returns a text block where each line is `Speaker N: <start>s - <end>s`.
+- TDT transcribes each segment and we attach the text to the speaker metadata.
 
 Each `Speaker N: <start>s - <end>s` line becomes a `{ speaker, start, end }` object. The Sortformer-to-TDT chain starts with the diarization pass. The first pass would look like the following:
 
@@ -47,7 +49,7 @@ const segments = diarization
   .sort((a, b) => a.start - b.start);
 ```
 
-Second pass: load TDT, transcribe each diarized segment. The example transcribes the full file as a stand-in; the upstream slices per segment (better accuracy, N× the inference):
+Second pass: TDT takes over. The slicing reads the source WAV once and writes a new WAV per `start`/`end` range; `transcribe` consumes each slice:
 
 ```ts
 const tdtModelId = await loadModel({
@@ -55,10 +57,25 @@ const tdtModelId = await loadModel({
   modelType: "parakeet-transcription",
 });
 
+const pcm = readPcm(audioFilePath);
+const sliceDir = join(tmpdir(), `qvac-diarize-${Date.now()}`);
+mkdirSync(sliceDir, { recursive: true });
+
 const results: { speaker: number; start: number; end: number; text: string }[] = [];
-for (const seg of segments) {
-  const text = await transcribe({ modelId: tdtModelId, audioChunk: audioFilePath });
-  results.push({ ...seg, text });
+for (let i = 0; i < segments.length; i++) {
+  const seg = segments[i]!;
+  const slicePath = join(sliceDir, `seg-${i}.wav`);
+
+  if (!writeWavSlice(pcm, seg.start, seg.end, slicePath)) {
+    results.push({ ...seg, text: "[No speech detected]" });
+    continue;
+  }
+
+  const text = await transcribe({
+    modelId: tdtModelId,
+    audioChunk: slicePath,
+  });
+  results.push({ ...seg, text: text.trim() || "[No speech detected]" });
 }
 await unloadModel({ modelId: tdtModelId });
 ```
@@ -71,12 +88,12 @@ for (const r of results) {
 }
 ```
 
-The example above calls `transcribe` against the full file as a stand-in for per-segment slicing. The upstream `parakeet-sortformer.ts` slices the audio per segment by reading the WAV bytes and writing a new WAV for each segment, then calls `transcribe` once per slice. Both produce per-speaker transcripts. The slicing approach is the production-ready version.
+`readPcm` and `writeWavSlice` (prefilled in the scaffold) handle the WAV byte-level work: skipping the 44-byte header and rebuilding a 16 kHz / 16-bit / mono header in front of each PCM range. The slicing runs once per diarized segment, so the inference cost is `N × TDT_inference` rather than one shot on the full file.
 
 > Note: Sortformer v2.1 supports up to 4 speakers. For more speakers, split the audio or run the diarization in overlapping windows.
 
 ## Put it to the test
 
 1. Load `PARAKEET_SORTFORMER_4SPK_V2_1_Q8_0` with `modelType: "parakeet-transcription"`, call `await transcribe({ modelId, audioChunk: audioFilePath })`, then `unloadModel`. Parse the output lines into `{ speaker, start, end }` objects.
-2. Load `PARAKEET_TDT_0_6B_V3_Q8_0` and for each segment call `await transcribe({ modelId: tdtModelId, audioChunk: audioFilePath })`, attaching the text.
+2. Load `PARAKEET_TDT_0_6B_V3_Q8_0`. For each segment, call `writeWavSlice(pcm, seg.start, seg.end, slicePath)` and then `await transcribe({ modelId: tdtModelId, audioChunk: slicePath })`. Push the text onto the segment.
 3. Console.log one line per result: `Speaker N (start - end): text`.
