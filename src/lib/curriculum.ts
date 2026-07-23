@@ -61,10 +61,10 @@ export const COURSES: Course[] = [
     planned: true,
   },
   {
-    slug: 'plasma',
-    name: 'Plasma',
-    description: 'Purpose-built blockchain designed to make stablecoin payments fast, reliable, and low-cost at global scale.',
-    href: '/courses/plasma',
+    slug: 'stable',
+    name: 'Stable',
+    description: 'The USD₮-native Layer 1 built for stablecoin payments.',
+    href: '/courses/stable',
     planned: true,
   },
 ]
@@ -90,24 +90,18 @@ export const CURRICULUM: CurriculumChapter[] = [
       },
       {
         num: '03',
-        title: 'Stream completion events',
-        slug: 'stream-events',
-        href: lessonHref('getting-started', 'stream-events'),
-      },
-      {
-        num: '04',
         title: 'Read the stop reason from a completion',
         slug: 'stop-reasons',
         href: lessonHref('getting-started', 'stop-reasons'),
       },
       {
-        num: '05',
+        num: '04',
         title: 'Unload the model from memory',
         slug: 'unload-model',
         href: lessonHref('getting-started', 'unload-model'),
       },
       {
-        num: '06',
+        num: '05',
         title: 'Show download progress',
         slug: 'show-download-progress',
         href: lessonHref('getting-started', 'show-download-progress'),
@@ -146,7 +140,7 @@ export const CURRICULUM: CurriculumChapter[] = [
       },
       {
         num: '05',
-        title: 'Stream raw tokens from a completion',
+        title: 'Generate structured JSON output',
         slug: 'raw-output',
         href: lessonHref('text-generation', 'raw-output'),
       },
