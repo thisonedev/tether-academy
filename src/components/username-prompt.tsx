@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { ArrowRight, User, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useUserHydrated, useUserStore } from '@/lib/store/user-store';
 
 const MIN_LEN = 3;
@@ -94,14 +94,11 @@ export function UsernamePrompt() {
           id="username-prompt-title"
           className="mb-2 text-2xl font-bold tracking-tight text-canvas-foreground"
         >
-          {value.length === 0 && !touched
-            ? 'Pick a username'
-            : 'Sign in'}
+          {value.length === 0 && !touched ? 'Pick a username' : 'Sign in'}
         </h2>
         <p className="mb-6 text-sm leading-relaxed text-canvas-muted-foreground">
-          Track your progress, points, and completed lessons across
-          rebuilds. Stored locally in your browser. Sign-in via a real
-          account comes in the next version.
+          Track your progress, points, and completed lessons across rebuilds. Stored locally in your
+          browser. Sign-in via a real account comes in the next version.
         </p>
 
         <label
@@ -126,16 +123,12 @@ export function UsernamePrompt() {
           className="mb-2 w-full rounded-md border border-canvas-border bg-canvas px-3 py-2 font-mono text-sm text-canvas-foreground placeholder:text-canvas-muted-foreground/60 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
         />
         {error ? (
-          <p
-            role="alert"
-            className="mb-3 text-xs text-red-400"
-          >
+          <p role="alert" className="mb-3 text-xs text-red-400">
             {error}
           </p>
         ) : (
           <p className="mb-3 text-xs text-canvas-muted-foreground">
-            {MIN_LEN}–{MAX_LEN} characters. Letters, numbers, dashes,
-            underscores.
+            {MIN_LEN}–{MAX_LEN} characters. Letters, numbers, dashes, underscores.
           </p>
         )}
 

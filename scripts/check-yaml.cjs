@@ -16,7 +16,9 @@ async function* walk(dir) {
     const raw = fs.readFileSync(f, 'utf-8');
     const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!m) continue;
-    try { yaml.load(m[1]); } catch (e) {
+    try {
+      yaml.load(m[1]);
+    } catch (e) {
       failures.push({ file: f, msg: e.message.split('\n')[0] });
     }
   }

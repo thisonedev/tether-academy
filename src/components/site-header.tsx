@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import { Box } from 'lucide-react';
+import Link from 'next/link';
 import { UserMenu } from '@/components/user-menu';
-import { useUserStore, useUserHydrated } from '@/lib/store/user-store';
+import { useUserHydrated, useUserStore } from '@/lib/store/user-store';
 
 export function SiteHeader() {
   const hydrated = useUserHydrated();
@@ -12,10 +12,7 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-10 flex h-14 w-full items-center justify-between border-b border-canvas-border bg-canvas/90 px-4 backdrop-blur sm:px-6">
-      <Link
-        href="/"
-        className="flex items-center gap-2 text-base font-bold tracking-tight"
-      >
+      <Link href="/" className="flex items-center gap-2 text-base font-bold tracking-tight">
         <Box className="size-5 fill-emerald-500 text-emerald-500" strokeWidth={1.5} />
         <span>
           <span className="text-emerald-400">Tether</span>

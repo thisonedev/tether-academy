@@ -12,8 +12,8 @@ export default function HomePage() {
             Tether&apos;s open-source stack.
           </h1>
           <p className="max-w-2xl text-lg leading-relaxed text-canvas-muted-foreground sm:text-xl">
-            An interactive code school for the Tether ecosystem. Short lessons,
-            in-browser code, instant feedback.
+            An interactive code school for the Tether ecosystem. Short lessons, in-browser code,
+            instant feedback.
           </p>
           <div className="flex flex-wrap gap-3 pt-2">
             <StartCourseButton />
@@ -84,12 +84,8 @@ function FeatureCard({
       <div className="mb-3 inline-flex size-9 items-center justify-center rounded-md bg-canvas text-emerald-400">
         {icon}
       </div>
-      <h3 className="mb-1.5 text-base font-semibold text-canvas-foreground">
-        {title}
-      </h3>
-      <p className="text-sm leading-relaxed text-canvas-muted-foreground">
-        {body}
-      </p>
+      <h3 className="mb-1.5 text-base font-semibold text-canvas-foreground">{title}</h3>
+      <p className="text-sm leading-relaxed text-canvas-muted-foreground">{body}</p>
     </div>
   );
 }

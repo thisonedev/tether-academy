@@ -1,9 +1,9 @@
 // Manual one-off reset for `next dev.
 // Wipes .next/.source/.turbo and kills any stale next-server, then returns.
 
-import { rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 
 function killStaleDevServers() {
   try {

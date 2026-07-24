@@ -1,10 +1,10 @@
-'use client'
+'use client';
 
-import { ArrowRight, Check } from 'lucide-react'
-import Link from 'next/link'
+import { ArrowRight, Check } from 'lucide-react';
+import Link from 'next/link';
 
-import { COURSES, type Course, CURRICULUM } from '@/lib/curriculum'
-import { useUserStore } from '@/lib/store/user-store'
+import { COURSES, type Course, CURRICULUM } from '@/lib/curriculum';
+import { useUserStore } from '@/lib/store/user-store';
 
 export default function CoursesIndex() {
   return (
@@ -32,37 +32,35 @@ export default function CoursesIndex() {
         )}
       </div>
     </div>
-  )
+  );
 }
 
 /** Live course card: links into the course home, reads progress from the store. */
 function LiveCourseCard({ course }: { course: Course }) {
-  const counts = countsFor(course.slug)
-  const completedChapters = useUserStore((s) => s.completedChapters)
-  const completedLessons = useUserStore((s) => s.completedLessons)
-  const points = useUserStore((s) => s.points)
+  const counts = countsFor(course.slug);
+  const completedChapters = useUserStore((s) => s.completedChapters);
+  const completedLessons = useUserStore((s) => s.completedLessons);
+  const points = useUserStore((s) => s.points);
 
   // CURRICULUM === qvac's chapters today; an explicit courseSlug on chapters will replace this when wdk/pears ship.
-  const isQvac = course.slug === 'qvac'
+  const isQvac = course.slug === 'qvac';
 
   const completedChapterCount = isQvac
     ? CURRICULUM.filter((c) => completedChapters.includes(c.slug)).length
-    : 0
+    : 0;
   const completedLessonCount = isQvac
     ? CURRICULUM.reduce(
         (sum, c) =>
           sum +
-          c.lessons.filter(
-            (l) => l.href && completedLessons.includes(`${c.slug}-${l.slug}`),
-          ).length,
+          c.lessons.filter((l) => l.href && completedLessons.includes(`${c.slug}-${l.slug}`))
+            .length,
         0,
       )
-    : 0
+    : 0;
 
-  const isDone = counts.chapters > 0 && completedChapterCount === counts.chapters
-  const hasProgress = completedLessonCount > 0
-  const pct =
-    counts.lessons > 0 ? Math.round((completedLessonCount / counts.lessons) * 100) : 0
+  const isDone = counts.chapters > 0 && completedChapterCount === counts.chapters;
+  const hasProgress = completedLessonCount > 0;
+  const pct = counts.lessons > 0 ? Math.round((completedLessonCount / counts.lessons) * 100) : 0;
 
   return (
     <Link
@@ -113,9 +111,7 @@ function LiveCourseCard({ course }: { course: Course }) {
             <div className="h-1.5 overflow-hidden rounded-full bg-canvas">
               <div
                 className={`h-full rounded-full ${
-                  isDone
-                    ? 'bg-gradient-to-r from-emerald-400 to-emerald-300'
-                    : 'bg-emerald-500'
+                  isDone ? 'bg-gradient-to-r from-emerald-400 to-emerald-300' : 'bg-emerald-500'
                 }`}
                 style={{ width: `${isDone ? 100 : pct}%` }}
               />
@@ -124,7 +120,7 @@ function LiveCourseCard({ course }: { course: Course }) {
         ) : null}
       </div>
     </Link>
-  )
+  );
 }
 
 /** Planned course card: dashed border, dimmed, "Coming soon" pill, no link. */
@@ -147,12 +143,12 @@ function PlannedCourseCard({ course }: { course: Course }) {
         {course.description}
       </p>
     </div>
-  )
+  );
 }
 
 /** Square logo block with a per-course accent gradient. */
 function CourseGlyph({ slug }: { slug: string }) {
-  const { bg, fg } = glyphPalette(slug)
+  const { bg, fg } = glyphPalette(slug);
   return (
     <span
       className="flex size-12 items-center justify-center rounded-lg border text-sm font-bold sm:size-14 sm:text-base"
@@ -161,28 +157,28 @@ function CourseGlyph({ slug }: { slug: string }) {
     >
       {slug.slice(0, 3).toUpperCase()}
     </span>
-  )
+  );
 }
 
 /** Counts chapters + lessons for a course. Only QVAC ships chapters today. */
 function countsFor(slug: string): { chapters: number; lessons: number } {
-  if (slug !== 'qvac') return { chapters: 0, lessons: 0 }
+  if (slug !== 'qvac') return { chapters: 0, lessons: 0 };
   return {
     chapters: CURRICULUM.length,
     lessons: CURRICULUM.reduce((sum, c) => sum + c.lessons.length, 0),
-  }
+  };
 }
 
 /** Per-course accent palette, used until real logos exist. */
 function glyphPalette(slug: string): { bg: string; fg: string } {
   switch (slug) {
     case 'qvac':
-      return { bg: 'linear-gradient(135deg, #0d2620 0%, #1a5e4a 100%)', fg: '#34d399' }
+      return { bg: 'linear-gradient(135deg, #0d2620 0%, #1a5e4a 100%)', fg: '#34d399' };
     case 'wdk':
-      return { bg: 'linear-gradient(135deg, #1a1d2e 0%, #2d3050 100%)', fg: '#a5a8d4' }
+      return { bg: 'linear-gradient(135deg, #1a1d2e 0%, #2d3050 100%)', fg: '#a5a8d4' };
     case 'pears':
-      return { bg: 'linear-gradient(135deg, #2e1a1d 0%, #5a2d30 100%)', fg: '#f5a5a5' }
+      return { bg: 'linear-gradient(135deg, #2e1a1d 0%, #5a2d30 100%)', fg: '#f5a5a5' };
     default:
-      return { bg: 'var(--color-canvas)', fg: 'var(--color-canvas-foreground)' }
+      return { bg: 'var(--color-canvas)', fg: 'var(--color-canvas-foreground)' };
   }
 }

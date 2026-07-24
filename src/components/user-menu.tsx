@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import { LogOut } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { getLevel, useUserHydrated, useUserStore } from '@/lib/store/user-store';
 
 const XP_PER_LEVEL = 100;

@@ -1,41 +1,41 @@
 // Per-chapter numbering: each chapter resets at 01 so the strip
 // stays scannable as the course grows
 
-const COURSE_BASE = '/courses/qvac/en'
+const COURSE_BASE = '/courses/qvac/en';
 
 export function lessonHref(chapterSlug: string, lessonSlug: string): string {
-  return `${COURSE_BASE}/${chapterSlug}/${lessonSlug}`
+  return `${COURSE_BASE}/${chapterSlug}/${lessonSlug}`;
 }
 
 export function chapterHref(chapterSlug: string): string {
-  return `${COURSE_BASE}/${chapterSlug}`
+  return `${COURSE_BASE}/${chapterSlug}`;
 }
 
-export type CurriculumLessonState = 'done' | 'current' | 'upcoming'
+export type CurriculumLessonState = 'done' | 'current' | 'upcoming';
 
 export interface CurriculumLesson {
-  num: string
-  title: string
-  shortTitle?: string
-  slug: string
-  href?: string
+  num: string;
+  title: string;
+  shortTitle?: string;
+  slug: string;
+  href?: string;
 }
 
 export interface CurriculumChapter {
-  num: string
-  label: string
-  slug: string
-  href?: string
-  lessons: CurriculumLesson[]
+  num: string;
+  label: string;
+  slug: string;
+  href?: string;
+  lessons: CurriculumLesson[];
 }
 
 /** Top-level course descriptor for /courses. Add new courses here. */
 export interface Course {
-  slug: string
-  name: string
-  description: string
-  href: string
-  planned?: boolean
+  slug: string;
+  name: string;
+  description: string;
+  href: string;
+  planned?: boolean;
 }
 
 /** Single source of truth for /courses. Add new courses here. */
@@ -67,7 +67,7 @@ export const COURSES: Course[] = [
     href: '/courses/stable',
     planned: true,
   },
-]
+];
 
 export const CURRICULUM: CurriculumChapter[] = [
   {
@@ -629,11 +629,11 @@ export const CURRICULUM: CurriculumChapter[] = [
       },
     ],
   },
-]
+];
 
 /** Finds a chapter by its URL slug, or undefined. */
 export function getCurriculumChapterBySlug(slug: string): CurriculumChapter | undefined {
-  return CURRICULUM.find((c) => c.slug === slug)
+  return CURRICULUM.find((c) => c.slug === slug);
 }
 
 /** Finds a lesson within a chapter by its slug. */
@@ -641,7 +641,7 @@ export function getCurriculumLessonBySlug(
   chapter: CurriculumChapter,
   slug: string,
 ): CurriculumLesson | undefined {
-  return chapter.lessons.find((l) => l.slug === slug)
+  return chapter.lessons.find((l) => l.slug === slug);
 }
 
 /** Returns the position state of a lesson relative to the current lesson in the same chapter. */
@@ -650,11 +650,11 @@ export function stateOf(
   chapter: CurriculumChapter | undefined,
   currentLesson: CurriculumLesson | undefined,
 ): CurriculumLessonState {
-  if (!chapter || !currentLesson) return 'upcoming'
-  const curIdx = chapter.lessons.findIndex((l) => l.num === currentLesson.num)
-  const myIdx = chapter.lessons.findIndex((l) => l.num === lesson.num)
-  if (curIdx === -1 || myIdx === -1) return 'upcoming'
-  if (myIdx < curIdx) return 'done'
-  if (myIdx === curIdx) return 'current'
-  return 'upcoming'
+  if (!chapter || !currentLesson) return 'upcoming';
+  const curIdx = chapter.lessons.findIndex((l) => l.num === currentLesson.num);
+  const myIdx = chapter.lessons.findIndex((l) => l.num === lesson.num);
+  if (curIdx === -1 || myIdx === -1) return 'upcoming';
+  if (myIdx < curIdx) return 'done';
+  if (myIdx === curIdx) return 'current';
+  return 'upcoming';
 }

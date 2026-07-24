@@ -1,100 +1,92 @@
-'use client'
+'use client';
 
-import { javascript } from '@codemirror/lang-javascript'
-import { oneDark } from '@codemirror/theme-one-dark'
-import CodeMirror from '@uiw/react-codemirror'
-import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  Copy,
-  Play,
-  RotateCcw,
-  X,
-} from 'lucide-react'
-import Link from 'next/link'
-import { type ReactNode, useCallback, useEffect, useState } from 'react'
-import { CurriculumStrip } from '@/components/curriculum-strip'
-import { HelpPanel } from '@/components/help-panel'
-import { LessonCompleteModal } from '@/components/lesson-complete-modal'
-import { SignInBanner } from '@/components/sign-in-banner'
-import type { CurriculumChapter, CurriculumLesson } from '@/lib/curriculum'
-import { useUserStore } from '@/lib/store/user-store'
+import { javascript } from '@codemirror/lang-javascript';
+import { oneDark } from '@codemirror/theme-one-dark';
+import CodeMirror from '@uiw/react-codemirror';
+import { ArrowLeft, ArrowRight, Check, Copy, Play, RotateCcw, X } from 'lucide-react';
+import Link from 'next/link';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { CurriculumStrip } from '@/components/curriculum-strip';
+import { HelpPanel } from '@/components/help-panel';
+import { LessonCompleteModal } from '@/components/lesson-complete-modal';
+import { SignInBanner } from '@/components/sign-in-banner';
+import type { CurriculumChapter, CurriculumLesson } from '@/lib/curriculum';
+import { useUserStore } from '@/lib/store/user-store';
 
 /** A single lesson test declaration. Matches the lesson MDX `tests:` array shape. */
 export interface LessonTest {
-  id: string
-  description: string
-  pattern?: string
-  contains?: string
+  id: string;
+  description: string;
+  pattern?: string;
+  contains?: string;
 }
 
 /** Per-page data passed into `LessonWorkspace` from the route handler. */
 export interface LessonData {
-  title: string
-  description?: string
-  startingCode: string
-  answer: string
-  tests: LessonTest[]
-  hints: string[]
-  expectedOutput: string[]
-  platforms: Array<'node' | 'web' | 'mobile' | 'desktop'>
-  sourceExample?: string
-  prevUrl?: string
-  nextUrl?: string
-  position?: { current: number; total: number }
-  firstLessonHref?: string
-  currentChapter?: CurriculumChapter
-  currentLesson?: CurriculumLesson
-  readOnly?: boolean
+  title: string;
+  description?: string;
+  startingCode: string;
+  answer: string;
+  tests: LessonTest[];
+  hints: string[];
+  expectedOutput: string[];
+  platforms: Array<'node' | 'web' | 'mobile' | 'desktop'>;
+  sourceExample?: string;
+  prevUrl?: string;
+  nextUrl?: string;
+  position?: { current: number; total: number };
+  firstLessonHref?: string;
+  currentChapter?: CurriculumChapter;
+  currentLesson?: CurriculumLesson;
+  readOnly?: boolean;
 }
 
-const TABS = ['output', 'tests', 'preview'] as const
-type Tab = (typeof TABS)[number]
+const TABS = ['output', 'tests', 'preview'] as const;
+type Tab = (typeof TABS)[number];
 
 /** Two-pane lesson UI: tutorial on the left, code runner on the right, sticky prev/check/next bar at the bottom. */
 export function LessonWorkspace({ data, children }: { data: LessonData; children: ReactNode }) {
-  const [userCode, setUserCode] = useState(data.startingCode)
-  const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node')
-  const [tab, setTab] = useState<Tab>('output')
-  const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null)
-  const [outputLines, setOutputLines] = useState<string[]>([])
-  const [isAnimating, setIsAnimating] = useState(false)
-  const [showCompleteModal, setShowCompleteModal] = useState(false)
-  const [hasShownModal, setHasShownModal] = useState(false)
+  const [userCode, setUserCode] = useState(data.startingCode);
+  const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');
+  const [tab, setTab] = useState<Tab>('output');
+  const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
+  const [outputLines, setOutputLines] = useState<string[]>([]);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [hasShownModal, setHasShownModal] = useState(false);
 
   // Reset transient state when the lesson changes.
   useEffect(() => {
     if (data.readOnly) {
-      setUserCode(data.startingCode || '// This section is informational. No code to run here.\n')
+      setUserCode(data.startingCode || '// This section is informational. No code to run here.\n');
     } else {
-      setUserCode(data.startingCode)
+      setUserCode(data.startingCode);
     }
-    setTestResults(null)
-    setOutputLines([])
-    setTab('output')
-    setShowCompleteModal(false)
-    setHasShownModal(false)
-  }, [data.startingCode, data.readOnly])
+    setTestResults(null);
+    setOutputLines([]);
+    setTab('output');
+    setShowCompleteModal(false);
+    setHasShownModal(false);
+  }, [data.startingCode, data.readOnly]);
 
-  const allPassed = testResults?.every((r) => r.passed) ?? false
+  const allPassed = testResults?.every((r) => r.passed) ?? false;
 
   // Modal fires only on the LAST lesson of the chapter (section is the unit).
   const isLastLessonOfChapter =
     !!data.currentChapter &&
     !!data.currentLesson &&
-    data.currentChapter.lessons.at(-1)?.num === data.currentLesson.num
+    data.currentChapter.lessons.at(-1)?.num === data.currentLesson.num;
 
-  const markLessonComplete = useUserStore((s) => s.markLessonComplete)
+  const markLessonComplete = useUserStore((s) => s.markLessonComplete);
 
   useEffect(() => {
-    if (!allPassed || !data.currentChapter || !data.currentLesson) return
+    if (!allPassed || !data.currentChapter || !data.currentLesson) return;
     // Awards per-lesson XP (+ chapter bonus if this completes the chapter).
     // Deduped inside the store: re-runs on the same lesson are no-ops.
-    markLessonComplete(data.currentChapter.slug, data.currentLesson.slug)
+    markLessonComplete(data.currentChapter.slug, data.currentLesson.slug);
     if (isLastLessonOfChapter && !hasShownModal) {
-      setShowCompleteModal(true)
-      setHasShownModal(true)
+      setShowCompleteModal(true);
+      setHasShownModal(true);
     }
   }, [
     allPassed,
@@ -103,34 +95,34 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     data.currentLesson,
     hasShownModal,
     markLessonComplete,
-  ])
+  ]);
 
   const check = useCallback(() => {
-    setTab('tests')
-    setTestResults(runTests(userCode, data.tests))
-  }, [userCode, data.tests])
+    setTab('tests');
+    setTestResults(runTests(userCode, data.tests));
+  }, [userCode, data.tests]);
 
   const run = useCallback(async () => {
-    setTab('output')
-    setOutputLines([])
-    setIsAnimating(true)
+    setTab('output');
+    setOutputLines([]);
+    setIsAnimating(true);
     for (const line of data.expectedOutput) {
-      await delay(220)
-      setOutputLines((prev) => [...prev, line])
+      await delay(220);
+      setOutputLines((prev) => [...prev, line]);
     }
-    setIsAnimating(false)
+    setIsAnimating(false);
 
     if (isLastLessonOfChapter && !data.readOnly) {
-      setTab('tests')
-      setTestResults(runTests(userCode, data.tests))
+      setTab('tests');
+      setTestResults(runTests(userCode, data.tests));
     }
-  }, [data.expectedOutput, data.tests, data.readOnly, isLastLessonOfChapter, userCode])
+  }, [data.expectedOutput, data.tests, data.readOnly, isLastLessonOfChapter, userCode]);
 
   const reset = useCallback(() => {
-    setUserCode(data.startingCode)
-    setTestResults(null)
-    setOutputLines([])
-  }, [data.startingCode])
+    setUserCode(data.startingCode);
+    setTestResults(null);
+    setOutputLines([]);
+  }, [data.startingCode]);
 
   return (
     <div className="flex w-full flex-col lg:h-[calc(100vh-3.5rem)]">
@@ -251,7 +243,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         onClose={() => setShowCompleteModal(false)}
       />
     </div>
-  )
+  );
 }
 
 /** Right-column code runner: editor, tabbed output/tests/preview, action bar. */
@@ -272,50 +264,48 @@ function Runner({
   hints,
   answer,
 }: {
-  userCode: string
-  setUserCode: (s: string) => void
-  platform: LessonData['platforms'][number]
-  setPlatform: (p: LessonData['platforms'][number]) => void
-  tab: Tab
-  setTab: (t: Tab) => void
-  testResults: null | ReturnType<typeof runTests>
-  outputLines: string[]
-  isAnimating: boolean
-  onRun: () => void
-  onReset: () => void
-  platforms: LessonData['platforms']
-  readOnly?: boolean
-  hints: string[]
-  answer: string
+  userCode: string;
+  setUserCode: (s: string) => void;
+  platform: LessonData['platforms'][number];
+  setPlatform: (p: LessonData['platforms'][number]) => void;
+  tab: Tab;
+  setTab: (t: Tab) => void;
+  testResults: null | ReturnType<typeof runTests>;
+  outputLines: string[];
+  isAnimating: boolean;
+  onRun: () => void;
+  onReset: () => void;
+  platforms: LessonData['platforms'];
+  readOnly?: boolean;
+  hints: string[];
+  answer: string;
 }) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(userCode)
+        await navigator.clipboard.writeText(userCode);
       } else {
         // Fallback for older browsers / non-secure contexts.
-        const ta = document.createElement('textarea')
-        ta.value = userCode
-        ta.style.position = 'fixed'
-        ta.style.opacity = '0'
-        document.body.appendChild(ta)
-        ta.select()
-        document.execCommand('copy')
-        document.body.removeChild(ta)
+        const ta = document.createElement('textarea');
+        ta.value = userCode;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
       }
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     } catch {
       // No-op: visual feedback just won't fire.
     }
-  }, [userCode])
+  }, [userCode]);
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-canvas-border bg-canvas-muted"
-    >
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-canvas-border bg-canvas-muted">
       <div className="flex items-center justify-between gap-2 border-b border-canvas-border bg-canvas px-3 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <span
@@ -441,7 +431,7 @@ function Runner({
         {tab === 'preview' ? <PreviewView /> : null}
       </div>
     </div>
-  )
+  );
 }
 
 /** Output tab: streams `expectedOutput` lines one at a time. */
@@ -468,7 +458,7 @@ function OutputView({ lines, isAnimating }: { lines: string[]; isAnimating: bool
         </p>
       ) : null}
     </div>
-  )
+  );
 }
 
 /** Tests tab: pass/fail list, or an empty-state pointing at Check Answer. */
@@ -479,7 +469,7 @@ function TestsView({ results }: { results: null | ReturnType<typeof runTests>; t
         Click <span className="text-emerald-400">Check Answer</span> in the tutorial to run the
         tests.
       </p>
-    )
+    );
   }
   return (
     <ul className="space-y-1.5 text-canvas-foreground">
@@ -500,7 +490,7 @@ function TestsView({ results }: { results: null | ReturnType<typeof runTests>; t
         </li>
       ))}
     </ul>
-  )
+  );
 }
 
 /** Preview tab: placeholder explaining the live-preview pipeline. */
@@ -513,28 +503,28 @@ function PreviewView() {
       <span className="px-1 font-mono text-emerald-400">expectedOutput</span>
       array already declared in the lesson frontmatter.
     </p>
-  )
+  );
 }
 
 /** Mirror of the in-app runner's `runTests`. Pattern flags must match
  *  so a passing test here also passes the user's check in the browser. */
 function runTests(code: string, tests: LessonTest[]) {
   return tests.map((t) => {
-    let passed = false
+    let passed = false;
     if (t.pattern) {
       try {
-        passed = new RegExp(t.pattern, 'm').test(code)
+        passed = new RegExp(t.pattern, 'm').test(code);
       } catch {
-        passed = false
+        passed = false;
       }
     }
     if (!passed && t.contains) {
-      passed = code.includes(t.contains)
+      passed = code.includes(t.contains);
     }
-    return { id: t.id, description: t.description, passed }
-  })
+    return { id: t.id, description: t.description, passed };
+  });
 }
 
 function delay(ms: number) {
-  return new Promise((r) => setTimeout(r, ms))
+  return new Promise((r) => setTimeout(r, ms));
 }

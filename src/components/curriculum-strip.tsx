@@ -1,14 +1,14 @@
-'use client'
+'use client';
 
-import { ArrowRight, Check } from 'lucide-react'
-import Link from 'next/link'
+import { ArrowRight, Check } from 'lucide-react';
+import Link from 'next/link';
 import {
   type CurriculumChapter,
   type CurriculumLesson,
   type CurriculumLessonState,
   stateOf,
-} from '@/lib/curriculum'
-import { useUserStore } from '@/lib/store/user-store'
+} from '@/lib/curriculum';
+import { useUserStore } from '@/lib/store/user-store';
 
 /** Pulse keyframes for the active pill. Inlined via <style> below. */
 const PULSE_STYLES = `
@@ -17,34 +17,34 @@ const PULSE_STYLES = `
     50%      { box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
   }
   .current-pill { animation: curriculumPulse 2.4s ease-in-out infinite; }
-`
+`;
 
 interface CurriculumStripProps {
-  chapter?: CurriculumChapter
-  currentLesson?: CurriculumLesson
+  chapter?: CurriculumChapter;
+  currentLesson?: CurriculumLesson;
 }
 
 export function CurriculumStrip({ chapter, currentLesson }: CurriculumStripProps) {
-  const completedChapters = useUserStore((s) => s.completedChapters)
-  const completedLessons = useUserStore((s) => s.completedLessons)
-  const chapterDone = !!chapter && completedChapters.includes(chapter.slug)
+  const completedChapters = useUserStore((s) => s.completedChapters);
+  const completedLessons = useUserStore((s) => s.completedLessons);
+  const chapterDone = !!chapter && completedChapters.includes(chapter.slug);
 
   if (!chapter) {
     return (
       <div className="mb-6 text-xs text-canvas-muted-foreground">
         No chapter context for this page.
       </div>
-    )
+    );
   }
 
-  const total = chapter.lessons.length
+  const total = chapter.lessons.length;
   const currentIdx = currentLesson
     ? chapter.lessons.findIndex((l) => l.num === currentLesson.num)
-    : -1
-  const position = currentIdx >= 0 ? currentIdx + 1 : 0
+    : -1;
+  const position = currentIdx >= 0 ? currentIdx + 1 : 0;
   const topLabel = currentLesson
     ? `${chapter.label} · ${currentLesson.shortTitle ?? currentLesson.title}`
-    : chapter.label
+    : chapter.label;
 
   return (
     <div className="mb-6">
@@ -84,7 +84,7 @@ export function CurriculumStrip({ chapter, currentLesson }: CurriculumStripProps
         ))}
       </ol>
     </div>
-  )
+  );
 }
 
 function LessonPill({
@@ -93,12 +93,12 @@ function LessonPill({
   chapterDone,
   isCompleted,
 }: {
-  lesson: CurriculumLesson
-  state: CurriculumLessonState
-  chapterDone: boolean
-  isCompleted: boolean
+  lesson: CurriculumLesson;
+  state: CurriculumLessonState;
+  chapterDone: boolean;
+  isCompleted: boolean;
 }) {
-  const ariaLabel = `${lesson.num} · ${lesson.shortTitle ?? lesson.title}`
+  const ariaLabel = `${lesson.num} · ${lesson.shortTitle ?? lesson.title}`;
 
   // Upcoming lesson without an href: render as a static outlined pill.
   if (state === 'upcoming' && !lesson.href) {
@@ -110,10 +110,10 @@ function LessonPill({
       >
         {lesson.num}
       </li>
-    )
+    );
   }
 
-  if (!lesson.href) return null
+  if (!lesson.href) return null;
 
   // The current lesson: emerald arrow + ring. The arrow is the strong
   // "you are here" affordance, the ring reads as the focused state.
@@ -129,7 +129,7 @@ function LessonPill({
           <ArrowRight className="size-3.5" strokeWidth={3} />
         </Link>
       </li>
-    )
+    );
   }
 
   // Completed lesson (signed in + lesson is in the user's completed set,
@@ -146,7 +146,7 @@ function LessonPill({
           <Check className="size-3.5" strokeWidth={3} />
         </Link>
       </li>
-    )
+    );
   }
 
   // Upcoming, not yet attempted: outlined circle with the lesson number.
@@ -161,5 +161,5 @@ function LessonPill({
         {lesson.num}
       </Link>
     </li>
-  )
+  );
 }

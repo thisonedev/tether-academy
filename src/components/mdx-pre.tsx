@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useRef, useState, type HTMLAttributes } from 'react';
 import { Check, Copy } from 'lucide-react';
+import { type HTMLAttributes, useCallback, useRef, useState } from 'react';
 
 type RehypePreProps = HTMLAttributes<HTMLPreElement> & {
   // rehype-pretty-code attaches a stringified SVG for the language icon.

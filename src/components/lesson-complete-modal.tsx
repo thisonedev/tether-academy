@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { ArrowLeft, ArrowRight, Check, Sparkles, X } from 'lucide-react';
 import Link from 'next/link';
-import { Check, ArrowRight, ArrowLeft, X, Sparkles } from 'lucide-react';
-import { useUserStore, POINTS_PER_CHAPTER } from '@/lib/store/user-store';
+import { useEffect } from 'react';
+import { POINTS_PER_CHAPTER, useUserStore } from '@/lib/store/user-store';
 
 interface LessonCompleteModalProps {
   open: boolean;

@@ -1,8 +1,8 @@
 import './global.css';
 import { RootProvider } from 'fumadocs-ui/provider/next';
+import type { ReactNode } from 'react';
 import { SiteHeader } from '@/components/site-header';
 import { UsernamePrompt } from '@/components/username-prompt';
-import type { ReactNode } from 'react';
 
 export const metadata = {
   title: 'Tether Academy',

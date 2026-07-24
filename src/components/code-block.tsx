@@ -16,8 +16,8 @@ export async function CodeBlock({ file, mode = 'answer', title }: CodeBlockProps
   } catch {
     return (
       <div className="my-4 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
-        Failed to read <code className="font-mono">{file}</code>. Make sure
-        the file exists in the repo.
+        Failed to read <code className="font-mono">{file}</code>. Make sure the file exists in the
+        repo.
       </div>
     );
   }

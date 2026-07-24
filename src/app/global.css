@@ -1,7 +1,7 @@
-@import 'tailwindcss';
-@import 'fumadocs-ui/css/preset.css';
-@import 'fumadocs-ui/css/black.css';
-@import 'fumadocs-ui/css/shiki.css';
+@import "tailwindcss";
+@import "fumadocs-ui/css/preset.css";
+@import "fumadocs-ui/css/black.css";
+@import "fumadocs-ui/css/shiki.css";
 
 @theme {
   /* Emerald accent, the only brand color, used sparingly */
@@ -209,13 +209,16 @@ html.dark .prose-md .shiki code span {
 }
 
 /* Constrain the CodeMirror editor to fill its parent and scroll internally */
+/* Constrain the CodeMirror editor to fill its parent and scroll internally */
 .cm-theme,
 .cm-editor,
 .cm-editor.cm-focused {
+  /* biome-ignore lint/complexity/noImportantStyles: CodeMirror default needs override */
   height: 100% !important;
   max-height: 100%;
 }
 .cm-scroller {
+  /* biome-ignore lint/complexity/noImportantStyles: CodeMirror default needs override */
   overflow: auto !important;
   max-height: 100%;
 }

@@ -71,9 +71,7 @@ function parseFrontmatter(raw) {
           const contLine = lines[i];
           if (/^\s*-\s+/.test(contLine)) break;
           if (!/^\s{2,}/.test(contLine)) break;
-          const contMatch = contLine.match(
-            /^\s+([a-zA-Z_][\w-]*)\s*:\s*(.*)$/,
-          );
+          const contMatch = contLine.match(/^\s+([a-zA-Z_][\w-]*)\s*:\s*(.*)$/);
           if (contMatch) {
             obj[contMatch[1]] = stripQuotes(contMatch[2].trim());
           }
@@ -205,7 +203,9 @@ async function main() {
     if (r.status === 'ok') {
       console.log(`  ✓ ${rel}  (${r.results.length}/${r.results.length} pass)`);
     } else {
-      console.log(`  ✗ ${rel}  (${r.results.filter((x) => x.passed).length}/${r.results.length} pass)`);
+      console.log(
+        `  ✗ ${rel}  (${r.results.filter((x) => x.passed).length}/${r.results.length} pass)`,
+      );
       for (const t of r.results) {
         if (!t.passed) console.log(`      ${fmtResult(t)}`);
       }

@@ -7,7 +7,14 @@ export async function getLLMText(page: InferPageType<typeof source>) {
 }
 
 function walkNode(
-  node: { type: string; name?: unknown; url?: string; description?: unknown; children?: unknown[]; index?: unknown },
+  node: {
+    type: string;
+    name?: unknown;
+    url?: string;
+    description?: unknown;
+    children?: unknown[];
+    index?: unknown;
+  },
   lines: string[],
   depth: number,
 ) {

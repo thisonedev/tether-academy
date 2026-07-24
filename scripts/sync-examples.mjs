@@ -13,9 +13,7 @@ const COURSES_DIR = path.resolve('courses');
 // `references/qvac/` is a local gitignored snapshot for offline use.
 // CI overrides this with `QVAC_REFERENCES_DIR` pointing at a fresh clone
 // of the upstream `github.com/tetherto/qvac` repo.
-const REFERENCES_DIR = path.resolve(
-  process.env.QVAC_REFERENCES_DIR || 'references/qvac',
-);
+const REFERENCES_DIR = path.resolve(process.env.QVAC_REFERENCES_DIR || 'references/qvac');
 const EXAMPLES_DIR = path.resolve('examples/qvac');
 
 const args = new Set(process.argv.slice(2));
@@ -59,28 +57,102 @@ function parseFrontmatter(raw) {
 }
 
 const NON_API = new Set([
-  'if', 'for', 'while', 'switch', 'return', 'await', 'async', 'function',
-  'class', 'new', 'typeof', 'instanceof', 'throw', 'try', 'catch',
-  'import', 'export', 'from', 'const', 'let', 'var', 'do', 'else',
-  'case', 'default', 'break', 'continue', 'delete', 'void', 'yield',
-  'in', 'of', 'as', 'is', 'console',
+  'if',
+  'for',
+  'while',
+  'switch',
+  'return',
+  'await',
+  'async',
+  'function',
+  'class',
+  'new',
+  'typeof',
+  'instanceof',
+  'throw',
+  'try',
+  'catch',
+  'import',
+  'export',
+  'from',
+  'const',
+  'let',
+  'var',
+  'do',
+  'else',
+  'case',
+  'default',
+  'break',
+  'continue',
+  'delete',
+  'void',
+  'yield',
+  'in',
+  'of',
+  'as',
+  'is',
+  'console',
 ]);
 
 // Built-in class names that show up as `new Foo(...)` or as bare calls but
 // aren't real SDK surfaces. Listed explicitly so we don't false-positive
 // `new Error(...)`, `new Promise(...)`, `setTimeout(...)`, etc. as drift.
 const BUILTIN_NAMES = new Set([
-  'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError',
-  'Promise', 'Symbol', 'BigInt', 'Map', 'Set', 'WeakMap', 'WeakSet',
-  'Date', 'RegExp', 'Array', 'Object', 'Number', 'String', 'Boolean',
-  'Math', 'JSON', 'Reflect', 'Proxy', 'Intl', 'URL', 'URLSearchParams',
-  'ArrayBuffer', 'Uint8Array', 'Uint8ClampedArray', 'Int8Array',
-  'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
-  'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array',
-  'DataView', 'Map', 'Set', 'WeakMap', 'WeakSet',
-  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
-  'setImmediate', 'clearImmediate', 'process', 'console', 'Buffer',
-  'globalThis', 'window', 'document',
+  'Error',
+  'TypeError',
+  'RangeError',
+  'SyntaxError',
+  'ReferenceError',
+  'Promise',
+  'Symbol',
+  'BigInt',
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+  'Date',
+  'RegExp',
+  'Array',
+  'Object',
+  'Number',
+  'String',
+  'Boolean',
+  'Math',
+  'JSON',
+  'Reflect',
+  'Proxy',
+  'Intl',
+  'URL',
+  'URLSearchParams',
+  'ArrayBuffer',
+  'Uint8Array',
+  'Uint8ClampedArray',
+  'Int8Array',
+  'Uint16Array',
+  'Int16Array',
+  'Uint32Array',
+  'Int32Array',
+  'Float32Array',
+  'Float64Array',
+  'BigInt64Array',
+  'BigUint64Array',
+  'DataView',
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+  'setTimeout',
+  'clearTimeout',
+  'setInterval',
+  'clearInterval',
+  'setImmediate',
+  'clearImmediate',
+  'process',
+  'console',
+  'Buffer',
+  'globalThis',
+  'window',
+  'document',
 ]);
 
 function extractUserDefined(code) {
@@ -201,9 +273,7 @@ async function main() {
     console.log('=================');
     for (const r of results) {
       const rel = path.relative(process.cwd(), r.lesson);
-      const vendoredRel = r.vendored
-        ? path.relative(process.cwd(), r.vendored)
-        : '';
+      const vendoredRel = r.vendored ? path.relative(process.cwd(), r.vendored) : '';
       if (r.status === 'ok') {
         console.log(
           `  ✓ ${rel}  [${r.sourceExample}]  → ${vendoredRel}  (${r.vendoredCallCount}/${r.upstreamCallCount} calls)`,

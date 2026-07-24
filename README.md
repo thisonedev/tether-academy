@@ -37,8 +37,10 @@ Output goes to `out/`. The site is fully static; drop the directory on any stati
 ### Lint and format
 
 ```bash
-npm run lint      # biome lint
-npm run format    # biome format --write
+npm run lint         # biome lint
+npm run check        # biome check (lint + format)
+npm run check:write  # biome check --write, auto-fixes safe issues
+npm run format       # biome format --write
 ```
 
 `biome.json` is the source of truth. It ignores `node_modules`, `references/`, `courses/`, and Next's build output. Lessons are MDX and are not parsed as JS; the prose style lives in `core/style-guide.md`.

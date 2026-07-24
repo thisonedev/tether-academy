@@ -1,7 +1,7 @@
 'use client';
 
 import type { MouseEvent } from 'react';
-import { useUserStore, useUserHydrated } from '@/lib/store/user-store';
+import { useUserHydrated, useUserStore } from '@/lib/store/user-store';
 
 /** Returns an `onClick` handler that opens the sign-in prompt for unsigned visitors. */
 export function useSignInGate() {
