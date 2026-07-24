@@ -26,13 +26,7 @@ expectedOutput:
 
 We have three vectors from the last lesson. Two are similar (both about a fox). One is unrelated (Python). The comparison is one short function: multiply matching positions, then sum them up.
 
-For two 1024-dimension vectors `a` and `b`:
-
-```
-similarity = Σᵢ aᵢ × bᵢ
-```
-
-That's all there is to it. Strictly speaking, "cosine similarity" divides by the magnitudes too, but for normalized embeddings like these the dot product alone ranks similarity correctly.
+For two 1024-dimension vectors `a` and `b`, the similarity is the dot product `Σᵢ aᵢ × bᵢ`, the sum of the element-wise products. That's all there is to it. Strictly speaking, "cosine similarity" divides by the magnitudes too, but for normalized embeddings like these the dot product alone ranks similarity correctly.
 
 Same batch `embed()` call, but destructured into three named variables. Different destructuring pattern than the previous lesson, since we want three separate handles rather than one batch. You would destructure like so:
 

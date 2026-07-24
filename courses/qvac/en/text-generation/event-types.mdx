@@ -26,13 +26,13 @@ expectedOutput:
   - "▸ Stop reason: eos"
 ---
 
-Now that we've seen the basic contentDelta and thinkingDelta events, let's look at the full event surface.
+Earlier chapters used `result.tokenStream`, a flat string iterable of the model's text. The stream gives you raw output, but content and thinking look identical without type tags. The `events` surface dispatches each by type, so they arrive separately.
 
-The `events` stream on a completion run is the canonical surface. Each event has a typed payload: a token delta, a thinking block, a tool call, a stats frame, the final `done`, or the raw text for debug.
+On a completion run, this surface is the canonical one. Each item carries a payload: a content delta, a thinking block, a tool call, a stats frame, the terminal `done`, or the raw text.
 
-We use a `switch` on `event.type` to handle each kind.
+The previous lesson covered `contentDelta` and `thinkingDelta` firing side by side. This one covers the full set, plus the `result.final` promise that joins them all into one object.
 
-Putting the `for await` loop and the `switch` together, here's the full dispatch:
+Here's how you'd dispatch the events in a streaming loop:
 
 ```ts
 for await (const event of result.events) {
@@ -57,7 +57,7 @@ for await (const event of result.events) {
 
 `contentDelta` is the model's text token-by-token, written to stdout. `thinkingDelta` is the chain-of-thought stream, written to stderr with a `[think]` prefix so the reasoning doesn't get mixed into the user-visible response. `toolCall` marks a function-call emission in the response stream. `completionStats` carries throughput numbers.
 
-After the loop, `await result.final` joins the event stream into one object: `contentText`, `thinkingText`, `toolCalls`, `stats`, `stopReason`, `raw.fullText`. Reading the aggregate would look like this:
+After the loop, `await result.final` joins them into one object: `contentText`, `thinkingText`, `toolCalls`, `stats`, `stopReason`, `raw.fullText`. Reading the aggregate would look like this:
 
 ```ts
 console.log();
@@ -66,9 +66,9 @@ console.log(`▸ Final contentText: ${final.contentText}`);
 console.log(`▸ Stop reason: ${final.stopReason}`);
 ```
 
-> Note: the older `tokenStream` and `text` shortcuts still work but are deprecated. New code should consume `events` for streaming and await `final.contentText` for the aggregated result.
+> Note: `tokenStream` still works for simple cases, but new code should consume `events` for streaming and `final.contentText` for the aggregated result.
 
 ## Put it to the test
 
-1. Walk `result.events` with a `for await ... { switch (event.type) { ... } }`. Cases: `contentDelta` writes `event.text` to stdout, `thinkingDelta` writes `[think] ${event.text}` to stderr, `completionDone` breaks.
+1. Iterate `result.events` with a `for await ... { switch (event.type) { ... } }`. Cases: `contentDelta` writes `event.text` to stdout, `thinkingDelta` writes `[think] ${event.text}` to stderr, `completionDone` breaks.
 2. After the loop, `await result.final` and log `final.contentText` and `final.stopReason`.

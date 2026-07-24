@@ -1,5 +1,6 @@
 ---
 title: "Pre-download a model with downloadAsset"
+sourceExample: "packages/sdk/examples/download-with-blind-relays.ts"
 platforms: ['node', 'desktop']
 tests:
   - id: calls-download-asset
@@ -14,8 +15,7 @@ hints:
   - "Use the same onProgress shape as loadModel: it hands you a { percentage, downloaded, total } object on each tick."
 expectedOutput:
   - "▸ Downloading 100% (740.0/740.0 MB)"
-  - "▸ Model loaded: model-7f2a"
-  - "▸ Performance Stats: { tokensPerSecond: 47.31 }"
+  - "▸ Done."
 ---
 
 We're starting a new chapter on peer-to-peer (P2P), and we're going to decouple download from load.
@@ -37,18 +37,10 @@ await downloadAsset({
 });
 ```
 
-`clearStorage: false` keeps the file cached so the next run doesn't re-download. Note that the cache is keyed by `assetSrc`; the second run with the same constant is a no-op. Here's how the post-cache lifecycle would look like:
+`downloadAsset` writes the file to the SDK's cache. The `loadModel()` below reuses it; `clearStorage: false` keeps the file around for the next run:
 
 ```ts
-const modelId = await loadModel({
-  modelSrc: LLAMA_3_2_1B_INST_Q4_0,
-  modelConfig: { device: "gpu", ctx_size: 2048 },
-});
-
-const history = [{ role: "user", content: "Explain quantum computing in one sentence." }];
-const result = completion({ modelId, history, stream: true });
-for await (const token of result.tokenStream) process.stdout.write(token);
-
+const modelId = await loadModel({ modelSrc: LLAMA_3_2_1B_INST_Q4_0 });
 await unloadModel({ modelId, clearStorage: false });
 ```
 
@@ -59,4 +51,4 @@ The `onProgress` callback uses the same `{ percentage, downloaded, total }` shap
 ## Put it to the test
 
 1. Call `downloadAsset({ assetSrc, onProgress })` and `await` it. The model is now cached on disk.
-2. Call `loadModel({ modelSrc: <same constant> })` and stream a small completion, then `unloadModel({ modelId, clearStorage: false })` to free GPU memory without deleting the cache.
+2. Call `loadModel({ modelSrc: <same constant> })` and `unloadModel({ modelId, clearStorage: false })` to confirm the cached file loads into memory and frees cleanly.
