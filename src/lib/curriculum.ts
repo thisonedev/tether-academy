@@ -288,12 +288,6 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'pause-resume-cancel',
         href: lessonHref('fine-tuning', 'pause-resume-cancel'),
       },
-      {
-        num: '04',
-        title: 'Use the fine-tuned adapter at inference time',
-        slug: 'use-adapter',
-        href: lessonHref('fine-tuning', 'use-adapter'),
-      },
     ],
   },
   {
@@ -369,12 +363,6 @@ export const CURRICULUM: CurriculumChapter[] = [
         title: 'Upscale a generated image in the same call',
         slug: 'esrgan-postprocess',
         href: lessonHref('image-generation', 'esrgan-postprocess'),
-      },
-      {
-        num: '08',
-        title: 'Upscale an image with ESRGAN standalone',
-        slug: 'esrgan-standalone',
-        href: lessonHref('image-generation', 'esrgan-standalone'),
       },
     ],
   },
