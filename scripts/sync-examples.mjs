@@ -157,7 +157,7 @@ const BUILTIN_NAMES = new Set([
 
 function extractUserDefined(code) {
   const out = new Set();
-  for (const m of code.matchAll(/function\s+([a-zA-Z_$][\w$]*)\s*\(/g)) {
+  for (const m of code.matchAll(/function\s*\*?\s+([a-zA-Z_$][\w$]*)\s*\(/g)) {
     out.add(m[1]);
   }
   for (const m of code.matchAll(/(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*[=:]/g)) {
