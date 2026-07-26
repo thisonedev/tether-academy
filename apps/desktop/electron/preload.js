@@ -1,18 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Tag the document so the web app can apply macOS-specific layout
-// (e.g. left padding to clear the hiddenInset traffic lights).
-function tagPlatform() {
-  if (document.documentElement) {
-    document.documentElement.dataset.platform = process.platform;
-  }
-}
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', tagPlatform, { once: true });
-} else {
-  tagPlatform();
-}
-
 contextBridge.exposeInMainWorld('academy', {
   pkg: () => ipcRenderer.sendSync('pkg'),
   run: (payload) => ipcRenderer.invoke('academy:run', payload),

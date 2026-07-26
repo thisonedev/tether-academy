@@ -1,6 +1,6 @@
 'use client';
 
-import type { MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import type { AcademyAPI, AcademyWindowAPI } from '@academy/academy-bridge';
 
 declare global {
@@ -15,13 +15,14 @@ function readAPI(): AcademyWindowAPI | null {
 }
 
 export function WindowControls() {
-  const api = readAPI();
+  // Start null so SSR and the first client render match; swap to the real
+  // bridge after mount to avoid the React #418 hydration mismatch.
+  const [api, setApi] = useState<AcademyWindowAPI | null>(null);
+  useEffect(() => {
+    setApi(readAPI());
+  }, []);
   const stop = (e: MouseEvent) => e.stopPropagation();
 
-  // Reserve the same width whether the desktop bridge is present or not so the
-  // header doesn't reflow when the traffic lights show up. The aria-hidden
-  // placeholder keeps the layout stable on the web (and during the first paint
-  // in the desktop app, before the academy bridge is consulted).
   return (
     <div
       aria-label="Window controls"

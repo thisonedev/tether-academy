@@ -239,10 +239,8 @@ header.site-header input {
   -webkit-app-region: no-drag;
 }
 
-/* On the web, the window controls are a placeholder that reserves space for
-   the desktop traffic lights. Drop the placeholder and the logo's left margin
-   so the header reads flush-left on the web. The desktop preload script tags
-   <html data-platform="...">, so this only applies when that tag is absent. */
+/* Web only: desktop app tags <html data-platform="..."> in app/layout.tsx,
+   so the rules below fire only when that tag is absent. */
 html:not([data-platform]) header.site-header > :first-child {
   display: none;
 }

@@ -11,10 +11,18 @@ export const metadata = {
   },
 };
 
+/** Tag <html data-platform="desktop"> before paint when the desktop bridge is
+ *  present, so CSS can pick the right header layout (controls + logo offset). */
+const tagPlatformScript = `try{if(window.academy){document.documentElement.setAttribute('data-platform','desktop')}}catch(e){}`;
+
 /** Root layout: site header, page content, and the self-determining sign-in modal. */
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static string, no user input */}
+        <script dangerouslySetInnerHTML={{ __html: tagPlatformScript }} />
+      </head>
       <body
         className="flex min-h-screen flex-col bg-canvas text-canvas-foreground antialiased"
         suppressHydrationWarning
