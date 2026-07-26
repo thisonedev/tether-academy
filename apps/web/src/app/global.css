@@ -247,3 +247,11 @@ html:not([data-platform]) header.site-header > :first-child {
 html:not([data-platform]) header.site-header > :nth-child(2) {
   margin-left: 0;
 }
+
+/* Lesson workspace run-mode select */
+html:not([data-platform]) .run-mode-select-desktop {
+  display: none;
+}
+html[data-platform="desktop"] .run-mode-select-web {
+  display: none;
+}

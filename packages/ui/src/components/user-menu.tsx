@@ -2,15 +2,13 @@
 
 import { LogOut } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { getLevel, useUserHydrated, useUserStore } from '@academy/core';
+import { getLevel, useUserStore } from '@academy/core';
 
 const XP_PER_LEVEL = 100;
 
 /** Header account handle: avatar (initial) that opens a dropdown with the
- *  username, level/XP, and sign out. The sectioned menu is the long-term
- *  home for account items (settings, profile, theme, shortcuts). */
+ *  username, level/XP, and sign out. */
 export function UserMenu() {
-  const hydrated = useUserHydrated();
   const username = useUserStore((s) => s.username);
   const points = useUserStore((s) => s.points);
   const reset = useUserStore((s) => s.reset);
@@ -44,15 +42,6 @@ export function UserMenu() {
     };
   }, [open]);
 
-  // Hydration placeholder matches the button footprint to avoid layout shift.
-  if (!hydrated) {
-    return (
-      <span
-        aria-hidden
-        className="inline-flex size-8 items-center justify-center rounded-full border border-canvas-border bg-canvas-muted"
-      />
-    );
-  }
   if (!username) return null;
 
   const level = getLevel(points);

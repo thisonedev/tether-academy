@@ -12,7 +12,6 @@ import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
 import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
-import { SignInBanner } from './sign-in-banner.js';
 
 export interface LessonTest {
   id: string;
@@ -222,7 +221,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     <div className="flex w-full flex-col lg:h-[calc(100vh-3.5rem)]">
       <div className="flex min-h-0 flex-col gap-4 px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:flex-1 lg:flex-row lg:gap-6 lg:overflow-hidden lg:pb-0">
         <section className="min-w-0 lg:max-w-[42%] lg:min-w-[360px] lg:flex-shrink-0 lg:h-full lg:overflow-y-auto lg:pr-2">
-          <SignInBanner />
           <CurriculumStrip chapter={data.currentChapter} currentLesson={data.currentLesson} />
 
           <header className="mb-5">
@@ -441,32 +439,38 @@ function Runner({
           >
             <RotateCcw className="size-4" />
           </button>
-          {isDesktop ? (
-            <select
-              value={runMode}
-              onChange={(e) => setRunMode(e.target.value as RunMode)}
-              disabled={readOnly}
-              className="ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-              title="Run mode"
-              aria-label="Run mode"
-            >
-              <option value="this-device">This device</option>
-              <option value="simulated">Simulated</option>
-            </select>
-          ) : (
-            // Render an invisible select so the SSR/CSR markup matches and the
-            // desktop app doesn't pop the selector in after a frame. The
-            // hidden class keeps it out of the layout and accessibility tree.
-            <select
-              aria-hidden
-              tabIndex={-1}
-              disabled
-              className="ml-1 hidden rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider"
-            >
-              <option value="this-device">This device</option>
-              <option value="simulated">Simulated</option>
-            </select>
-          )}
+          <select
+            id="run-mode-select-desktop"
+            value={runMode}
+            onChange={(e) => setRunMode(e.target.value as RunMode)}
+            disabled={readOnly}
+            suppressHydrationWarning
+            className="run-mode-select-desktop ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Run mode"
+            aria-label="Run mode"
+          >
+            <option value="this-device">This device</option>
+            <option value="simulated">Simulated</option>
+          </select>
+          {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static string, no user input */}
+          <script
+            suppressHydrationWarning
+            dangerouslySetInnerHTML={{
+              __html:
+                "try{if(window.academy&&window.academy.run){var s=document.getElementById('run-mode-select-desktop');if(s)s.value='this-device';}}catch(e){}",
+            }}
+          />
+          <select
+            aria-hidden={isDesktop}
+            tabIndex={isDesktop ? -1 : undefined}
+            disabled={isDesktop || readOnly}
+            suppressHydrationWarning
+            className="run-mode-select-web ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground"
+            title={isDesktop ? undefined : "Run mode"}
+            aria-label={isDesktop ? undefined : "Run mode"}
+          >
+            <option value="simulated">Simulated</option>
+          </select>
           <button
             type="button"
             onClick={onRun}
