@@ -1,0 +1,4 @@
+{"messages": [{"role": "user", "content": "Capital of Italy?"}, {"role": "assistant", "content": "Rome."}]}
+{"messages": [{"role": "user", "content": "What is 10 minus 3?"}, {"role": "assistant", "content": "7."}]}
+{"messages": [{"role": "user", "content": "Author of Pride and Prejudice?"}, {"role": "assistant", "content": "Jane Austen."}]}
+{"messages": [{"role": "user", "content": "Chemical symbol for gold?"}, {"role": "assistant", "content": "Au."}]}

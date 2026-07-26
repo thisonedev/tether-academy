@@ -1,0 +1,65 @@
+name: Verify lessons
+
+# Daily check: do the vendored lesson files still match the
+# real QVAC SDK? Two checks in one job, sharing the upstream clone:
+#   - verify:tests:check — each lesson's frontmatter tests pass
+#     against its vendored answer.ts
+#   - sync:examples — vendored answer.ts files only use callables
+#     that still exist in the matched upstream file
+# Runs daily at 06:00 UTC. Manual dispatch for re-runs.
+# On drift, edit the matching examples/qvac/<lesson>.answer.ts + the
+# lesson text, then commit. Neither check ever modifies files.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: checkout
+        uses: actions/checkout@v5
+
+      - name: setup node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+
+      - name: cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: clone upstream
+        env:
+          UPSTREAM_REPO: 'https://github.com/tetherto/qvac.git'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --filter=blob:none --sparse "$UPSTREAM_REPO" /tmp/qvac-upstream
+          cd /tmp/qvac-upstream
+          git sparse-checkout set packages/sdk/examples
+
+      - name: verify lesson tests
+        env:
+          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
+        run: pnpm --filter @academy/courses verify:tests:check
+
+      - name: sync check
+        env:
+          QVAC_REFERENCES_DIR: /tmp/qvac-upstream
+        run: pnpm --filter @academy/courses sync:examples

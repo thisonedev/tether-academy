@@ -1,0 +1,47 @@
+---
+title: "Reindex a RAG workspace after many writes"
+sourceExample: "packages/sdk/examples/rag/rag-hyperdb/workspaces.ts"
+platforms: ['node']
+tests:
+  - id: calls-reindex
+    description: 'Calls ragReindex with workspace'
+    pattern: "ragReindex\\s*\\(\\s*\\{[^}]*workspace[^}]*\\}"
+  - id: waits-for-result
+    description: 'Awaits the reindex result'
+    pattern: "await\\s+ragReindex"
+  - id: reads-result
+    description: 'Reads result.reindexed and logs the reason when it is false'
+    pattern: "result\\.reindexed|details\\?\\.reason"
+hints:
+  - "ragReindex takes { workspace }. It processes the stored text in the workspace and re-embeds everything."
+  - "Use it after many writes (hundreds of deletes and re-ingests) when scores feel off."
+  - "The reindex is idempotent, running it twice in a row is safe, the second run is a no-op."
+  - "HyperDB's k-means needs at least 4 documents (NUM_CENTROIDS default) to produce centroids. Fewer than that returns { reindexed: false, reason: 'insufficient documents' }."
+expectedOutput:
+  - "Reindexed: false"
+  - "Reason: insufficient documents"
+---
+
+After enough `ragDeleteEmbeddings` and re-ingest cycles, scores can drift. The index no longer reflects the source text. `ragReindex({ workspace })` processes the stored text for that workspace and regenerates every embedding from scratch.
+
+`ragReindex` runs k-means over the stored embeddings. K-means needs at least `K` samples to produce `K` centroids. HyperDB's `NUM_CENTROIDS` defaults to 4 and is not configurable through the SDK, so any workspace with fewer than 4 documents gets a no-op reindex with `reason: "insufficient documents"`.
+
+The reindex is idempotent: running it twice in a row is safe, the second run finds nothing to do.
+
+The result is `{ reindexed, details }`. `reindexed: true` means anything was rebuilt; `false` carries a `reason` you can log. The call is two lines:
+
+```ts
+const result = await ragReindex({ workspace });
+console.log("Reindexed:", result.reindexed);
+if (!result.reindexed) {
+  console.log("Reason:", result.details?.reason ?? "unknown");
+}
+```
+
+For this 4-recipe demo the reindex deliberately bails. The point of the lesson is to read the result and know what to do with it: in a real workspace with thousands of documents, this branch never fires, you just log the success and proceed with the updated embeddings.
+
+> Note: a reindex on a large workspace takes roughly the same time as the original ingest. Plan to run it during a quiet window or as a one-shot maintenance task.
+
+## Put it to the test
+
+1. Call `await ragReindex({ workspace })` and console.log `result.reindexed` plus the reason from `result.details?.reason` when it's `false`.

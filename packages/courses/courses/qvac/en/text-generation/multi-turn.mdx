@@ -1,0 +1,70 @@
+---
+title: "Send a multi-turn conversation"
+sourceExample: "packages/sdk/examples/quickstart.ts"
+platforms: ['node']
+tests:
+  - id: history-array-declared
+    description: 'Declares a `history` array variable'
+    pattern: "(?:const|let|var)\\s+history\\s*[=:]"
+  - id: pushes-assistant-turn
+    description: 'Pushes the assistant turn into history after the first completion'
+    pattern: "history\\.push\\s*\\(\\s*\\{\\s*role\\s*:\\s*[\"']assistant[\"']"
+  - id: pushes-second-user-turn
+    description: 'Pushes a second user turn before the second completion'
+    pattern: "history\\.push\\s*\\(\\s*\\{\\s*role\\s*:\\s*[\"']user[\"']"
+  - id: second-completion-call
+    description: 'Calls completion() a second time with the same history'
+    pattern: "completion\\s*\\(\\s*\\{[^}]*history[^}]*\\}"
+hints:
+  - "history is an array of {role, content} objects. The SDK does not store it for you, you keep it across turns."
+  - "After each completion, push the assistant's text back as {role: 'assistant', content: text1} before appending the next user turn."
+  - "Pass the same history array to each call. Every prior turn is in the model's input context, so follow-ups have the prior answer available."
+expectedOutput:
+  - "▸ Turn 1: user asks: What is the capital of France?"
+  - "Paris."
+  - "▸ Turn 2: user asks: And which river runs through it?"
+  - "The Seine."
+---
+
+The previous lesson made a single `completion()` call. This one uses it for a real conversation.
+
+A single call is stateless on the SDK side. Only what we put in `history` reaches the model. To get a real conversation going we keep the `history` array and append each turn before the next call.
+
+The SDK doesn't keep conversation state, so we own the `history` array as follows:
+
+```ts
+const history: Array<{ role: string; content: string }> = [
+  { role: "user", content: "What is the capital of France?" },
+];
+```
+
+Pushing the assistant's reply back into the same `history` array is what makes the next call see it as context. You would write the first turn like so:
+
+```ts
+const r1 = completion({ modelId, history, stream: true });
+for await (const event of r1.events) {
+  if (event.type === "contentDelta") process.stdout.write(event.text);
+}
+const text1 = await r1.text;
+history.push({ role: "assistant", content: text1 });
+```
+
+Same `history` reference, with the assistant turn already in. The follow-up user turn, then the second `completion`:
+
+```ts
+history.push({ role: "user", content: "And which river runs through it?" });
+const r2 = completion({ modelId, history, stream: true });
+for await (const event of r2.events) {
+  if (event.type === "contentDelta") process.stdout.write(event.text);
+}
+```
+
+The same `history` reference goes into both calls. The first question and the model's answer from the first turn are both in the array by the time we make the second call, so the model can answer the follow-up.
+
+> Note: the SDK never mutates `history` for you. If you forget to push the assistant turn back, the next call's input contains only the user turns and the prior assistant answer is gone, so a follow-up that asks about it gets an answer without that context.
+
+## Put it to the test
+
+1. Above the first `completion()` call, declare `const history: Array<{ role: string; content: string }> = [{ role: "user", content: "What is the capital of France?" }]`.
+2. After awaiting the first response, push `{ role: "assistant", content: text1 }`, then push `{ role: "user", content: "And which river runs through it?" }`.
+3. Call `completion()` a second time, passing the same `history`, and stream its `contentDelta` tokens to stdout.

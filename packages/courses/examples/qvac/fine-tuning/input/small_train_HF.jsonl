@@ -1,0 +1,16 @@
+{"messages": [{"role": "user", "content": "What is the capital of France?"}, {"role": "assistant", "content": "Paris."}]}
+{"messages": [{"role": "user", "content": "What is 2 + 2?"}, {"role": "assistant", "content": "4."}]}
+{"messages": [{"role": "user", "content": "Name a primary color."}, {"role": "assistant", "content": "Red."}]}
+{"messages": [{"role": "user", "content": "Who wrote Hamlet?"}, {"role": "assistant", "content": "William Shakespeare."}]}
+{"messages": [{"role": "user", "content": "What planet is known as the Red Planet?"}, {"role": "assistant", "content": "Mars."}]}
+{"messages": [{"role": "user", "content": "How many continents are there?"}, {"role": "assistant", "content": "Seven."}]}
+{"messages": [{"role": "user", "content": "What is H2O?"}, {"role": "assistant", "content": "Water."}]}
+{"messages": [{"role": "user", "content": "Largest ocean on Earth?"}, {"role": "assistant", "content": "The Pacific."}]}
+{"messages": [{"role": "user", "content": "What language is spoken in Brazil?"}, {"role": "assistant", "content": "Portuguese."}]}
+{"messages": [{"role": "user", "content": "Square root of 81?"}, {"role": "assistant", "content": "9."}]}
+{"messages": [{"role": "user", "content": "Who painted the Mona Lisa?"}, {"role": "assistant", "content": "Leonardo da Vinci."}]}
+{"messages": [{"role": "user", "content": "What gas do plants absorb?"}, {"role": "assistant", "content": "Carbon dioxide."}]}
+{"messages": [{"role": "user", "content": "How many sides does a hexagon have?"}, {"role": "assistant", "content": "Six."}]}
+{"messages": [{"role": "user", "content": "Currency of Japan?"}, {"role": "assistant", "content": "Yen."}]}
+{"messages": [{"role": "user", "content": "Tallest mountain in the world?"}, {"role": "assistant", "content": "Mount Everest."}]}
+{"messages": [{"role": "user", "content": "What is the boiling point of water in Celsius?"}, {"role": "assistant", "content": "100."}]}

@@ -1,0 +1,35 @@
+{
+  "name": "@academy/courses",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./scripts/*": "./scripts/*"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "sync:examples": "node scripts/sync-examples.mjs",
+    "sync:examples:check": "node scripts/sync-examples.mjs --check",
+    "verify:tests": "node scripts/verify-tests.mjs",
+    "verify:tests:check": "node scripts/verify-tests.mjs --check",
+    "check:yaml": "node scripts/check-yaml.cjs"
+  },
+  "dependencies": {
+    "@academy/config": "workspace:*",
+    "@academy/validation": "workspace:*",
+    "fumadocs-core": "^15.0.0",
+    "fumadocs-mdx": "13.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "js-yaml": "^4.1.0",
+    "typescript": "^5.7.0"
+  }
+}

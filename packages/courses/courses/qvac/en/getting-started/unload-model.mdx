@@ -1,0 +1,43 @@
+---
+title: "Unload the model from memory"
+sourceExample: "packages/sdk/examples/quickstart.ts"
+platforms: ['node']
+tests:
+  - id: calls-unload
+    description: Calls unloadModel with the modelId
+    pattern: "unloadModel\\s*\\(\\s*\\{[^}]*modelId"
+  - id: awaits-unload
+    description: Awaits unloadModel
+    pattern: "await\\s+unloadModel"
+  - id: autoclose
+    description: "Passes autoClose: true to also close the worker"
+    pattern: "autoClose\\s*:\\s*true"
+hints:
+  - "unloadModel is the symmetric counterpart to loadModel. Import it alongside the others from @qvac/sdk."
+  - "Pass { modelId, autoClose: true }. autoClose tears down the worker, which is what you want at the end of a long-running session."
+  - "unloadModel is async. Await it the same way as loadModel."
+  - "Call it after the completion loop finishes; otherwise you may cut tokens off mid-generation."
+expectedOutput:
+  - "▸ Completion started"
+  - "▸ model unloaded"
+---
+
+Now that we've run our completion, let's free the model and tear down the worker.
+
+`unloadModel` is the symmetric counterpart to `loadModel`. We pass it the `modelId` and it frees the loaded model from device memory. With `autoClose: true`, the underlying worker process is also torn down.
+
+`autoClose: true` shuts down the worker (frees the OS process); `autoClose: false` only frees the weights. We can fully unload the session like so:
+
+```ts
+await unloadModel({ modelId, autoClose: true });
+console.log("▸ model unloaded");
+```
+
+If you skip this call, the model stays in memory until the process exits. For long-running workloads (servers, desktop apps, mobile sessions) unload the moment the work is done. The model takes hundreds of megabytes, and the GPU or CPU stays warm as long as the worker is alive.
+
+> Note: calling `unloadModel()` mid-stream would cut tokens off. Always wait for the events loop to finish before unloading.
+
+## Put it to the test
+
+1. After the completion loop ends, call `unloadModel({ modelId, autoClose: true })`.
+2. Log a confirmation line, e.g., `"▸ model unloaded"`.

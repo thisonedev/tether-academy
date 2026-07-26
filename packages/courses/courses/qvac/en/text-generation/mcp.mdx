@@ -1,0 +1,61 @@
+---
+title: "Plug MCP into a completion"
+sourceExample: "packages/sdk/examples/mcp-websearch.ts"
+platforms: ['node']
+tests:
+  - id: passes-mcp-array
+    description: 'Passes an `mcp` array to completion()'
+    pattern: "completion\\s*\\(\\s*\\{[\\s\\S]*?mcp\\s*:\\s*\\["
+  - id: mcp-has-client
+    description: 'mcp entry has a `client` field'
+    pattern: "client\\s*:"
+hints:
+  - "Pass mcp: [{ client, includeResources: false }] to completion(). The SDK reads the client's tool list and makes them available to the model as if you'd defined them by hand."
+  - "MCP is a separate protocol. You bring your own MCP server (DuckDuckGo search, filesystem access, anything). The mcp-websearch.ts example uses npx -y @oevortex/ddg_search as a starter."
+  - "Tool calls from MCP clients surface through the same toolCall events as native tools. You don't need to differentiate in the response loop."
+expectedOutput:
+  - "▸ Tool: search({\"query\":\"weather New York\"})"
+  - "▸ Got search results: [1] Current weather..."
+  - "▸ The current weather in New York is 8°C and rainy, according to the search results."
+---
+
+Now that we know how to wire tools in by hand, let's see how MCP makes it automatic.
+
+MCP (Model Context Protocol) is a standard way for the model to call external tools. We run an MCP server (search, file access, a database client), hand the SDK a `Client` from `@modelcontextprotocol/sdk/client/index.js`, and the SDK routes the model's tool calls through it automatically.
+
+With an MCP server, the SDK reads the tool list at call time and adapts on its own, with no per-model schema rewrites. The lesson prefills the client setup and the `loadModel` call, so the only thing left to figure out is how the client threads into `completion()`.
+
+The `mcp` field is the only piece of wiring that ties an MCP client into a completion call. Once it's in, the SDK treats MCP-backed tools the same as native ones. A wired-up call looks like:
+
+```ts
+const result = completion({
+  modelId,
+  history: [
+    { role: "user", content: "What's the current weather in New York?" },
+  ],
+  mcp: [{ client: mcpClient, includeResources: false }],
+  stream: true,
+});
+```
+
+The event loop is the same as in the tool-calls lesson, since the SDK fires identical `toolCall` events whether the tool is native or MCP-backed:
+
+```ts
+for await (const event of result.events) {
+  if (event.type === "toolCall") {
+    console.log(`▸ Tool: ${event.call.name}(${JSON.stringify(event.call.arguments)})`);
+  }
+  if (event.type === "contentDelta") {
+    process.stdout.write(event.text);
+  }
+}
+```
+
+When the sampled output is a tool call from the MCP server, the SDK routes the call through `mcpClient`. We see the same `toolCall` events as for native tools.
+
+> Note: MCP needs `@modelcontextprotocol/sdk` installed in your project. The SDK does not bundle it.
+
+## Put it to the test
+
+1. Install `@modelcontextprotocol/sdk`. The editor prefills a `Client` connected to `npx -y @oevortex/ddg_search` as a starter.
+2. Call `completion({ modelId, history, stream: true, mcp: [{ client: mcpClient, includeResources: false }] })` and iterate `result.events`, logging `toolCall` and `contentDelta` events. Then `await mcpClient.close()`.

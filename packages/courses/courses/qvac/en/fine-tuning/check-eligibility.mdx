@@ -1,0 +1,54 @@
+---
+title: "Check if a model is fine-tunable"
+platforms: ['node']
+tests:
+  - id: reads-quantization
+    description: Reads the quantization field from getModelInfo
+    pattern: "info\\.quantization|\\.quantization"
+  - id: uses-fine-tunable-model
+    description: Uses QWEN3_600M_INST_Q4 (Q4_0 quantization, fine-tunable)
+    pattern: "QWEN3_600M_INST_Q4"
+  - id: prints-eligibility
+    description: Logs whether the model is fine-tunable
+    pattern: "console\\.log\\s*\\([^)]*fineTunable|console\\.log\\s*\\([^)]*Fine-tunable"
+hints:
+  - "getModelInfo takes { name } where name is the catalog string. The QWEN3_600M_INST_Q4 constant is an object with a .name field."
+  - "The SDK returns the quantization in lowercase and drops the _0 suffix (e.g. \"q4\" instead of \"Q4_0\"). Normalize to uppercase and restore the suffix before comparing."
+  - "Fine-tuning only works with F32, F16, Q4_0, Q8_0, TQ1_0, or TQ2_0. Q4_K_M (used by many larger Qwen3 constants) is rejected."
+  - "Check quantization first, the finetune() call would fail halfway through a multi-hour training run otherwise."
+expectedOutput:
+  - "Quantization: q4"
+  - "Fine-tunable: yes"
+---
+
+We're starting a new chapter on fine-tuning.
+
+A trained LoRA adapter only helps if we can stack it on a base model that supports fine-tuning. The QVAC SDK accepts `Q4_K_M` for inference but rejects that quantization for training. We'd see the error halfway through a multi-hour run.
+
+`getModelInfo({ name })` returns the catalog model's `quantization` string. Two things to know before calling it:
+
+1. The catalog constant (`QWEN3_600M_INST_Q4`) is an object whose `.name` field is the string. Pass `QWEN3_600M_INST_Q4.name`.
+2. The SDK returns the quantization in lowercase and drops the `_0` suffix, so the 600M Q4 model comes back as `"q4"` instead of `"Q4_0"`.
+
+Pick the base model first, call `getModelInfo` to confirm, then start the trainer. The check looks like this:
+
+```ts
+const modelId = await loadModel({ modelSrc: QWEN3_600M_INST_Q4 });
+const info = await getModelInfo({ name: QWEN3_600M_INST_Q4.name });
+
+console.log("Quantization:", info.quantization);
+
+const quantization = info.quantization.toUpperCase().replace(/^Q(\d)$/, "Q$1_0");
+const fineTunable = ["F32", "F16", "Q4_0", "Q8_0", "TQ1_0", "TQ2_0"].includes(quantization);
+
+console.log("Fine-tunable:", fineTunable ? "yes" : "no");
+```
+
+Swap `QWEN3_600M_INST_Q4` for a `Q4_K_M` constant and the second line flips to `no`. Pick a fine-tunable model before you start training.
+
+> Note: the allowlist covers the quantizations the trainer knows how to update. Other quantizations might work someday but aren't supported in this version of the SDK.
+
+## Put it to the test
+
+1. Call `getModelInfo({ name: QWEN3_600M_INST_Q4.name })` and read `info.quantization` into a local variable.
+2. Normalize the string (uppercase + restore `_0` suffix) and check it against the allowlist `["F32", "F16", "Q4_0", "Q8_0", "TQ1_0", "TQ2_0"]`. Log the verdict.

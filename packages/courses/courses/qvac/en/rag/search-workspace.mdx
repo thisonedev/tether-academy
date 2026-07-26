@@ -1,0 +1,57 @@
+---
+title: "Search a RAG workspace"
+sourceExample: "packages/sdk/examples/rag/rag-hyperdb/ingest.ts"
+platforms: ['node']
+tests:
+  - id: searches-with-modelid
+    description: 'Calls ragSearch with modelId and workspace'
+    pattern: "ragSearch\\s*\\(\\s*\\{[^}]*modelId"
+  - id: passes-topk
+    description: 'Passes a topK option'
+    pattern: "ragSearch\\s*\\(\\s*\\{[^}]*topK"
+  - id: iterates-results
+    description: 'Iterates over the search results'
+    pattern: "for\\s*\\(\\s*const\\s+\\w+\\s+of\\s+results|results\\.forEach|for\\s*\\(\\s*let"
+hints:
+  - "ragSearch takes { modelId, workspace, query, topK }. The same modelId used to ingest, embeddings are model-specific."
+  - "topK controls how many results come back. 3 to 5 is a sensible default for chat use."
+  - "Each result has a score and a content field. Sort or filter on score if you want a confidence threshold."
+expectedOutput:
+  - "Query: machine learning"
+  - "Score 0.8712: Machine learning is a subset of artificial intelligence..."
+  - "Score 0.6234: Deep learning uses neural networks..."
+---
+
+We've got a workspace from the previous lesson. This lesson queries it.
+
+`ragSearch({ modelId, workspace, query, topK })` returns an array of `{ score, content }`. The `modelId` must match the one used at ingest, because different models put vectors in different spaces and cross-model similarity scores are meaningless.
+
+Result is sorted by score descending. The call passes all four options to `ragSearch`:
+
+```ts
+const results = await ragSearch({
+  modelId,
+  workspace,
+  query: "How do I make a peanut butter sandwich?",
+  topK: 3,
+});
+```
+
+`slice(0, 80)` clips the preview to one line. 80 chars is arbitrary, pick what fits your terminal. Also, the loop uses `toFixed(4)` for the score so keep that in mind:
+
+```ts
+let i = 0;
+for (const result of results) {
+  console.log(`Score ${result.score.toFixed(4)}: ${result.content.slice(0, 80)}...`);
+  i += 1;
+}
+```
+
+Each `result` carries the same `content` we put in, with a `score` field added (higher means more similar).
+
+> Note: `topK` is an integer, not a "score threshold". If you want to filter by confidence, sort by `score` and drop anything below your threshold.
+
+## Put it to the test
+
+1. Call `ragSearch({ modelId, workspace, query, topK })` and store the results.
+2. Add a `for (const result of results)` loop that console.logs `result.score` and the first 80 chars of `result.content`.

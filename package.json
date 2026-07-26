@@ -1,0 +1,27 @@
+{
+  "name": "tether-academy",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "build:packages": "pnpm -r --filter \"./packages/*\" build",
+    "dev": "pnpm --filter @tether-academy/web dev",
+    "dev:webpack": "pnpm --filter @tether-academy/web dev:webpack",
+    "dev:clean": "pnpm --filter @tether-academy/web dev:clean",
+    "build": "pnpm build:packages && pnpm --filter @tether-academy/web build",
+    "start": "pnpm --filter @tether-academy/web start",
+    "start:web": "pnpm --filter @tether-academy/web start",
+    "lint": "pnpm --filter @tether-academy/web lint",
+    "check": "pnpm --filter @tether-academy/web check",
+    "check:write": "pnpm --filter @tether-academy/web check:write",
+    "format": "pnpm --filter @tether-academy/web format",
+    "sync:examples": "pnpm --filter @academy/courses sync:examples",
+    "sync:examples:check": "pnpm --filter @academy/courses sync:examples:check",
+    "verify:tests": "pnpm --filter @academy/courses verify:tests",
+    "verify:tests:check": "pnpm --filter @academy/courses verify:tests:check",
+    "check:yaml": "pnpm --filter @academy/courses check:yaml",
+    "dev:desktop": "pnpm --filter @tether-academy/desktop dev",
+    "start:desktop": "pnpm --filter @tether-academy/desktop start",
+    "capture:desktop": "pnpm --filter @tether-academy/desktop capture"
+  }
+}

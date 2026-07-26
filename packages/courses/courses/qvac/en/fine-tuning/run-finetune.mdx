@@ -1,0 +1,81 @@
+---
+title: Run a fine-tune
+sourceExample: "packages/sdk/examples/finetune/llamacpp-finetune.ts"
+platforms: ['node']
+tests:
+  - id: passes-options
+    description: 'Calls finetune with modelId and an options block'
+    pattern: "finetune\\s*\\(\\s*\\{[^}]*options"
+  - id: sets-train-dataset
+    description: 'Sets trainDatasetDir inside options'
+    pattern: "trainDatasetDir\\s*:"
+  - id: iterates-progress
+    description: 'Iterates handle.progressStream'
+    pattern: "progressStream"
+  - id: reads-result
+    description: 'Awaits handle.result and logs the status'
+    pattern: "await\\s+handle\\.result"
+hints:
+  - "finetune() takes { modelId, options: {...} } and returns a handle. The handle has progressStream and result."
+  - "options.trainDatasetDir points at a HuggingFace chat JSONL file (one JSON object per line with messages: [{role, content}, ...])."
+  - "options.numberOfEpochs controls how many full passes through the dataset. 1 is a sensible first run; 2+ overfits small datasets fast."
+  - "The finetune worker can crash (SIGABRT) during cleanup after the last batch. The training and the adapter write finish before the crash, so wrap the await in try/catch and read the loss from the last progress tick."
+expectedOutput:
+  - "▸ epoch=1 step=1 batch=1/16 train loss="
+  - "▸ Training completed through step"
+  - "Adapter written to outputParametersDir"
+---
+
+Now that we've confirmed the base model is fine-tunable, it's time to actually run a training job.
+
+`finetune({ modelId, options })` starts a LoRA training run against a chat dataset. The handle exposes a `progressStream` we can iterate to watch training tick by tick, with a `result` promise that resolves with the final status.
+
+The simplest input format is a HuggingFace chat JSONL: one JSON object per line, each with a `messages` array of `{role, content}` pairs. The trainer handles tokenization internally.
+
+`finetune()` returns a handle with a `progressStream` and a `result` promise. You would call it as follows:
+
+```ts
+const handle = finetune({
+  modelId,
+  options: {
+    trainDatasetDir: "./examples/qvac/fine-tuning/input/small_train_HF.jsonl",
+    validation: { type: "dataset", path: "./examples/qvac/fine-tuning/input/small_eval_HF.jsonl" },
+    numberOfEpochs: 1,
+    learningRate: 1e-4,
+    loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
+    assistantLossOnly: true,
+    outputParametersDir: "./tether-academy-app-desktop/output/finetune/",
+  },
+});
+```
+
+The `progressStream` ticks once per training step, each item carrying `global_steps`, `loss`, `accuracy`, `current_epoch`, `total_batches`, and `eta_ms`. `await handle.result` returns the final status (`COMPLETED`, `CANCELLED`, or a failure mode):
+
+```ts
+for await (const tick of handle.progressStream) {
+  const phase = tick.is_train ? "train" : "val";
+  console.log(
+    `▸ epoch=${tick.current_epoch + 1} step=${tick.global_steps} ` +
+      `batch=${tick.current_batch}/${tick.total_batches} ${phase} ` +
+      `loss=${tick.loss?.toFixed(4)} acc=${tick.accuracy?.toFixed(4)} ` +
+      `eta=${Math.round(tick.eta_ms / 1000)}s`,
+  );
+}
+
+const result = await handle.result;
+console.log("▸ Result status:", result.status);
+```
+
+The data files at `./examples/qvac/fine-tuning/run-finetune/small_train_HF.jsonl` live next to this lesson's code. The output adapters go to `./tether-academy-app-desktop/output/finetune/` (the desktop app is the runtime, generated files live there).
+
+## Known SDK quirk
+
+The bare worker that runs the trainer can crash with `SIGABRT` during cleanup after the last batch. Training and the adapter write complete before the crash, so the loss/accuracy you see are real. The answer wraps the `progressStream` loop in `try/catch` and swallows the SDK's `WORKER_CRASHED` error so the user just sees a clean "Adapter written" line. If something fails before any tick lands, the error is rethrown.
+
+> Note: `learningRate: 1e-4` is a reasonable starting point for LoRA on a Qwen3 600M. If you're training a larger model or a smaller one, scale by the parameter count or follow the dataset author's recommendation.
+
+## Put it to the test
+
+1. Call `finetune({ modelId, options: { trainDatasetDir, numberOfEpochs: 1, learningRate: 1e-4, loraModules, assistantLossOnly, outputParametersDir } })` and store the handle.
+2. Loop through `handle.progressStream`, logging the epoch/step/batch/phase/loss/accuracy/eta for each tick.
+3. Await `handle.result` inside a `try/catch` and log `result.status` on success, or the last tick's loss/accuracy on the cleanup crash.

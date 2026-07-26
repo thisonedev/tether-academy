@@ -1,0 +1,26 @@
+{
+  "extends": "../../packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "jsx": "preserve",
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/.source": ["./.source"],
+      "@academy/ui": ["../../packages/ui/dist"],
+      "@academy/core": ["../../packages/core/dist"],
+      "@academy/courses": ["../../packages/courses/dist"],
+      "@academy/validation": ["../../packages/validation/dist"],
+      "@academy/academy-bridge": ["../../packages/academy-bridge/dist"],
+      "@academy/config": ["../../packages/config"]
+    },
+    "noEmit": true
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next", "out", ".source"]
+}

@@ -1,0 +1,15 @@
+---
+title: VLA
+description: Vision-language-action models.
+---
+
+VLA (vision-language-action) models are the model class for robot control.
+
+VLA (vision-language-action) models take a camera frame and a task description and produce an action chunk. The chunk is the next `chunkSize` timesteps of an `actionDim`-dimensional action vector for the robot's actuators. The models are trained on a wide range of manipulation tasks. The SDK includes two families: SmolVLA (small, fast) and π₀.₅ (larger, more capable). Both share the same `vla()` call surface.
+
+[Start Lesson 1 →](/courses/qvac/en/vla/vla-smolvla)
+
+### All lessons in this chapter
+
+1. [Run a SmolVLA action inference](/courses/qvac/en/vla/vla-smolvla)
+2. [Run a pi05 action inference](/courses/qvac/en/vla/vla-pi05)

@@ -1,0 +1,66 @@
+---
+title: "Clone a voice with Chatterbox TTS"
+sourceExample: "packages/sdk/examples/tts/chatterbox.ts"
+platforms: ['node']
+tests:
+  - id: sets-chatterbox-engine
+    description: 'Sets modelConfig.ttsEngine to chatterbox'
+    pattern: "ttsEngine\\s*:\\s*[`\"']chatterbox[`\"']"
+  - id: passes-s3gen-src
+    description: 'Passes s3genModelSrc alongside ttsEngine'
+    pattern: "s3genModelSrc"
+  - id: calls-text-to-speech
+    description: 'Calls textToSpeech({ modelId, text, stream: false })'
+    pattern: "textToSpeech\\s*\\(\\s*\\{[^}]*stream\\s*:\\s*false"
+hints:
+  - "Chatterbox is a two-file engine: a T3 GGUF for the language side and an S3Gen GGUF for the audio decoder."
+  - "Set ttsEngine: 'chatterbox' and pass s3genModelSrc alongside the top-level modelSrc. The S3Gen GGUF is registered as TTS_S3GEN_EN_CHATTERBOX.src."
+  - "Voice cloning is opt-in: pass modelConfig.referenceAudioSrc: '<path-to-wav>' to condition the decoder on a reference recording. Without it, Chatterbox uses its default voice."
+expectedOutput:
+  - "▸ TTS complete. Total samples:"
+---
+
+Now that we can synthesize English speech with Supertonic, we're going to add voice cloning. Chatterbox takes a reference audio file and synthesizes speech in that voice.
+
+Chatterbox is a two-file engine. A T3 GGUF handles the language side; an S3Gen GGUF handles the audio decoder. Both are available as registry constants. Load them together by setting `ttsEngine: "chatterbox"` and passing `s3genModelSrc` alongside the top-level `modelSrc`.
+
+Chatterbox is a two-stage TTS pipeline: T3 (language → acoustic tokens), S3Gen (tokens → waveform). One `loadModel()` brings both, with `modelConfig` wiring the second stage. The split load would look like the following:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: TTS_T3_TURBO_EN_CHATTERBOX_Q8_0,
+  modelConfig: {
+    ttsEngine: "chatterbox",
+    language: "en",
+    s3genModelSrc: TTS_S3GEN_EN_CHATTERBOX.src,
+    streamChunkTokens: 25,
+    streamFirstChunkTokens: 10,
+    cfmSteps: 1,
+  },
+});
+```
+
+Voice cloning is opt-in via `referenceAudioSrc`. Pass a path to a 16-bit mono WAV of the target speaker, and Chatterbox conditions the decoder on it. Without `referenceAudioSrc`, Chatterbox uses its bundled default voice. The reference clip should be a clean, single-speaker sample of 5 to 30 seconds.
+
+`textToSpeech()` is fire-and-await. The call returns a 44.1 kHz mono `Int16Array`. Here's a simple example of synthesizing speech in the default voice:
+
+```ts
+const result = textToSpeech({
+  modelId,
+  text: "Hello, world.",
+  inputType: "text",
+  stream: false,
+});
+const audioBuffer = await result.buffer;
+console.log(`▸ TTS complete. Total samples: ${audioBuffer.length}`);
+```
+
+The `textToSpeech` call matches Supertonic. The only differences are the loadModel `modelConfig` (Chatterbox needs `s3genModelSrc`) and the sample rate (24 kHz for Chatterbox, 44.1 kHz for Supertonic).
+
+> Note: voice cloning inherits the *timbre* of the reference, not the words. The synthesized text is whatever you pass to `textToSpeech({ text })`. The reference only conditions the voice.
+
+## Put it to the test
+
+1. Call `loadModel` with `modelConfig.ttsEngine: "chatterbox"` and `s3genModelSrc: TTS_S3GEN_EN_CHATTERBOX.src`.
+2. Optionally pass `referenceAudioSrc` to clone a voice from a WAV file on disk.
+3. Call `textToSpeech({ modelId, text, inputType: "text", stream: false })` and `await result.buffer`. Log the sample count.

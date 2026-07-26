@@ -1,0 +1,15 @@
+---
+title: Voice assistant
+description: Combine speech-to-text, an LLM, and text-to-speech into a spoken conversation.
+---
+
+Now that we've seen speech-to-text, text generation, and text-to-speech separately, we're going to put them together.
+
+A voice assistant is a loop: listen, transcribe, answer, speak. Each piece lives in a chapter we've already done. This chapter pulls them together with a streaming pipeline that keeps latency low, and adds the VAD tuning that filters the assistant's own TTS output so it isn't transcribed as a new user turn.
+
+[Start Lesson 1 →](/courses/qvac/en/voice-assistant/voice-assistant-loop)
+
+### All lessons in this chapter
+
+1. [Build a real-time voice assistant loop](/courses/qvac/en/voice-assistant/voice-assistant-loop)
+2. [Stop the voice assistant from hearing itself](/courses/qvac/en/voice-assistant/voice-assistant-echo)

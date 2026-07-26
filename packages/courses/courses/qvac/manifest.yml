@@ -1,0 +1,12 @@
+id: qvac
+name: QVAC
+tagline: Local-first, P2P AI SDK
+docsUrl: https://docs.qvac.tether.io
+llmsFullTxt: https://docs.qvac.tether.io/llms-full.txt
+package: '@qvac/sdk'
+examplesSource:
+  repo: tetherto/qvac
+  path: packages/sdk/examples
+  ref: main
+languages: [TypeScript, JavaScript]
+platforms: [node, web, mobile, desktop]

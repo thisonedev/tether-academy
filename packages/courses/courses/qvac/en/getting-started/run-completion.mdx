@@ -1,0 +1,62 @@
+---
+title: Run a completion
+sourceExample: "packages/sdk/examples/quickstart.ts"
+platforms: ['node']
+tests:
+  - id: calls-completion
+    description: Calls completion() with modelId and history
+    pattern: "completion\\s*\\(\\s*\\{[^}]*modelId[^}]*history"
+  - id: history-shape
+    description: 'History is an array of {role, content} messages'
+    pattern: "\\{\\s*role\\s*:\\s*\"user\""
+  - id: enables-stream
+    description: "Enables streaming via stream: true"
+    pattern: "stream\\s*:\\s*true"
+  - id: iterates-tokens
+    description: Iterates result.tokenStream with for-await-of
+    pattern: "for\\s+await.*tokenStream"
+hints:
+  - "completion() takes an options object. The two required keys are modelId (from the previous lesson) and history (an array of messages)."
+  - "Each history message is { role: 'user' | 'assistant' | 'system', content: '...' }. Start with one user message."
+  - "Set stream: true in the options so you can iterate tokens. The returned result.tokenStream is an async iterable of strings."
+  - "Use for await (const token of result.tokenStream) and write each token to stdout."
+expectedOutput:
+  - "▸ Completion started"
+  - "Quantum computing uses qubits that can exist in multiple states at once through superposition."
+---
+
+Now that we have a `modelId`, it's time to ask the model to say something.
+
+`completion()` takes a `modelId` and a `history` (an array of messages), and gives us back a result we can either await fully or stream token by token. We pass `stream: true` so we can watch the tokens arrive.
+
+The `history` array is a list of `{ role, content }` messages, like a chat log. We're starting with one user message, but later lessons will add assistant and system turns.
+
+A `history` array with one user message would look like this:
+
+```ts
+const history = [
+  { role: "user", content: "Explain quantum computing in one sentence." },
+];
+```
+
+Now we wrap that history in a `completion()` call like so:
+
+```ts
+const result = completion({ modelId, history, stream: true });
+```
+
+Finally, we drain the token stream token-by-token using `process.stdout.write`:
+
+```ts
+for await (const token of result.tokenStream) {
+  process.stdout.write(token);
+}
+```
+
+> Note: when the stream finishes, the result is also available as a single string via `await result.text`. We'll use that in later lessons.
+
+## Put it to the test
+
+1. Build a `history` array with one user message asking the model to explain quantum computing in one sentence.
+2. Call `completion({ modelId, history, stream: true })` and store the result.
+3. Iterate `result.tokenStream` and write each token to stdout.

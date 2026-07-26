@@ -1,0 +1,20 @@
+---
+title: Transcription
+description: Seven lessons on speech-to-text. Whisper for English, Parakeet TDT for multilingual, Parakeet CTC for low-latency English, Sortformer for speaker diarization.
+---
+
+Now that we've done text, image, and video, we're going to add audio. First, speech-to-text.
+
+Whisper takes audio in and returns the spoken words as text. The result carries timestamps per segment, so we can render captions, search inside audio, or chunk the transcript by speaker turn. Parakeet TDT is the multilingual alternative: 25+ languages, no language code, no VAD. Parakeet CTC trades the multilingual coverage for lower latency on English-only audio. Sortformer attaches speaker IDs to segments, so a multi-speaker recording becomes a labelled transcript.
+
+[Start Lesson 1 →](/courses/qvac/en/transcription/transcribe-file)
+
+### All lessons in this chapter
+
+1. [Transcribe an audio file](/courses/qvac/en/transcription/transcribe-file)
+2. [Stream transcription from microphone](/courses/qvac/en/transcription/mic-transcribe)
+3. [Transcribe an audio file with a Whisper prompt](/courses/qvac/en/transcription/whisper-prompt)
+4. [Stream transcripts with VAD and end-of-turn events](/courses/qvac/en/transcription/whisper-vad)
+5. [Transcribe multilingual audio with Parakeet TDT](/courses/qvac/en/transcription/parakeet-tdt)
+6. [Transcribe English audio with Parakeet CTC](/courses/qvac/en/transcription/parakeet-ctc)
+7. [Diarize speakers with Parakeet Sortformer](/courses/qvac/en/transcription/parakeet-sortformer)
