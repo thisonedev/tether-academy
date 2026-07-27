@@ -17,10 +17,58 @@ export interface AcademyWindowAPI {
   close: () => Promise<void>;
 }
 
+// One entry in the downloaded-models list. `id` is a stable relative path
+// within the SDK models cache directory; pass it back to `models.remove`.
+export interface AcademyModelEntry {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  kind: 'single' | 'sharded' | 'set';
+  // Hash prefix that the SDK prepends to single-file cache entries.
+  // Empty for sharded / set groups since those are keyed by directory.
+  sourceHash: string;
+  fileCount: number;
+}
+
+export interface AcademyModelsRemoveResult {
+  removed: number;
+  freedBytes: number;
+}
+
+export interface AcademyModelsAPI {
+  list: () => Promise<AcademyModelEntry[]>;
+  remove: (id: string) => Promise<AcademyModelsRemoveResult>;
+  removeAll: () => Promise<AcademyModelsRemoveResult>;
+}
+
+export interface AcademyDeviceInfo {
+  os: 'macos' | 'linux' | 'windows' | 'other';
+  osLabel: string;
+  arch: string;
+  hostname: string;
+  // Human-friendly model identifier. On macOS this is the Apple Silicon
+  // SoC (e.g. "Apple M3 Max"); on Linux/Windows it's the CPU model.
+  model: string;
+  cpuCores: number;
+  cpuPhysicalCores: number;
+  memoryBytes: number;
+  storageBytes: number;
+  storageFreeBytes: number;
+  storagePath: string;
+  // Best-effort GPU description. null when not detectable.
+  gpu: string | null;
+}
+
+export interface AcademyDeviceAPI {
+  info: () => Promise<AcademyDeviceInfo>;
+}
+
 export interface AcademyAPI {
   run: (payload: AcademyRunPayload) => Promise<AcademyRunResult>;
   onRunChunk?: (callback: (chunk: string) => void) => () => void;
   qr: (text: string) => Promise<string>;
   state: AcademyStateAPI;
   window?: AcademyWindowAPI;
+  models?: AcademyModelsAPI;
+  device?: AcademyDeviceAPI;
 }

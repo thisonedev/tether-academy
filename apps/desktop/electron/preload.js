@@ -19,4 +19,12 @@ contextBridge.exposeInMainWorld('academy', {
     maximize: () => ipcRenderer.invoke('academy:window:maximize'),
     close: () => ipcRenderer.invoke('academy:window:close'),
   },
+  models: {
+    list: () => ipcRenderer.invoke('academy:models:list'),
+    remove: (id) => ipcRenderer.invoke('academy:models:remove', id),
+    removeAll: () => ipcRenderer.invoke('academy:models:removeAll'),
+  },
+  device: {
+    info: () => ipcRenderer.invoke('academy:device:info'),
+  },
 });

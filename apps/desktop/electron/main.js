@@ -10,6 +10,8 @@ const { promises: fs } = require('node:fs');
 
 const { runExample } = require('../runner.cjs');
 const { createStore } = require('./state-store.cjs');
+const { listModels, removeModel, removeAllModels } = require('./models.cjs');
+const { getDeviceInfo } = require('./device.cjs');
 const peer = require('./peer.cjs');
 
 const pkg = require('../package.json');
@@ -158,6 +160,22 @@ ipcMain.handle('academy:window:maximize', (evt) => {
 
 ipcMain.handle('academy:window:close', (evt) => {
   BrowserWindow.fromWebContents(evt.sender)?.close();
+});
+
+ipcMain.handle('academy:models:list', async () => {
+  return listModels();
+});
+
+ipcMain.handle('academy:models:remove', async (_e, id) => {
+  return removeModel(id);
+});
+
+ipcMain.handle('academy:models:removeAll', async () => {
+  return removeAllModels();
+});
+
+ipcMain.handle('academy:device:info', async () => {
+  return getDeviceInfo();
 });
 
 async function createWindow() {

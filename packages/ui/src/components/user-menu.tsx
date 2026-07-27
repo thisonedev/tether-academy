@@ -1,6 +1,7 @@
 'use client';
 
-import { LogOut } from 'lucide-react';
+import { LogOut, Settings } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { getLevel, useUserStore } from '@academy/core';
 
@@ -15,8 +16,15 @@ export function UserMenu() {
 
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // Settings only exists in the desktop app. Detect the bridge after mount so
+  // the initial server-rendered HTML matches the first client render.
+  useEffect(() => {
+    setIsDesktop(typeof window !== 'undefined' && !!window.academy);
+  }, []);
 
   // Close on outside click and Escape; restore focus to the trigger.
   useEffect(() => {
@@ -116,6 +124,17 @@ export function UserMenu() {
           </div>
 
           <div className="border-t border-canvas-border p-1">
+            {isDesktop ? (
+              <Link
+                href="/settings"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-sm text-canvas-muted-foreground transition-colors hover:bg-canvas hover:text-canvas-foreground"
+              >
+                <Settings className="size-4" />
+                Settings
+              </Link>
+            ) : null}
             {confirming ? (
               <div className="p-2">
                 <div className="flex items-center justify-end gap-1">
