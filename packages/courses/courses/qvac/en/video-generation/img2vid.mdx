@@ -52,7 +52,7 @@ const videoId = await loadModel({
 const initImage = new Uint8Array(fs.readFileSync("./examples/qvac/video-generation/input/portrait.png"));
 ```
 
-`video({ mode: "img2vid", ... })` kicks off the animation; awaiting `outputs` resolves to the encoded video bytes. Note that `init_image` is the first frame and `strength` is how much it can change. Here's an example that reads a portrait PNG, animates it forward, and writes the first clip to disk:
+`video({ mode: "img2vid", ... })` kicks off the animation; awaiting `outputs` resolves to the encoded video bytes. Note that `init_image` is the first frame and `strength` is how much it can change. The still's pixel dimensions must match `width` and `height` exactly: the I2V model rejects the call with `init_image dimensions WxH do not match video dimensions WxH` otherwise, so size the source image to your target resolution before passing it. Here's an example that reads a portrait PNG, animates it forward, and writes the first clip to disk:
 
 ```ts
 const result = video({
