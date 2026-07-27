@@ -1,14 +1,14 @@
 'use client';
 
 import type { AcademyAPI } from '@academy/academy-bridge';
+import { useUserStore } from '@academy/core';
+import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
 import { javascript } from '@codemirror/lang-javascript';
 import { oneDark } from '@codemirror/theme-one-dark';
 import CodeMirror from '@uiw/react-codemirror';
 import { ArrowLeft, ArrowRight, Check, Copy, Play, RotateCcw, X } from 'lucide-react';
 import Link from 'next/link';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
-import { useUserStore } from '@academy/core';
-import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
 import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
@@ -58,14 +58,16 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   // Detect the desktop bridge synchronously so the run-mode selector and the
   // "this device" preselect land on the very first render instead of popping
   // in after a frame.
-  const isDesktop =
-    typeof window !== 'undefined' && typeof window.academy?.run === 'function';
+  const isDesktop = typeof window !== 'undefined' && typeof window.academy?.run === 'function';
   const [runMode, setRunMode] = useState<RunMode>(isDesktop ? 'this-device' : 'simulated');
   const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
   const [outputLines, setOutputLines] = useState<string[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [hasShownModal, setHasShownModal] = useState(false);
+  // Bumped on each run and used as the key on OutputView so a re-run
+  // remounts it with the cleared state.
+  const [outputKey, setOutputKey] = useState(0);
 
   useEffect(() => {
     if (data.readOnly) {
@@ -116,13 +118,14 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const run = useCallback(async () => {
     setTab('output');
     setOutputLines([]);
+    setOutputKey((prev) => prev + 1);
 
     // Skip the run if the user hasn't filled in the TODO slots yet,
     // otherwise the output panel stays blank and the student thinks the
     // button is broken.
     const unchangedFromStarter =
       userCode === data.startingCode ||
-      /^\s*\/\/\s*\d+:/m.test(userCode) && /^\s*await\s+unloadModel\s*\(/m.test(userCode);
+      (/^\s*\/\/\s*\d+:/m.test(userCode) && /^\s*await\s+unloadModel\s*\(/m.test(userCode));
     if (unchangedFromStarter) {
       setOutputLines([
         'Looks like you haven\u2019t started yet.',
@@ -175,11 +178,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       setIsAnimating(true);
       await delay(900);
       producedOutput = [...data.expectedOutput];
-      if (
-        runMode === 'this-device' &&
-        typeof window !== 'undefined' &&
-        !window.academy?.run
-      ) {
+      if (runMode === 'this-device' && typeof window !== 'undefined' && !window.academy?.run) {
         producedOutput = [
           ...producedOutput,
           '',
@@ -269,6 +268,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             readOnly={data.readOnly}
             hints={data.hints}
             answer={data.answer}
+            outputKey={outputKey}
           />
         </section>
       </div>
@@ -360,6 +360,7 @@ function Runner({
   readOnly = false,
   hints,
   answer,
+  outputKey,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
@@ -379,6 +380,7 @@ function Runner({
   readOnly?: boolean;
   hints: string[];
   answer: string;
+  outputKey: number;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -466,8 +468,8 @@ function Runner({
             disabled={isDesktop || readOnly}
             suppressHydrationWarning
             className="run-mode-select-web ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground"
-            title={isDesktop ? undefined : "Run mode"}
-            aria-label={isDesktop ? undefined : "Run mode"}
+            title={isDesktop ? undefined : 'Run mode'}
+            aria-label={isDesktop ? undefined : 'Run mode'}
           >
             <option value="simulated">Simulated</option>
           </select>
@@ -558,7 +560,9 @@ function Runner({
       </div>
 
       <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted p-4 font-mono text-sm text-canvas-foreground">
-        {tab === 'output' ? <OutputView lines={outputLines} isAnimating={isAnimating} /> : null}
+        {tab === 'output' ? (
+          <OutputView key={outputKey} lines={outputLines} isAnimating={isAnimating} />
+        ) : null}
         {tab === 'tests' ? <TestsView results={testResults} tests={null as never} /> : null}
         {tab === 'preview' ? <PreviewView /> : null}
       </div>
@@ -639,7 +643,8 @@ function OutputView({ lines, isAnimating }: { lines: string[]; isAnimating: bool
         <div className="mb-2 rounded border border-canvas-border bg-canvas/50 p-2">
           <div className="mb-1 flex items-center justify-between font-mono text-xs">
             <span className="text-emerald-400">
-              Training: step {progress.currentStep} / {progress.totalSteps} (epoch {progress.epoch} / {progress.totalEpochs})
+              Training: step {progress.currentStep} / {progress.totalSteps} (epoch {progress.epoch}{' '}
+              / {progress.totalEpochs})
             </span>
             <span className="text-canvas-muted-foreground">{progress.percent}%</span>
           </div>
