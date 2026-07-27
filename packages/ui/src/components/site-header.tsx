@@ -8,12 +8,13 @@ import { WindowControls } from './window-controls.js';
 import { useUserStore } from '@academy/core';
 
 export function SiteHeader() {
+  // Skip rendering the auth control until after mount
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const username = useUserStore((s) => s.username);
   const openSignInPrompt = useUserStore((s) => s.openSignInPrompt);
-  const [authResolved, setAuthResolved] = useState(false);
-  useEffect(() => {
-    setAuthResolved(true);
-  }, []);
+  const signedIn = !!username;
 
   return (
     <header className="site-header sticky top-0 z-10 flex h-14 w-full items-center border-b border-canvas-border bg-canvas/90 px-4 backdrop-blur sm:px-6">
@@ -30,16 +31,20 @@ export function SiteHeader() {
       </Link>
 
       <nav className="ml-auto flex items-center gap-1 sm:gap-3 text-sm">
-        {authResolved && username ? (
-          <UserMenu />
+        {mounted ? (
+          signedIn ? (
+            <UserMenu />
+          ) : (
+            <button
+              type="button"
+              onClick={openSignInPrompt}
+              className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas-muted px-3 py-1.5 text-sm font-medium text-canvas-foreground transition-colors hover:border-emerald-500/40 hover:bg-canvas"
+            >
+              Sign in
+            </button>
+          )
         ) : (
-          <button
-            type="button"
-            onClick={openSignInPrompt}
-            className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas-muted px-3 py-1.5 text-sm font-medium text-canvas-foreground transition-colors hover:border-emerald-500/40 hover:bg-canvas"
-          >
-            Sign in
-          </button>
+          <span className="inline-block h-9 w-20 rounded-md" aria-hidden />
         )}
         <Link
           href="/courses"
