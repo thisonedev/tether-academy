@@ -8,22 +8,38 @@ async function main() {
     validation: { type: "dataset", path: "./examples/qvac/fine-tuning/input/small_eval_HF.jsonl" },
     numberOfEpochs: 4,
     learningRate: 1e-4,
+    lrMin: 1e-8,
     loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
     assistantLossOnly: true,
+    checkpointSaveSteps: 2,
+    checkpointSaveDir: "./tether-academy-app-desktop/output/finetune/checkpoints/",
     outputParametersDir: "./tether-academy-app-desktop/output/finetune/",
   };
 
-  const handle = finetune({ modelId, options: baseOptions });
+  const finetuneParams = { modelId, options: baseOptions };
 
-  for await (const step of handle.progressStream) {
-    console.log("step:", step);
+  const handle = finetune(finetuneParams);
 
-    // 1: pause when the loss explodes
+  let pauseRequested = false;
+  let pauseResultPromise;
+  const progressTask = (async () => {
+    for await (const tick of handle.progressStream) {
+      // 1: pause from a callback after a few training steps
+    }
+  })();
 
-    // 2: resume once it's settled
-
-    // 3: cancel before the loop ends
+  const initialResult = await handle.result;
+  await progressTask;
+  if (pauseResultPromise) {
+    const pauseResult = await pauseResultPromise;
+    console.log("▸ Pausing... status:", pauseResult.status);
   }
+
+  if (initialResult.status === "PAUSED") {
+    // 2: resume with the same params + operation: "resume"
+  }
+
+  // 3: cancel the run before unloading
 
   await unloadModel({ modelId });
 }

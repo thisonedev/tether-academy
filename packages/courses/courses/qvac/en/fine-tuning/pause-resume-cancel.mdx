@@ -14,7 +14,7 @@ tests:
     pattern: "finetune\\s*\\(\\s*\\{[^}]*operation\\s*:\\s*[`\"']cancel[`\"']"
 hints:
   - "Pause mid-run: finetune({ operation: 'pause', modelId }). Returns a promise that resolves when the trainer hits a checkpoint."
-  - "Resume from saved checkpoint: call finetune({ ...originalOptions, operation: 'resume' }). A new handle is returned."
+  - "Resume from saved checkpoint: re-issue finetune with the same params and operation: 'resume'. A new handle is returned."
   - "Cancel: finetune({ operation: 'cancel', modelId }) returns { status: 'CANCELLED' } immediately. Use it to free GPU memory when training goes off the rails."
 expectedOutput:
   - "▸ Pausing..."
@@ -30,37 +30,62 @@ A fine-tune takes minutes to hours. We don't want to wait around to find out the
 - `resume` picks up from the latest checkpoint, the same call shape as the original `finetune()`, just with `operation: "resume"`
 - `cancel` is the hard kill: it frees GPU memory immediately and resolves with `{ status: "CANCELLED" }`.
 
-Pausing is the soft stop. The await blocks until the trainer hits a checkpoint and acknowledges, so we know the saved state is on disk. You would call it like so:
+The worker can only run one fine-tune at a time, so each control call has to arrive while the prior run is alive (the pause) and can only fire after it has fully ended (the resume). `finetune()` returns a `handle` with a `progressStream` we iterate, and a `result` promise that resolves when the run ends. We need both.
+
+The setup mirrors the SDK's `llamacpp-finetune` example. The `finetuneParams` wrapper keeps the model + options together, so the resume spreads it and adds `operation: "resume"`:
 
 ```ts
-// Pause: returns when the trainer hits a checkpoint.
-const pauseResult = await finetune({ operation: "pause", modelId });
-console.log("▸ Pausing... status:", pauseResult.status);
+const finetuneParams = { modelId, options: baseOptions };
+const handle = finetune(finetuneParams);
 ```
 
-Resuming: same `finetune()` call shape with `operation: "resume"`, picks up from the latest checkpoint:
+The progress stream runs in an IIFE so the resume after the awaits sees a worker slot that's free. We fire the pause from a callback inside the loop, then wait for the run and the stream to drain before resuming:
 
 ```ts
-// Resume: new handle, same options.
-const resumedHandle = finetune({ ...baseOptions, operation: "resume" });
-const resumedResult = await resumedHandle.result;
-console.log("▸ Resumed status:", resumedResult.status);
+let pauseRequested = false;
+let pauseResultPromise;
+const progressTask = (async () => {
+  for await (const tick of handle.progressStream) {
+    // 1: pause from a callback
+  }
+})();
+
+const initialResult = await handle.result;
+await progressTask;
 ```
 
-Cancelling frees GPU memory immediately, resolves with `{ status: "CANCELLED" }`. Use when the loss is exploding. Here's how you would call it:
+Now the three control calls. Pause, fire from a callback once training is rolling so the trainer sees it before the run ends:
 
 ```ts
-// Cancel: hard kill.
+if (!pauseRequested && tick.global_steps >= 4) {
+  pauseRequested = true;
+  pauseResultPromise = finetune({ operation: "pause", modelId });
+}
+```
+
+Resume, same params + `operation: "resume"`, after `await handle.result` and `await progressTask` confirm the worker slot is free:
+
+```ts
+if (initialResult.status === "PAUSED") {
+  const resumed = finetune({ ...finetuneParams, operation: "resume" });
+  await resumed.result;
+  console.log("▸ Resumed status: COMPLETED");
+}
+```
+
+Cancel, same as pause but synchronous, returns the final status:
+
+```ts
 const cancelResult = await finetune({ operation: "cancel", modelId });
 console.log("▸ Cancelled status:", cancelResult.status);
 ```
 
-Pause and resume both keep our saved checkpoints under `outputParametersDir`. Cancel drops the in-flight run but leaves any completed checkpoints intact, so we don't lose what we've already trained.
+Pause and resume both keep our saved checkpoints under `checkpointSaveDir`. Cancel drops the in-flight run but leaves any completed checkpoints intact, so we don't lose what we've already trained.
 
 > Note: pause and cancel are both fire-and-forget at the SDK level. We `await` them to confirm the operation completed, but the returned promise resolves as soon as the trainer acknowledges the request.
 
 ## Put it to the test
 
-1. Inside the progress loop, call `finetune({ operation: "pause", modelId })` after a few ticks.
-2. After it resolves, call `finetune({ ...baseOptions, operation: "resume" })` and await the new handle.
-3. On a separate path (or after a few more ticks), call `finetune({ operation: "cancel", modelId })` and log `result.status`.
+1. Inside the for-await loop, call `finetune({ operation: "pause", modelId })` from a callback after a few training steps. Set `pauseRequested = true` first so it only fires once.
+2. After `await handle.result` and `await progressTask` confirm the worker slot is free, call `finetune({ ...finetuneParams, operation: "resume" })` and await the new handle. Gate it on `initialResult.status === "PAUSED"` so we only resume a run that paused.
+3. After the resume, call `finetune({ operation: "cancel", modelId })` and log `result.status`.

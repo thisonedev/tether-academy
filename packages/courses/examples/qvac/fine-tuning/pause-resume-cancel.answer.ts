@@ -8,30 +8,49 @@ async function main() {
     validation: { type: "dataset", path: "./examples/qvac/fine-tuning/input/small_eval_HF.jsonl" },
     numberOfEpochs: 1,
     learningRate: 1e-4,
+    lrMin: 1e-8,
     loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
     assistantLossOnly: true,
+    checkpointSaveSteps: 2,
+    checkpointSaveDir: "./tether-academy-app-desktop/output/finetune/checkpoints/",
     outputParametersDir: "./tether-academy-app-desktop/output/finetune/",
   };
 
-  const handle = finetune({ modelId, options: baseOptions });
+  const finetuneParams = { modelId, options: baseOptions };
 
-  try {
-    let tickCount = 0;
+  const handle = finetune(finetuneParams);
+
+  let pauseRequested = false;
+  let pauseResultPromise;
+  const progressTask = (async () => {
     for await (const tick of handle.progressStream) {
-      tickCount++;
-      if (tickCount >= 3) {
-        const pauseResult = await finetune({ operation: "pause", modelId });
-        console.log("▸ Pausing... status:", pauseResult.status);
-        break;
+      const phase = tick.is_train ? "train" : "val";
+      console.log(
+        `▸ epoch=${tick.current_epoch + 1} step=${tick.global_steps} ` +
+          `batch=${tick.current_batch}/${tick.total_batches} ${phase} ` +
+          `loss=${tick.loss?.toFixed(4)} acc=${tick.accuracy?.toFixed(4)} ` +
+          `eta=${Math.round(tick.eta_ms / 1000)}s`,
+      );
+
+      if (!pauseRequested && tick.global_steps >= 4) {
+        pauseRequested = true;
+        pauseResultPromise = finetune({ operation: "pause", modelId });
       }
     }
-  } catch (err) {
-    console.log("▸ Stream interrupted (worker cleanup crash):", err instanceof Error ? err.message : err);
+  })();
+
+  const initialResult = await handle.result;
+  await progressTask;
+  if (pauseResultPromise) {
+    const pauseResult = await pauseResultPromise;
+    console.log("▸ Pausing... status:", pauseResult.status);
   }
 
-  const resumed = finetune({ modelId, ...baseOptions, operation: "resume" });
-  await resumed.result;
-  console.log("▸ Resumed status: COMPLETED");
+  if (initialResult.status === "PAUSED") {
+    const resumed = finetune({ ...finetuneParams, operation: "resume" });
+    await resumed.result;
+    console.log("▸ Resumed status: COMPLETED");
+  }
 
   const cancelResult = await finetune({ operation: "cancel", modelId });
   console.log("▸ Cancelled status:", cancelResult.status);
