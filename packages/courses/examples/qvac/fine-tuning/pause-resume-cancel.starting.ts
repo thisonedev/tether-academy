@@ -12,8 +12,8 @@ async function main() {
     loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
     assistantLossOnly: true,
     checkpointSaveSteps: 2,
-    checkpointSaveDir: "./tether-academy-app-desktop/output/finetune/checkpoints/",
-    outputParametersDir: "./tether-academy-app-desktop/output/finetune/",
+    checkpointSaveDir: "../../apps/desktop/output/finetune/checkpoints/",
+    outputParametersDir: "../../apps/desktop/output/finetune/",
   };
 
   const finetuneParams = { modelId, options: baseOptions };

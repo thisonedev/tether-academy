@@ -15,7 +15,7 @@ async function main() {
   const outputs = await result.outputs;
   const first = outputs[0];
   if (!first) throw new Error("No image returned from diffusion");
-  fs.writeFileSync("./tether-academy-app-desktop/output/image-gen/cat.png", first);
+  fs.writeFileSync("../../apps/desktop/output/image-gen/cat.png", first);
   console.log(`Generated ${outputs.length} image`);
 
   await unloadModel({ modelId });

@@ -43,7 +43,7 @@ The progress stream and the output promise don't block each other, so you can ru
 ```ts
 const outputs = await result.outputs;
 const first = outputs[0];
-if (first) fs.writeFileSync("./tether-academy-app-desktop/output/image-gen/skyline.png", first);
+if (first) fs.writeFileSync("../../apps/desktop/output/image-gen/skyline.png", first);
 console.log(`Generated ${outputs.length} image`);
 ```
 

@@ -33,11 +33,11 @@ async function main() {
 
   const x4 = diffusion({ ...baseParams, upscale: true });
   const x4Buffers = await x4.outputs;
-  fs.writeFileSync("./tether-academy-app-desktop/output/image-gen/fox_x4.png", x4Buffers[0]!);
+  fs.writeFileSync("../../apps/desktop/output/image-gen/fox_x4.png", x4Buffers[0]!);
 
   const x16 = diffusion({ ...baseParams, upscale: { repeats: 2 } });
   const x16Buffers = await x16.outputs;
-  fs.writeFileSync("./tether-academy-app-desktop/output/image-gen/fox_x16.png", x16Buffers[0]!);
+  fs.writeFileSync("../../apps/desktop/output/image-gen/fox_x16.png", x16Buffers[0]!);
 
   console.log("Generated 1 image");
   await unloadModel({ modelId });

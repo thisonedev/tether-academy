@@ -30,7 +30,7 @@ async function main() {
   const outputs = await result.outputs;
   const firstClip = outputs[0];
   if (!firstClip) throw new Error("No video returned from video()");
-  fs.writeFileSync("./tether-academy-app-desktop/output/video-gen/portrait.mp4", firstClip);
+  fs.writeFileSync("../../apps/desktop/output/video-gen/portrait.mp4", firstClip);
   console.log(`Generated ${outputs.length} video`);
 
   await unloadModel({ modelId: videoId });

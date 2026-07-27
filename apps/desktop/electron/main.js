@@ -30,7 +30,7 @@ const cmd = command(
 try {
   cmd.parse(app.isPackaged ? process.argv.slice(1) : process.argv.slice(2));
 } catch (err) {
-  console.warn('[tether-academy-app-desktop] flag parse warning:', err.message);
+  console.warn('[tether-academy-desktop] flag parse warning:', err.message);
 }
 
 const pearStore = cmd.flags.storage;
@@ -131,7 +131,7 @@ function getStateStore() {
   if (!stateStorePromise) {
     stateStorePromise = createStore(app.getPath('userData')).then((store) => {
       console.log(
-        `[tether-academy-app-desktop] identity pubkey: ${store.identity.publicKey.slice(0, 16)}...`,
+        `[tether-academy-desktop] identity pubkey: ${store.identity.publicKey.slice(0, 16)}...`,
       );
       return store;
     });
@@ -227,18 +227,18 @@ async function createWindow() {
   const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
   const staticExists = fsSync().existsSync(outIndex);
   if (process.env.PEAR_DEV_URL) {
-    console.log('[tether-academy-app-desktop] loading', process.env.PEAR_DEV_URL);
+    console.log('[tether-academy-desktop] loading', process.env.PEAR_DEV_URL);
     await win.loadURL(process.env.PEAR_DEV_URL);
   } else if (staticExists) {
     const port = await startStaticServer(staticDir);
     const url = `http://localhost:${port}/`;
-    console.log('[tether-academy-app-desktop] serving', staticDir, 'on', url);
+    console.log('[tether-academy-desktop] serving', staticDir, 'on', url);
     await win.loadURL(url);
   } else {
     const devUrl = 'http://localhost:4712';
-    console.log('[tether-academy-app-desktop] no static build found, trying', devUrl);
+    console.log('[tether-academy-desktop] no static build found, trying', devUrl);
     console.log(
-      '[tether-academy-app-desktop] (run `npm run build` in the repo root, or set PEAR_DEV_URL to a running web server)',
+      '[tether-academy-desktop] (run `npm run build` in the repo root, or set PEAR_DEV_URL to a running web server)',
     );
     await win.loadURL(devUrl);
   }
@@ -328,7 +328,7 @@ if (!lock) {
       app.quit();
     });
     peer.init().catch((err) => {
-      console.warn('[tether-academy-app-desktop] peer init failed:', err.message);
+      console.warn('[tether-academy-desktop] peer init failed:', err.message);
     });
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow().catch(console.error);

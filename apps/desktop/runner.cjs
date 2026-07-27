@@ -24,17 +24,26 @@ function resolveImport(spec) {
   }
 }
 
-// Trainer writes inside the input dir if the declared output dir is missing; pre-create to honor the path.
-function precreateFinetuneOutputDirs(src, cwd) {
-  const re = /(outputParametersDir|checkpointSaveDir)\s*:\s*['"]([^'"]+)['"]/g;
-  let m;
-  while ((m = re.exec(src))) {
-    const rel = m[2];
-    const abs = path.isAbsolute(rel) ? rel : path.join(cwd, rel);
-    try {
-      mkdirSync(abs, { recursive: true });
-    } catch {
-      // best-effort
+// Pre-create output directories the snippet writes to. Covers two patterns:
+// 1. finetune() options.outputParametersDir / checkpointSaveDir. Otherwise, trainer writes into the input dir.
+// 2. fs.writeFileSync("./.../output/...", ...). Image-gen and video-gen lessons write artifacts here.
+function precreateOutputDirs(src, cwd) {
+  const patterns = [
+    /(outputParametersDir|checkpointSaveDir)\s*:\s*['"]([^'"]+)['"]/g,
+    /fs\.writeFileSync\s*\(\s*['"]([^'"]+)['"]/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(src))) {
+      const rel = m[2] || m[1];
+      if (!rel) continue;
+      const abs = path.isAbsolute(rel) ? rel : path.join(cwd, rel);
+      const dir = path.extname(abs) ? path.dirname(abs) : abs;
+      try {
+        mkdirSync(dir, { recursive: true });
+      } catch {
+        // best-effort
+      }
     }
   }
 }
@@ -57,7 +66,7 @@ function runExample({ source, language, argv, onChunk }) {
   }
 
   const childCwd = path.join(__dirname, '..', '..', 'packages', 'courses');
-  precreateFinetuneOutputDirs(source, childCwd);
+  precreateOutputDirs(source, childCwd);
 
   const dir = mkdtempSync(join(tmpdir(), 'ta-run-'));
 
