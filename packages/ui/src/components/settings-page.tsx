@@ -192,6 +192,14 @@ export function SettingsPage() {
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
+      <button
+        type="button"
+        onClick={() => router.back()}
+        className="mb-6 inline-flex items-center gap-1 text-xs text-canvas-muted-foreground transition-colors hover:text-canvas-foreground"
+      >
+        <span aria-hidden>←</span>
+        <span>Back</span>
+      </button>
       <header className="mb-8">
         <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-emerald-400">
           Settings
