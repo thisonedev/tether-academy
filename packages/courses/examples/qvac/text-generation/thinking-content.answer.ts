@@ -15,19 +15,20 @@ async function main() {
     captureThinking: true,
   });
 
-  let thinking = "";
   for await (const event of result.events) {
     if (event.type === "thinkingDelta") {
-      thinking += event.text;
     } else if (event.type === "contentDelta") {
       process.stdout.write(event.text);
+    } else if (event.type === "completionStats") {
+      process.stdout.write(
+        `\n▸ done (${event.stats.generatedTokens ?? "?"} tokens, ${event.stats.tokensPerSecond?.toFixed(2) ?? "?"} tok/s)\n`,
+      );
     }
   }
-  if (thinking) process.stdout.write(thinking);
 
   const final = await result.final;
   if (final.thinkingText) {
-    console.log("Final thinking text:", final.thinkingText.length, "chars");
+    process.stderr.write(`▸ Thinking:\n${final.thinkingText.trim()}\n`);
   }
 }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import type { AcademyAPI } from '@academy/academy-bridge';
+import type { AcademyAPI, AcademyRunChunk } from '@academy/academy-bridge';
 import { useUserStore } from '@academy/core';
 import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
 import { javascript } from '@codemirror/lang-javascript';
@@ -19,6 +19,11 @@ export interface LessonTest {
   pattern?: string;
   contains?: string;
 }
+
+export type OutputLine = {
+  stream: "stdout" | "stderr";
+  line: string;
+};
 
 export interface LessonData {
   title: string;
@@ -55,13 +60,11 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const [userCode, setUserCode] = useState(data.startingCode);
   const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');
   const [tab, setTab] = useState<Tab>('output');
-  // Detect the desktop bridge synchronously so the run-mode selector and the
-  // "this device" preselect land on the very first render instead of popping
-  // in after a frame.
+  // Detect the bridge synchronously so the run-mode preselect lands on the first render.
   const isDesktop = typeof window !== 'undefined' && typeof window.academy?.run === 'function';
   const [runMode, setRunMode] = useState<RunMode>(isDesktop ? 'this-device' : 'simulated');
   const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
-  const [outputLines, setOutputLines] = useState<string[]>([]);
+  const [outputLines, setOutputLines] = useState<OutputLine[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [hasShownModal, setHasShownModal] = useState(false);
@@ -120,23 +123,27 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     setOutputLines([]);
     setOutputKey((prev) => prev + 1);
 
-    // Skip the run if the user hasn't filled in the TODO slots yet,
-    // otherwise the output panel stays blank and the student thinks the
-    // button is broken.
+    // Skip the run when TODOs are still empty, so the panel doesn't go blank and the button doesn't look broken.
     const unchangedFromStarter =
       userCode === data.startingCode ||
       (/^\s*\/\/\s*\d+:/m.test(userCode) && /^\s*await\s+unloadModel\s*\(/m.test(userCode));
     if (unchangedFromStarter) {
       setOutputLines([
-        'Looks like you haven\u2019t started yet.',
-        'The starting code has numbered TODOs (// 1:, // 2:, \u2026). Fill those in, then click Run again.',
+        { stream: 'stdout', line: 'Looks like you haven\u2019t started yet.' },
+        {
+          stream: 'stdout',
+          line: 'The starting code has numbered TODOs (// 1:, // 2:, \u2026). Fill those in, then click Run again.',
+        },
       ]);
       return;
     }
 
     if (runMode === 'remote') {
       setOutputLines([
-        '[coming soon] Run on a remote device needs a paired device. Open on the desktop app to run for real, or use Simulated.',
+        {
+          stream: 'stdout',
+          line: '[coming soon] Run on a remote device needs a paired device. Open on the desktop app to run for real, or use Simulated.',
+        },
       ]);
       if (isLastLessonOfChapter && !data.readOnly) {
         setTab('tests');
@@ -149,26 +156,44 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       runMode === 'this-device' && typeof window !== 'undefined' && window.academy?.run;
 
     // The "no output produced" fallback below reads this, not a stale state read.
-    let producedOutput: string[] = [];
+    let producedOutput: OutputLine[] = [];
 
     if (canRunForReal) {
       setIsAnimating(true);
-      // Stream chunks as they arrive so 30 to 60 second finetune runs
-      // don't look frozen. Unsubscribe after the run resolves.
+      // Stream chunks as they arrive so 30-60s finetune runs don't look frozen.
+      // Local buffer keeps stream type so the panel can distinguish reasoning from answer text.
+      const streamBuffer: OutputLine[] = [];
       const unsubscribe = window.academy?.onRunChunk?.((chunk) => {
-        const newLines = chunk.split('\n');
+        const newLines = chunk.data.split('\n').map((line) => ({
+          stream: chunk.stream,
+          line,
+        }));
+        streamBuffer.push(...newLines);
         setOutputLines((prev) => [...prev, ...newLines]);
       });
       try {
         const result = await window.academy?.run({ source: userCode, language: 'typescript' });
         if (!result) {
-          producedOutput = ['[error] no run result returned'];
+          producedOutput = [
+            ...streamBuffer,
+            { stream: 'stdout', line: '[error] no run result returned' },
+          ];
+        } else if (result.ok) {
+          producedOutput = streamBuffer;
         } else {
-          const lines = result.output.split('\n');
-          producedOutput = result.ok ? lines : ['[exit non-zero]', ...lines];
+          producedOutput = [
+            ...streamBuffer,
+            { stream: 'stdout', line: '[exit non-zero]' },
+          ];
         }
       } catch (err) {
-        producedOutput = [`[error] ${err instanceof Error ? err.message : String(err)}`];
+        producedOutput = [
+          ...streamBuffer,
+          {
+            stream: 'stdout',
+            line: `[error] ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ];
       } finally {
         unsubscribe?.();
         setIsAnimating(false);
@@ -177,12 +202,12 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       // Simulated mode, or this-device on the web where the academy bridge isn't available.
       setIsAnimating(true);
       await delay(900);
-      producedOutput = [...data.expectedOutput];
+      producedOutput = data.expectedOutput.map((line) => ({ stream: 'stdout', line }));
       if (runMode === 'this-device' && typeof window !== 'undefined' && !window.academy?.run) {
         producedOutput = [
           ...producedOutput,
-          '',
-          '[hint] Open in the desktop app to run this code for real.',
+          { stream: 'stdout', line: '' },
+          { stream: 'stdout', line: '[hint] Open in the desktop app to run this code for real.' },
         ];
       }
       setIsAnimating(false);
@@ -196,9 +221,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         r.passed ? `  \u2713 ${r.description}` : `  \u2717 ${r.description}`,
       );
       producedOutput = [
-        'No output produced by the run. The checks below tell you which part is missing:',
-        '',
-        ...summary,
+        { stream: 'stdout', line: 'No output produced by the run. The checks below tell you which part is missing:' },
+        { stream: 'stdout', line: '' },
+        ...summary.map((line) => ({ stream: 'stdout' as const, line })),
       ];
     }
 
@@ -372,7 +397,7 @@ function Runner({
   setRunMode: (m: RunMode) => void;
   isDesktop?: boolean;
   testResults: null | ReturnType<typeof runTests>;
-  outputLines: string[];
+  outputLines: OutputLine[];
   isAnimating: boolean;
   onRun: () => void;
   onReset: () => void;
@@ -570,35 +595,42 @@ function Runner({
   );
 }
 
-function OutputView({ lines, isAnimating }: { lines: string[]; isAnimating: boolean }) {
-  // Parse the latest finetune / training tick across all lines so the total grows
-  // when the run crosses epoch boundaries. Format: `▸ epoch=1 step=1 batch=1/16 ...`.
+function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {
+  // Find the latest finetune tick. Format: `▸ epoch=1 step=1 batch=1/16 ...`.
   const tickPattern = /epoch=(\d+)\s+step=(\d+)\s+batch=(\d+)\/(\d+)/;
+  // Match the trainer's final message or a user-side `console.log('... status: COMPLETED')`.
+  // The trainer skips a tick on the last step, so without this the bar caps below 100%.
+  const completedPattern = /(Training completed through step \d+|status:\s*COMPLETED)/;
   const progress = (() => {
     let latestStep = 0;
     let latestEpoch = 1;
     let totalBatches = 0;
-    for (const line of lines) {
+    let completed = false;
+    for (const { line } of lines) {
       const m = line.match(tickPattern);
       if (m) {
         latestEpoch = Number(m[1]);
         latestStep = Number(m[2]);
         if (Number(m[4]) > totalBatches) totalBatches = Number(m[4]);
       }
+      if (completedPattern.test(line)) completed = true;
     }
     if (totalBatches === 0) return null;
     const totalEpochs = Math.max(1, Math.ceil(latestStep / totalBatches));
     const totalSteps = totalEpochs * totalBatches;
+    const percent = completed
+      ? 100
+      : Math.min(100, Math.round((latestStep / totalSteps) * 100));
     return {
       currentStep: latestStep,
       totalSteps,
       epoch: latestEpoch,
       totalEpochs,
-      percent: Math.min(100, Math.round((latestStep / totalSteps) * 100)),
+      percent,
+      completed,
     };
   })();
-  // Rotating word indicator while the lesson is running, so a slow
-  // first-token latency doesn't look like the run is frozen.
+  // Rotating word indicator so a slow first-token latency doesn't look like a frozen run.
   const THINKING_WORDS = [
     'Thinking',
     'Strategizing',
@@ -643,8 +675,9 @@ function OutputView({ lines, isAnimating }: { lines: string[]; isAnimating: bool
         <div className="mb-2 rounded border border-canvas-border bg-canvas/50 p-2">
           <div className="mb-1 flex items-center justify-between font-mono text-xs">
             <span className="text-emerald-400">
-              Training: step {progress.currentStep} / {progress.totalSteps} (epoch {progress.epoch}{' '}
-              / {progress.totalEpochs})
+              {progress.completed
+                ? 'Training complete'
+                : `Training: step ${progress.currentStep} / ${progress.totalSteps} (epoch ${progress.epoch} / ${progress.totalEpochs})`}
             </span>
             <span className="text-canvas-muted-foreground">{progress.percent}%</span>
           </div>
@@ -656,11 +689,79 @@ function OutputView({ lines, isAnimating }: { lines: string[]; isAnimating: bool
           </div>
         </div>
       ) : null}
-      {lines.map((line) => (
-        <p key={line} className="whitespace-pre-wrap">
-          {line}
-        </p>
-      ))}
+      {(() => {
+        // Smart rendering: collapse single newlines to spaces, keep double as paragraph breaks.
+        // Falls back to line-by-line when finetune progress lines are present.
+        const hasFinetuneProgress = lines.some(
+          (e) => e.stream === 'stdout' && /^▸\s+epoch=/.test(e.line),
+        );
+
+        if (hasFinetuneProgress) {
+          const firstBlank = lines.findIndex(
+            (e) => e.stream === 'stdout' && e.line === '',
+          );
+          const prefixEnd = firstBlank === -1 ? lines.length : firstBlank;
+          return lines.map((entry, i) => {
+            const isStderr = entry.stream === 'stderr';
+            const isPrefix = !isStderr && i < prefixEnd;
+            const className =
+              isStderr || isPrefix
+                ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
+                : 'whitespace-pre-wrap';
+            return (
+              <p key={i} className={className}>
+                {entry.line}
+              </p>
+            );
+          });
+        }
+
+        // Group stdout into paragraphs on double newlines, collapse single newlines to spaces.
+        // stderr lines render line-by-line, dimmed.
+        const stdoutText = lines
+          .filter((e) => e.stream === 'stdout')
+          .map((e) => e.line)
+          .join('\n');
+        const stdoutParagraphs = stdoutText
+          .split(/\n{2,}/)
+          .map((p) => p.replace(/\n+/g, ' ').trim())
+          .filter(Boolean);
+        const dimFirstStdout = stdoutParagraphs.length > 1;
+
+        const stderrLines = lines.filter((e) => e.stream === 'stderr');
+
+        const renderStdout = stdoutParagraphs.map((para, i) => {
+          const isPrefix = dimFirstStdout && i === 0;
+          return (
+            <p
+              key={`out-${i}`}
+              className={
+                isPrefix
+                  ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
+                  : 'whitespace-pre-wrap'
+              }
+            >
+              {para}
+            </p>
+          );
+        });
+
+        const renderStderr = stderrLines.map((entry, i) => (
+          <p
+            key={`err-${i}`}
+            className="whitespace-pre-wrap text-canvas-muted-foreground/60 italic"
+          >
+            {entry.line}
+          </p>
+        ));
+
+        return (
+          <>
+            {renderStdout}
+            {renderStderr}
+          </>
+        );
+      })()}
       {isAnimating ? (
         <p className="text-emerald-400">
           <span
@@ -718,8 +819,7 @@ function PreviewView() {
   );
 }
 
-// Pattern flags must match the runner's logic, so a passing test here also
-// passes the user's Check Answer in the browser.
+// Pattern flags must match the runner's logic so a passing test here also passes the browser's Check Answer.
 function runTests(code: string, tests: LessonTest[]) {
   return tests.map((t) => {
     let passed = false;

@@ -63,9 +63,14 @@ export interface AcademyDeviceAPI {
   info: () => Promise<AcademyDeviceInfo>;
 }
 
+export interface AcademyRunChunk {
+  stream: "stdout" | "stderr";
+  data: string;
+}
+
 export interface AcademyAPI {
   run: (payload: AcademyRunPayload) => Promise<AcademyRunResult>;
-  onRunChunk?: (callback: (chunk: string) => void) => () => void;
+  onRunChunk?: (callback: (chunk: AcademyRunChunk) => void) => () => void;
   qr: (text: string) => Promise<string>;
   state: AcademyStateAPI;
   window?: AcademyWindowAPI;

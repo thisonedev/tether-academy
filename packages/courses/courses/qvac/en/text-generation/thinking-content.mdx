@@ -73,7 +73,7 @@ if (final.thinkingText) {
 
 For convenience, the aggregated `final.thinkingText` joins every reasoning token into one string. We read it after the events loop exits.
 
-> Note: `process.stdout` is reserved for the user-visible answer across this curriculum. Reasoning is part of the model's behaviour but not the answer, so it goes to `process.stderr` with a `[think]` prefix. If you'd rather show both interleaved to the user, write both to stdout with different prefixes.
+> Note: `process.stdout` is reserved for the user-visible answer across this curriculum. Reasoning is part of the model's behaviour but not the answer, so it goes to `process.stderr`. On small models the SDK surfaces thinking as a stream of short tokens (single words and punctuation), so a per-token `process.stderr.write` in the event loop duplicates the label on every fragment. Read `final.thinkingText` after the events loop and emit one labeled block instead. If you'd rather show both interleaved to the user, write both to stdout with different prefixes.
 
 ## Put it to the test
 

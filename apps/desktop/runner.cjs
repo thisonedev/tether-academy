@@ -4,6 +4,7 @@
 
 const { spawn } = require('node:child_process');
 const { mkdtemp, writeFile, rm } = require('node:fs/promises');
+const { mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const path = require('node:path');
@@ -26,6 +27,22 @@ function resolveImport(spec) {
   }
 }
 
+// Trainer falls back to writing inside the input dir if the declared
+// output dir doesn't exist; pre-create to make it honor the path.
+function precreateFinetuneOutputDirs(src, cwd) {
+  const re = /(outputParametersDir|checkpointSaveDir)\s*:\s*['"]([^'"]+)['"]/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const rel = m[2];
+    const abs = path.isAbsolute(rel) ? rel : path.join(cwd, rel);
+    try {
+      mkdirSync(abs, { recursive: true });
+    } catch {
+      // best-effort; the trainer will surface a real error if the path is unusable
+    }
+  }
+}
+
 async function runExample({ source, language, onChunk }) {
   const isJsLike =
     language === 'javascript' ||
@@ -39,31 +56,19 @@ async function runExample({ source, language, onChunk }) {
     };
   }
 
+  const childCwd = path.join(__dirname, '..', '..', 'packages', 'courses');
+  precreateFinetuneOutputDirs(source, childCwd);
+
   const dir = await mkdtemp(join(tmpdir(), 'ta-run-'));
 
-  // Rewrite every `import ... from "X"` in the lesson source to use
-  // absolute paths, so the snippet can run from /tmp/ where there's
-  // no node_modules. The lesson's existing @qvac/sdk import is
-  // handled the same way as any other npm import; we just additionally
-  // inject `close` from the SDK so the wrapper can tear down the
-  // bare worker after main() settles.
+  // Rewrite npm imports to absolute paths so the snippet can resolve them from /tmp.
   const resolvedSource = resolveAllImports(source);
-  // Only names from the @qvac/sdk import get re-pulled into the
-  // wrapper's forced import line. Names from other packages (e.g.
-  // MCP's Client, StdioClientTransport) are already pulled in by
-  // the lesson's own rewritten import, no need to re-export.
   const importedNames = extractImportedNames(source);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
   const importLine = `import { ${namesForImport.join(', ')} } from ${JSON.stringify(parentRequire.resolve('@qvac/sdk'))};\n`;
 
-  // The lesson source ends with `main().catch(console.error);` which
-  // kicks off main() and swallows errors. We don't call main()
-  // ourselves: doing so re-runs loadModel against a model that's
-  // now in the bare worker's registry and throws
-  // "MODEL_LOAD_FAILED: already registered". Instead, we hook
-  // `.finally(close).then(() => process.exit(0))` onto that
-  // existing top-level promise so the SDK tears down after the
-  // lesson's own main() settles.
+  // Hook close+exit onto the lesson's own `main().catch(console.error)` chain
+  // so re-running loadModel doesn't trip "MODEL_LOAD_FAILED: already registered".
   const hooked = stripForNode(resolvedSource).replace(
     /main\(\)\.catch\(([^)]+)\)(\s*;?)/,
     `main().catch($1).finally(() => close().catch(() => {})).then(() => process.exit(0));`,
@@ -71,10 +76,8 @@ async function runExample({ source, language, onChunk }) {
 
   const wrapped = `${importLine}${hooked}\n`;
 
-  // .ts extension so Node's --experimental-strip-types actually runs
-  // (it only fires on .ts/.mts/.cts files). The user code mixes real
-  // ESM imports with TS type annotations; the stripper drops the type
-  // annotations and our pre-pass drops the type-only import lines.
+  // .mts so Node's --experimental-strip-types picks it up; the user code mixes
+  // real ESM imports with TS type annotations that the stripper will drop.
   const file = join(dir, 'snippet.mts');
 
   try {
@@ -84,18 +87,13 @@ async function runExample({ source, language, onChunk }) {
         process.execPath,
         ['--experimental-strip-types', file],
         {
-          // Anchor the child to packages/courses/ so relative paths in
-          // lesson code like `./examples/qvac/multimodal/cat.png` resolve
-          // to the vendored files there. The SDK's cache lives in
-          // $HOME/.qvac/ regardless of cwd.
-          cwd: path.join(__dirname, '..', '..', 'packages', 'courses'),
+          // Anchor the child at packages/courses/ so lesson relative paths
+          // (./examples/qvac/...) resolve next to the vendored files.
+          cwd: childCwd,
           env: {
             ...process.env,
             ELECTRON_RUN_AS_NODE: '1',
             NODE_NO_WARNINGS: '1',
-            // Force the SDK to stay quiet on stderr unless something
-            // actually fails. The CLI's own progress is the lesson
-            // output, not the SDK's internal logging.
             QVAC_LOG_LEVEL: 'warn',
           },
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -107,16 +105,13 @@ async function runExample({ source, language, onChunk }) {
         killed = true;
         child.kill('SIGTERM');
       }, MAX_RUNTIME_MS);
-      child.stdout.on('data', (chunk) => {
+      const handleChunk = (stream) => (chunk) => {
         const s = chunk.toString();
         output += s;
-        if (onChunk) onChunk(s);
-      });
-      child.stderr.on('data', (chunk) => {
-        const s = chunk.toString();
-        output += s;
-        if (onChunk) onChunk(s);
-      });
+        if (onChunk) onChunk({ stream, data: s });
+      };
+      child.stdout.on('data', handleChunk('stdout'));
+      child.stderr.on('data', handleChunk('stderr'));
       child.on('error', (err) => {
         clearTimeout(timer);
         resolve({ ok: false, output: `[runner] ${err.message}\n${output}` });
