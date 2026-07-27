@@ -259,49 +259,98 @@ function mimeFor(p) {
   return 'application/octet-stream';
 }
 
+// Pin the port: Chromium partitions localStorage by origin, so a random
+// port per launch would put the renderer's persistence on a fresh partition.
+function loadSavedPort() {
+  const file = path.join(app.getPath('userData'), 'static-server.port');
+  try {
+    const n = parseInt(fsSync().readFileSync(file, 'utf-8'), 10);
+    return Number.isFinite(n) && n > 0 && n < 65536 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePort(port) {
+  const file = path.join(app.getPath('userData'), 'static-server.port');
+  try {
+    fsSync().writeFileSync(file, String(port), 'utf-8');
+  } catch (err) {
+    console.warn('[tether-academy-desktop] could not save static server port:', err.message);
+  }
+}
+
+function listenOnce(server, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.removeListener('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.removeListener('error', onError);
+      resolve(server.address().port);
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port ?? 0, '127.0.0.1');
+  });
+}
+
 async function startStaticServer(root) {
-  return new Promise((resolve) => {
-    const server = createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
+    try {
+      const u = new URL(req.url, 'http://x');
+      let p = decodeURIComponent(u.pathname);
+      const basePrefix = '/tether-academy';
+      if (p === basePrefix || p.startsWith(`${basePrefix}/`)) {
+        p = p.slice(basePrefix.length) || '/';
+      }
+      const abs = path.join(root, p);
+      if (!abs.startsWith(root)) {
+        res.writeHead(403);
+        res.end();
+        return;
+      }
+      let resolved = abs;
       try {
-        const u = new URL(req.url, 'http://x');
-        let p = decodeURIComponent(u.pathname);
-        const basePrefix = '/tether-academy';
-        if (p === basePrefix || p.startsWith(`${basePrefix}/`)) {
-          p = p.slice(basePrefix.length) || '/';
+        const stat = await fs.stat(abs);
+        if (stat.isDirectory()) {
+          resolved = path.join(abs, 'index.html');
         }
-        const abs = path.join(root, p);
-        if (!abs.startsWith(root)) {
-          res.writeHead(403);
-          res.end();
+      } catch {
+        if (!path.extname(abs)) {
+          resolved = path.join(`${abs}/`, 'index.html');
+        } else {
+          res.writeHead(404);
+          res.end('not found');
           return;
         }
-        let resolved = abs;
-        try {
-          const stat = await fs.stat(abs);
-          if (stat.isDirectory()) {
-            resolved = path.join(abs, 'index.html');
-          }
-        } catch {
-          if (!path.extname(abs)) {
-            resolved = path.join(`${abs}/`, 'index.html');
-          } else {
-            res.writeHead(404);
-            res.end('not found');
-            return;
-          }
-        }
-        const data = await fs.readFile(resolved);
-        res.writeHead(200, { 'Content-Type': mimeFor(resolved), 'Cache-Control': 'no-store' });
-        res.end(data);
-      } catch {
-        res.writeHead(404);
-        res.end('not found');
       }
-    });
-    server.listen(0, '127.0.0.1', () => {
-      resolve(server.address().port);
-    });
+      const data = await fs.readFile(resolved);
+      res.writeHead(200, { 'Content-Type': mimeFor(resolved), 'Cache-Control': 'no-store' });
+      res.end(data);
+    } catch {
+      res.writeHead(404);
+      res.end('not found');
+    }
   });
+
+  const saved = loadSavedPort();
+  try {
+    const port = await listenOnce(server, saved);
+    if (port !== saved) savePort(port);
+    return port;
+  } catch (err) {
+    if (saved && err.code === 'EADDRINUSE') {
+      console.warn(
+        `[tether-academy-desktop] saved port ${saved} in use, picking a new one`,
+      );
+      const port = await listenOnce(server, null);
+      savePort(port);
+      return port;
+    }
+    throw err;
+  }
 }
 
 

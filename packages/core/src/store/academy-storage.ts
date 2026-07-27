@@ -11,23 +11,28 @@ function hasLocalStorage(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
-// Sync storage interface for Zustand's persist so the first render already has
-// the persisted user.
+// localStorage is the hot cache. The main-process Corestore holds the
+// durable copy; getItem falls back to it when localStorage is empty.
 export const academyStorage = {
-  getItem(name: string): string | null {
-    if (!hasLocalStorage()) return null;
-    try {
-      return window.localStorage.getItem(name);
-    } catch {
-      return null;
+  getItem(name: string): string | null | Promise<string | null> {
+    if (hasLocalStorage()) {
+      try {
+        const cached = window.localStorage.getItem(name);
+        if (cached !== null) return cached;
+      } catch {
+        // fall through to the durable copy
+      }
     }
+    const state = getAcademyState();
+    if (!state) return null;
+    return state.get(name).catch(() => null);
   },
   setItem(name: string, value: string): void {
     if (hasLocalStorage()) {
       try {
         window.localStorage.setItem(name, value);
       } catch {
-        // Quota / privacy mode — best effort, the main process is the durable copy.
+        // Quota / privacy mode: best effort, the main process is the durable copy.
       }
     }
     const state = getAcademyState();
