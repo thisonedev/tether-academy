@@ -99,9 +99,13 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const [userCode, setUserCode] = useState(data.startingCode);
   const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');
   const [tab, setTab] = useState<Tab>('output');
-  // Detect the bridge synchronously so the run-mode preselect lands on the first render.
-  const isDesktop = typeof window !== 'undefined' && typeof window.academy?.run === 'function';
-  const [runMode, setRunMode] = useState<RunMode>(isDesktop ? 'this-device' : 'simulated');
+  // typeof window differs between SSR and client; defer to useEffect
+  // so the first client render matches the SSR'd HTML.
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    setIsDesktop(typeof window !== 'undefined' && typeof window.academy?.run === 'function');
+  }, []);
+  const [runMode, setRunMode] = useState<RunMode>('simulated');
   const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
   const [outputLines, setOutputLines] = useState<OutputLine[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
