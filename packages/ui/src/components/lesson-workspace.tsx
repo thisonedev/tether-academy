@@ -601,9 +601,12 @@ function OutputView({ lines, isAnimating }: { lines: string[]; isAnimating: bool
     'Analyzing',
     'Reasoning',
     'Considering',
+    'Advancing',
     'Processing',
     'Reflecting',
     'Pondering',
+    'Adjusting',
+    'Distilling',
     'Synthesizing',
     'Working',
     'Computing',
@@ -617,7 +620,7 @@ function OutputView({ lines, isAnimating }: { lines: string[]; isAnimating: bool
     }
     const id = setInterval(() => {
       setWordIndex((i) => (i + 1) % THINKING_WORDS.length);
-    }, 700);
+    }, 1000);
     return () => clearInterval(id);
   }, [isAnimating]);
 
