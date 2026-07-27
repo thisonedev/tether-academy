@@ -1,7 +1,4 @@
-// @qvac/sdk is ESM-only, so the wrapper is .mjs. Inside Electron's
-// CJS main we spawn plain Node via ELECTRON_RUN_AS_NODE=1 and rely
-// on the .mjs extension for module type.
-
+// Spawned via ELECTRON_RUN_AS_NODE so the CJS main can run an ESM .mts snippet.
 const { spawn } = require('node:child_process');
 const { mkdtemp, writeFile, rm } = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
@@ -11,7 +8,7 @@ const path = require('node:path');
 
 const MAX_RUNTIME_MS = 5 * 60 * 1000;
 
-// Anchor createRequire to this file (createRequire needs a file path, not a dir) so npm packages resolve from the desktop app's node_modules before the snippet is written to /tmp.
+// createRequire needs a file path, not a dir; anchor to this file so packages resolve from the desktop app.
 const { createRequire } = require('node:module');
 const parentRequire = createRequire(__filename);
 
@@ -27,8 +24,7 @@ function resolveImport(spec) {
   }
 }
 
-// Trainer falls back to writing inside the input dir if the declared
-// output dir doesn't exist; pre-create to make it honor the path.
+// Trainer writes inside the input dir if the declared output dir is missing; pre-create to honor the path.
 function precreateFinetuneOutputDirs(src, cwd) {
   const re = /(outputParametersDir|checkpointSaveDir)\s*:\s*['"]([^'"]+)['"]/g;
   let m;
@@ -38,7 +34,7 @@ function precreateFinetuneOutputDirs(src, cwd) {
     try {
       mkdirSync(abs, { recursive: true });
     } catch {
-      // best-effort; the trainer will surface a real error if the path is unusable
+      // best-effort
     }
   }
 }
@@ -61,23 +57,18 @@ async function runExample({ source, language, onChunk }) {
 
   const dir = await mkdtemp(join(tmpdir(), 'ta-run-'));
 
-  // Rewrite npm imports to absolute paths so the snippet can resolve them from /tmp.
+  // Rewrite npm specifiers to absolute paths so the snippet in /tmp can resolve them.
   const resolvedSource = resolveAllImports(source);
   const importedNames = extractImportedNames(source);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
   const importLine = `import { ${namesForImport.join(', ')} } from ${JSON.stringify(parentRequire.resolve('@qvac/sdk'))};\n`;
 
-  // Hook close+exit onto the lesson's own `main().catch(console.error)` chain
-  // so re-running loadModel doesn't trip "MODEL_LOAD_FAILED: already registered".
-  const hooked = stripForNode(resolvedSource).replace(
-    /main\(\)\.catch\(([^)]+)\)(\s*;?)/,
-    `main().catch($1).finally(() => close().catch(() => {})).then(() => process.exit(0));`,
-  );
+  // Append .finally(close).then(exit) so re-running loadModel doesn't trip "already registered".
+  const hooked = hookMainCatch(stripForNode(resolvedSource));
 
   const wrapped = `${importLine}${hooked}\n`;
 
-  // .mts so Node's --experimental-strip-types picks it up; the user code mixes
-  // real ESM imports with TS type annotations that the stripper will drop.
+  // .mts so --experimental-strip-types accepts TS annotations; type imports are stripped first.
   const file = join(dir, 'snippet.mts');
 
   try {
@@ -87,8 +78,7 @@ async function runExample({ source, language, onChunk }) {
         process.execPath,
         ['--experimental-strip-types', file],
         {
-          // Anchor the child at packages/courses/ so lesson relative paths
-          // (./examples/qvac/...) resolve next to the vendored files.
+          // Anchor at packages/courses/ so lesson relative paths resolve next to vendored files.
           cwd: childCwd,
           env: {
             ...process.env,
@@ -131,7 +121,6 @@ async function runExample({ source, language, onChunk }) {
   }
 }
 
-// Pulls the symbol names from `import { ... } from "@qvac/sdk"` so the wrapper only re-exports what the lesson needs.
 function extractImportedNames(src) {
   const m = src.match(/^import\s*\{([^}]+)\}\s*from\s*['"]@qvac\/sdk['"]\s*;?/m);
   if (!m) return [];
@@ -141,7 +130,6 @@ function extractImportedNames(src) {
     .filter(Boolean);
 }
 
-// Rewrites npm-package specifiers in `import ... from "X"` to absolute paths so the temp snippet in /tmp can resolve them.
 function resolveAllImports(src) {
   return src.replace(
     /(\bimport\s+(?:[\w*\s{},]+\s+from\s+)?|\bexport\s+(?:[\w*\s{},]+\s+from\s+)?)(['"])([^'"]+)\2/g,
@@ -152,22 +140,7 @@ function resolveAllImports(src) {
   );
 }
 
-// Returns [[specifier, [names...]], ...] for every named import, so the wrapper can re-export the symbols the lesson needs.
-function extractImportEntries(src) {
-  const out = [];
-  const re = /^import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/gm;
-  let m;
-  while ((m = re.exec(src))) {
-    const names = m[1]
-      .split(',')
-      .map((s) => s.trim().split(/\s+as\s+/)[0].trim())
-      .filter(Boolean);
-    out.push([m[2], names]);
-  }
-  return out;
-}
-
-// Strip just enough TypeScript for plain JS parsing. --experimental-strip-types fails on .mjs with mixed type and value imports.
+// Strip just enough TS for plain JS parsing; --experimental-strip-types fails on .mjs with mixed type and value imports.
 function stripForNode(src) {
   const sdkPath = parentRequire.resolve('@qvac/sdk');
   const sdkPathRe = sdkPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -198,6 +171,64 @@ function stripForNode(src) {
     .replace(/^export\s+(?:default\s+)?[^=].*;?\s*$/gm, '')
     .replace(/^export\s+default\s+[^=].*;?\s*$/gm, '')
     .replace(/^export\s+\{[^}]*\};?\s*$/gm, '');
+}
+
+// Scans parens to find the matching close so the catch handler can be a multi-line arrow, not just a single ident.
+function hookMainCatch(src) {
+  const marker = 'main().catch(';
+  const start = src.indexOf(marker);
+  if (start === -1) return src;
+  let i = start + marker.length;
+  let depth = 1;
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  while (i < src.length && depth > 0) {
+    const ch = src[i];
+    const next = src[i + 1];
+    if (inLineComment) {
+      if (ch === '\n') inLineComment = false;
+    } else if (inBlockComment) {
+      if (ch === '*' && next === '/') {
+        inBlockComment = false;
+        i++;
+      }
+    } else if (inSingle) {
+      if (ch === '\\') i++;
+      else if (ch === "'") inSingle = false;
+    } else if (inDouble) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inDouble = false;
+    } else if (inTemplate) {
+      if (ch === '\\') i++;
+      else if (ch === '`') inTemplate = false;
+    } else {
+      if (ch === '/' && next === '/') {
+        inLineComment = true;
+        i++;
+      } else if (ch === '/' && next === '*') {
+        inBlockComment = true;
+        i++;
+      } else if (ch === "'") inSingle = true;
+      else if (ch === '"') inDouble = true;
+      else if (ch === '`') inTemplate = true;
+      else if (ch === '(') depth++;
+      else if (ch === ')') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    i++;
+  }
+  if (depth !== 0) return src;
+  const handler = src.slice(start + marker.length, i);
+  let j = i + 1;
+  while (j < src.length && (src[j] === ' ' || src[j] === '\t' || src[j] === '\n' || src[j] === '\r')) j++;
+  if (src[j] === ';') j++;
+  const replacement = `main().catch(${handler}).finally(() => close().catch(() => {})).then(() => process.exit(0));`;
+  return src.slice(0, start) + replacement + src.slice(j);
 }
 
 module.exports = { runExample };

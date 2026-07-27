@@ -22,15 +22,15 @@ Most peers are behind NATs or firewalls, so they can't accept incoming connectio
 
 The SDK reads its config during initialization. The `QVAC_CONFIG_PATH` env var has to be set *before* the `import "@qvac/sdk"` line, since module evaluation reads the config at import time.
 
-The configuration file is a regular JavaScript module that exports the relay list. Note that `swarmRelays` is the only field, an array of `host:port:pubkey` strings:
+The configuration file is a regular JavaScript module that exports the relay list. `swarmRelays` is the only field: an array of hex-encoded public keys (one per relay). The vendored `qvac.config.js` for this lesson uses placeholder keys; real deployments need a relay you control or a trusted public relay:
 
 ```js
-// blind-relay.config.js
+// qvac.config.js
 export default {
   swarmRelays: [
-    // Public Hyperswarm relay public keys
-    "rs1.example.com:1234:abcdef...",
-    "rs2.example.com:1234:fedcba...",
+    "0000000000000000000000000000000000000000000000000000000000000001",
+    "0000000000000000000000000000000000000000000000000000000000000002",
+    "0000000000000000000000000000000000000000000000000000000000000003",
   ],
 };
 ```
@@ -38,18 +38,22 @@ export default {
 `QVAC_CONFIG_PATH` must be set BEFORE `import '@qvac/sdk'`, since module evaluation reads the config at import time. The env-then-import sequence looks like:
 
 ```ts
-process.env["QVAC_CONFIG_PATH"] = "./blind-relay.config.js";
+process.env["QVAC_CONFIG_PATH"] = "./qvac.config.js";
 
-const modelId = await loadModel({ modelSrc: LLAMA_3_2_1B_INST_Q4_0 });
-await unloadModel({ modelId });
+async function main() {
+  const modelId = await loadModel({ modelSrc: LLAMA_3_2_1B_INST_Q4_0 });
+  await unloadModel({ modelId });
 
-await downloadAsset({
-  assetSrc: LLAMA_3_2_1B_INST_Q4_0,
-  onProgress: (p) => {
-    const mb = (n: number) => (n / 1e6).toFixed(1);
-    process.stderr.write(`▸ ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)\n`);
-  },
-});
+  await downloadAsset({
+    assetSrc: LLAMA_3_2_1B_INST_Q4_0,
+    onProgress: (p) => {
+      const mb = (n: number) => (n / 1e6).toFixed(1);
+      process.stderr.write(`▸ ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)\n`);
+    },
+  });
+}
+
+main().catch(console.error);
 ```
 
 The relays help establish the peer connection through NAT. They don't see the actual model data. The download happens peer-to-peer once the connection is set up.

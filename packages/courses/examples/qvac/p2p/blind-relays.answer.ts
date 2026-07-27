@@ -11,14 +11,6 @@ import {
   type ModelProgressUpdate,
 } from "@qvac/sdk";
 
-// qvac.config.js
-// export default {
-//   swarmRelays: [
-//     "rs1.relay.example.com:1234:abcdef...",
-//     "rs2.relay.example.com:1234:fedcba...",
-//   ],
-// };
-
 async function main() {
   console.log("▸ Starting model download from Hyperdrive...\n");
 
@@ -41,7 +33,4 @@ async function main() {
   await close();
 }
 
-main().catch((err) => {
-  console.error("✖", err);
-  process.exit(1);
-});
+main().catch(console.error);
