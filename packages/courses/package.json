@@ -19,7 +19,8 @@
     "sync:examples:check": "node scripts/sync-examples.mjs --check",
     "verify:tests": "node scripts/verify-tests.mjs",
     "verify:tests:check": "node scripts/verify-tests.mjs --check",
-    "check:yaml": "node scripts/check-yaml.cjs"
+    "check:yaml": "node scripts/check-yaml.cjs",
+    "report:models": "node scripts/model-usage.mjs"
   },
   "dependencies": {
     "@academy/config": "workspace:*",

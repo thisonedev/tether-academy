@@ -19,6 +19,11 @@ export interface AcademyWindowAPI {
 
 // One entry in the downloaded-models list. `id` is a stable relative path
 // within the SDK models cache directory; pass it back to `models.remove`.
+export interface AcademyModelLessonRef {
+  chapter: string;
+  lessons: string[];
+}
+
 export interface AcademyModelEntry {
   id: string;
   name: string;
@@ -28,6 +33,7 @@ export interface AcademyModelEntry {
   // Empty for sharded / set groups since those are keyed by directory.
   sourceHash: string;
   fileCount: number;
+  usedIn: AcademyModelLessonRef[];
 }
 
 export interface AcademyModelsRemoveResult {

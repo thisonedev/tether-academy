@@ -317,6 +317,7 @@ function ModelRow({
           {model.fileCount > 1 ? ` · ${model.fileCount} files` : ''}
           {model.sourceHash ? ` · ${model.sourceHash}` : ''}
         </p>
+        <UsageHint usedIn={model.usedIn} />
       </div>
       <div className="flex shrink-0 items-center gap-3">
         <span className="font-mono text-sm text-canvas-foreground">{formatGb(model.sizeBytes)}</span>
@@ -354,6 +355,53 @@ function ModelRow({
       </div>
     </li>
   );
+}
+
+function UsageHint({ usedIn }: { usedIn: AcademyModelEntry['usedIn'] }) {
+  if (!usedIn || usedIn.length === 0) {
+    return (
+      <p className="mt-1 text-[11px] text-canvas-muted-foreground/70">
+        Not used in any lesson. Safe to remove
+      </p>
+    );
+  }
+  const labels = usedIn.map((ref) => chapterLabel(ref.chapter));
+  return (
+    <p className="mt-1 text-[11px] text-canvas-muted-foreground">
+      Used in: {joinChapters(labels)}
+    </p>
+  );
+}
+
+function joinChapters(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+const CHAPTER_LABELS: Record<string, string> = {
+  'getting-started': 'Getting started',
+  'text-generation': 'Text generation',
+  'text-embeddings': 'Text embeddings',
+  rag: 'RAG',
+  'fine-tuning': 'Fine-tuning',
+  multimodal: 'Multimodal',
+  'image-generation': 'Image generation',
+  'video-generation': 'Video generation',
+  transcription: 'Transcription',
+  'text-to-speech': 'Text-to-speech',
+  translation: 'Translation',
+  'voice-assistant': 'Voice assistant',
+  ocr: 'OCR',
+  'image-classification': 'Image classification',
+  bci: 'BCI',
+  vla: 'VLA',
+  p2p: 'P2P',
+  'delegated-inference': 'Delegated inference',
+};
+function chapterLabel(slug: string): string {
+  return CHAPTER_LABELS[slug] ?? slug;
 }
 
 function RemoveAllButton({

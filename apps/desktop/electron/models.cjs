@@ -16,6 +16,19 @@ const os = require('node:os');
 
 const SINGLE_HASH_RE = /^([0-9a-f]{16})_(.+)$/;
 
+let usageMap = null;
+function loadUsageMap() {
+  if (usageMap !== null) return usageMap;
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, 'model-usage.json'), 'utf-8');
+    usageMap = JSON.parse(raw);
+    if (!usageMap || typeof usageMap !== 'object') usageMap = {};
+  } catch {
+    usageMap = {};
+  }
+  return usageMap;
+}
+
 function modelsRoot() {
   return path.join(os.homedir(), '.qvac', 'models');
 }
@@ -68,6 +81,7 @@ async function listModels() {
   const rootStat = await safeStat(root);
   if (!rootStat || !rootStat.isDirectory()) return [];
 
+  const usage = loadUsageMap();
   const out = [];
   let entries;
   try {
@@ -82,13 +96,15 @@ async function listModels() {
       const s = await safeStat(abs);
       if (!s) continue;
       const hashMatch = SINGLE_HASH_RE.exec(entry.name);
+      const displayName = displayNameFromSingle(entry.name);
       out.push({
         id: entry.name,
-        name: displayNameFromSingle(entry.name),
+        name: displayName,
         sizeBytes: s.size,
         kind: 'single',
         sourceHash: hashMatch ? hashMatch[1] : '',
         fileCount: 1,
+        usedIn: usage[displayName] ?? [],
       });
     } else if (entry.isDirectory() && (entry.name === 'sharded' || entry.name === 'sets')) {
       const groups = await fsp.readdir(abs, { withFileTypes: true });
@@ -104,6 +120,7 @@ async function listModels() {
           kind: entry.name === 'sharded' ? 'sharded' : 'set',
           sourceHash: '',
           fileCount: count,
+          usedIn: usage[group.name] ?? [],
         });
       }
     }
