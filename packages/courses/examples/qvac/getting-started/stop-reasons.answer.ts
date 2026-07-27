@@ -1,4 +1,4 @@
-import { completion, loadModel, QWEN3_600M_INST_Q4 } from "@qvac/sdk";
+import { loadModel, completion, QWEN3_600M_INST_Q4 } from "@qvac/sdk";
 
 async function main() {
   const modelId = await loadModel({
@@ -10,10 +10,10 @@ async function main() {
     modelId,
     history: [{ role: "user", content: "Say hi in one word." }],
     stream: true,
+    captureThinking: true,
     generationParams: { predict: 10 },
   });
   for await (const _ of result.tokenStream) {
-    // drain
   }
 
   const final = await result.final;

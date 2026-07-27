@@ -1,8 +1,8 @@
-import { loadModel, completion, QWEN3_4B_Q4_K_M } from "@qvac/sdk";
+import { loadModel, completion, QWEN3_1_7B_INST_Q4 } from "@qvac/sdk";
 
 async function main() {
   const modelId = await loadModel({
-    modelSrc: QWEN3_4B_Q4_K_M,
+    modelSrc: QWEN3_1_7B_INST_Q4,
     modelConfig: { ctx_size: 4096, tools: true },
   });
 
@@ -23,6 +23,7 @@ async function main() {
     history: [{ role: "user", content: "What's the weather in Tokyo?" }],
     tools,
     stream: true,
+    captureThinking: true,
   });
 
   for await (const event of result.events) {

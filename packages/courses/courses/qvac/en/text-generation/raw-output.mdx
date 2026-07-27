@@ -54,8 +54,10 @@ The `responseFormat` option hands the schema to the grammar engine. The engine c
 const result = completion({
   modelId,
   history: [
+    { role: "system", content: "Extract structured info about people." },
     { role: "user", content: "Hi, I'm Alice, 30, data engineer." },
   ],
+  captureThinking: true,
   responseFormat: {
     type: "json_schema",
     json_schema: { name: "person", schema: PERSON_SCHEMA },

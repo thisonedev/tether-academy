@@ -7,8 +7,8 @@ async function main() {
     { role: "user", content: "What is Bitcoin? One sentence." },
   ];
 
-  const r1 = completion({ modelId, history, stream: false });
-  const r2 = completion({ modelId, history, stream: false });
+  const r1 = completion({ modelId, history, stream: false, captureThinking: true });
+  const r2 = completion({ modelId, history, stream: false, captureThinking: true });
 
   const [text1, text2] = await Promise.all([r1.text, r2.text]);
 

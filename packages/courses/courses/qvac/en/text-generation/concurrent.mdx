@@ -31,8 +31,8 @@ The trick is calling `completion()` twice in the same tick before awaiting eithe
 First we'd need to fire both `completion()` calls in the same tick, no `await` between. The two back-to-back calls look as follows:
 
 ```ts
-const r1 = completion({ modelId, history, stream: false });
-const r2 = completion({ modelId, history, stream: false });
+const r1 = completion({ modelId, history, stream: false, captureThinking: true });
+const r2 = completion({ modelId, history, stream: false, captureThinking: true });
 ```
 
 Next, we'd use the canonical pattern to await the results. `Promise.all` is the surface; the wait over both resolves to:
@@ -50,6 +50,6 @@ Both `completion()` calls fire synchronously, so both end up "in flight" against
 
 ## Put it to the test
 
-1. Call `completion({ modelId, history, stream: false })` twice in a row without awaiting either, assigning each to a variable.
+1. Call `completion({ modelId, history, stream: false, captureThinking: true })` twice in a row without awaiting either, assigning each to a variable.
 2. Wrap the awaits in `Promise.all([r1.text, r2.text])` and log the result of each with a label like `req-A` and `req-B`.
 3. After both finish, log `▸ Both completed.` so the output has a final line.

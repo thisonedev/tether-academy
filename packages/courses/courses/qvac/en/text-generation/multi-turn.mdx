@@ -41,7 +41,7 @@ const history: Array<{ role: string; content: string }> = [
 Pushing the assistant's reply back into the same `history` array is what makes the next call see it as context. You would write the first turn like so:
 
 ```ts
-const r1 = completion({ modelId, history, stream: true });
+const r1 = completion({ modelId, history, stream: true, captureThinking: true });
 for await (const event of r1.events) {
   if (event.type === "contentDelta") process.stdout.write(event.text);
 }
@@ -53,13 +53,15 @@ Same `history` reference, with the assistant turn already in. The follow-up user
 
 ```ts
 history.push({ role: "user", content: "And which river runs through it?" });
-const r2 = completion({ modelId, history, stream: true });
+const r2 = completion({ modelId, history, stream: true, captureThinking: true });
 for await (const event of r2.events) {
   if (event.type === "contentDelta") process.stdout.write(event.text);
 }
 ```
 
 The same `history` reference goes into both calls. The first question and the model's answer from the first turn are both in the array by the time we make the second call, so the model can answer the follow-up.
+
+> Note: `captureThinking: true` is the option the first lesson in this chapter introduced. It splits the model's `thinking` from the answer, so `contentDelta` only carries the final response. The thinking tokens arrive on `thinkingDelta` events too; we ignore them here so the runner's OUTPUT panel stays clean. The first lesson in this chapter shows how to surface the thinking when you want it.
 
 > Note: the SDK never mutates `history` for you. If you forget to push the assistant turn back, the next call's input contains only the user turns and the prior assistant answer is gone, so a follow-up that asks about it gets an answer without that context.
 

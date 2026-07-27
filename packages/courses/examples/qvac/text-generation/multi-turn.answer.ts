@@ -7,7 +7,7 @@ async function main() {
     { role: "user", content: "What is the capital of France?" },
   ];
 
-  const r1 = completion({ modelId, history, stream: true });
+  const r1 = completion({ modelId, history, stream: true, captureThinking: true });
   for await (const event of r1.events) {
     if (event.type === "contentDelta") process.stdout.write(event.text);
   }
@@ -16,8 +16,8 @@ async function main() {
   history.push({ role: "assistant", content: text1 });
   history.push({ role: "user", content: "And which river runs through it?" });
 
-  const r2 = completion({ modelId, history, stream: true });
-  process.stdout.write("\n");
+  const r2 = completion({ modelId, history, stream: true, captureThinking: true });
+  process.stdout.write("\n\n");
   for await (const event of r2.events) {
     if (event.type === "contentDelta") process.stdout.write(event.text);
   }

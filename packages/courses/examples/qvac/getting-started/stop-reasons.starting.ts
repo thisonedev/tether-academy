@@ -1,4 +1,4 @@
-import { completion, loadModel, unloadModel, QWEN3_600M_INST_Q4 } from "@qvac/sdk";
+import { loadModel, completion, unloadModel, QWEN3_600M_INST_Q4 } from "@qvac/sdk";
 
 async function main() {
   const modelId = await loadModel({

@@ -35,6 +35,7 @@ const result = completion({
   ],
   mcp: [{ client: mcpClient, includeResources: false }],
   stream: true,
+  captureThinking: true,
 });
 ```
 
@@ -53,9 +54,11 @@ for await (const event of result.events) {
 
 When the sampled output is a tool call from the MCP server, the SDK routes the call through `mcpClient`. We see the same `toolCall` events as for native tools.
 
+> Note: `captureThinking: true` is the option the first lesson in this chapter introduced. The model's `thinking` arrives on `thinkingDelta` events and stays out of the `contentDelta` stream the tool call comes from. The lesson's loop ignores `thinkingDelta` so the runner's OUTPUT panel only shows the tool calls and the final answer.
+
 > Note: MCP needs `@modelcontextprotocol/sdk` installed in your project. The SDK does not bundle it.
 
 ## Put it to the test
 
 1. Install `@modelcontextprotocol/sdk`. The editor prefills a `Client` connected to `npx -y @oevortex/ddg_search` as a starter.
-2. Call `completion({ modelId, history, stream: true, mcp: [{ client: mcpClient, includeResources: false }] })` and iterate `result.events`, logging `toolCall` and `contentDelta` events. Then `await mcpClient.close()`.
+2. Call `completion({ modelId, history, stream: true, captureThinking: true, mcp: [{ client: mcpClient, includeResources: false }] })` and iterate `result.events`, logging `toolCall` events and writing `contentDelta` tokens to stdout. The loop ignores `thinkingDelta` so the runner's OUTPUT panel only shows the tool calls and the final answer. Then `await mcpClient.close()`.

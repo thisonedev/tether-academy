@@ -57,6 +57,7 @@ const result = completion({
   history: [{ role: "user", content: "What's the weather in Tokyo?" }],
   tools,
   stream: true,
+  captureThinking: true,
 });
 ```
 
@@ -72,10 +73,12 @@ for await (const event of result.events) {
 
 The arguments come back as a parsed object matching our JSON Schema. We execute the function (call an API, query a database), then push `{ role: "tool", content: resultString }` back into history so the model can synthesize the final answer.
 
+> Note: `captureThinking: true` is the option the first lesson in this chapter introduced. Without it, the model's `thinking` would land in the same `contentDelta` stream the tool call comes from and muddle the tool-call detection. The option keeps `thinking` on `thinkingDelta` events, so `contentDelta` only carries the model's prose around the tool call. The lesson's loop ignores `thinkingDelta` so the runner's OUTPUT panel only shows the tool calls.
+
 > Note: tool support has to be enabled when loading the model. Set `modelConfig: { tools: true }` on the `loadModel()` call, otherwise the model will not understand how to use the tools array.
 
 ## Put it to the test
 
 1. Define a `tools` array with one tool. Give it `name`, `description`, and `parameters` (JSON Schema).
-2. Pass `tools` to `completion()` with a user question that requires the tool, stream `result.events`, and log `toolCall` events with the function name and arguments.
+2. Pass `tools` and `captureThinking: true` to `completion()` with a user question that requires the tool, stream `result.events`, and log `toolCall` events with the function name and arguments. `thinkingDelta` events arrive on the same stream and are ignored here so the runner's OUTPUT panel only shows the tool calls.
 3. (Optional) After the loop, `await result.toolCalls` to get the full list and push tool results back as `{role: "tool"}` messages for the next turn.

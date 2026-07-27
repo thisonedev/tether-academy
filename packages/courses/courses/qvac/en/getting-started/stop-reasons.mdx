@@ -40,6 +40,7 @@ Setting `predict: 10` forces the truncated path. You would call it in the follow
 const result = completion({
   modelId,
   history: [{ role: "user", content: "Say hi in one word." }],
+  captureThinking: true,
   generationParams: { predict: 10 },
   stream: true,
 });
@@ -69,7 +70,7 @@ if (final.stopReason === "length") {
 
 ## Put it to the test
 
-1. Use `generationParams: { predict: 10 }` so the response truncates before it finishes.
+1. Use `captureThinking: true` and `generationParams: { predict: 10 }` so the response truncates before it finishes and the model's `thinking` stays out of the output.
 2. Iterate `result.tokenStream` to completion.
 3. After the loop, await `result.final` and read `final.stopReason`.
 4. Branch on `final.stopReason`. For `"length"`, log that the token budget cut off the response.

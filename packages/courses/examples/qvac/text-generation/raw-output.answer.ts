@@ -17,10 +17,11 @@ async function main() {
   const result = completion({
     modelId,
     history: [
-      { role: "system", content: "Extract structured info about people. /no_think" },
+      { role: "system", content: "Extract structured info about people." },
       { role: "user", content: "Hi, I'm Alice, 30, data engineer." },
     ],
     stream: true,
+    captureThinking: true,
     responseFormat: {
       type: "json_schema",
       json_schema: { name: "person", schema: PERSON_SCHEMA },

@@ -22,6 +22,7 @@ async function main() {
     ],
     stream: true,
     mcp: [{ client: mcpClient, includeResources: false }],
+    captureThinking: true,
   });
 
   for await (const event of result.events) {
