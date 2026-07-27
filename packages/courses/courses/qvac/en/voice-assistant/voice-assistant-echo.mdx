@@ -6,6 +6,18 @@ tests:
   - id: has-vad-params
     description: 'Sets vad_params in the ASR modelConfig'
     pattern: "vad_params\\s*[:=]"
+  - id: starts-mic
+    description: 'Spawns ffmpeg via startMicrophone to capture the OS default mic'
+    pattern: "startMicrophone\\s*\\(\\s*\\{"
+  - id: pipes-audio
+    description: 'Hooks ffmpeg stdout chunks into session.write'
+    pattern: "ffmpeg\\.stdout\\.on\\s*\\(\\s*['\"]data['\"]"
+  - id: awaits-session
+    description: 'Awaits the transcribeStream call to get the session'
+    pattern: "await\\s+transcribeStream\\s*\\(\\s*\\{[^}]*modelId\\s*:\\s*asrModelId"
+  - id: iterates-session
+    description: 'Iterates the session with for-await, not the transcribeStream Promise'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+session"
   - id: speaks-flag
     description: 'Tracks an isSpeaking flag through the turn'
     pattern: "isSpeaking\\s*=\\s*true|isSpeaking\\s*=\\s*false|let\\s+isSpeaking|const\\s+isSpeaking"
@@ -15,11 +27,13 @@ tests:
   - id: cooldown
     description: 'Adds a post-playback cooldown before listening resumes'
     pattern: "POST_PLAYBACK_COOLDOWN_MS|sleep\\s*\\(\\s*\\d"
+  - id: plays-audio
+    description: 'Plays the TTS output as audio through ffplay'
+    pattern: "playAudio\\s*\\(\\s*wavBuffer"
 hints:
-  - "Set vad_params in the WHISPER_TINY modelConfig: threshold 0.6, min_speech_duration_ms 300, min_silence_duration_ms 700, max_speech_duration_s 15, speech_pad_ms 200."
-  - "Wrap the LLM+TTS block in a try/finally that flips isSpeaking = true at the start and false at the end. Anything that arrives from the mic while isSpeaking is true is dropped."
-  - "After the TTS finishes, sleep(POST_PLAYBACK_COOLDOWN_MS) so Whisper doesn't transcribe the speaker reverb as the tail of our own voice."
-  - "isMeaningfulTranscript(text) returns false for empty strings, for '[No speech detected]', and for transcripts with fewer than MIN_UTTERANCE_CHARS letters. Whisper emits short phantom words from near-silence (single tokens like 'you' or 'Thanks.'); dropping them is what breaks the feedback loop."
+  - "transcribeStream() returns a Promise<session>. Await it before iterating; iterating the Promise with for-await throws `transcribeStream(...) is not a function or its return value is not async iterable`."
+  - "Set vad_params in the WHISPER_TINY modelConfig: threshold 0.6, min_speech_duration_ms 300, min_silence_duration_ms 700, max_speech_duration_s 15, speech_pad_ms 200. The 700ms silence window is the value that matters; it keeps the TTS tail out of the user's next turn."
+  - "The isSpeaking flag is the software fix for the feedback loop. `ffmpeg.stdout.on('data', (chunk) => { if (isSpeaking) return; session.write(chunk) })` drops mic frames while TTS plays, and isMeaningfulTranscript filters phantom words from near-silence. The isMeaningful check is what breaks the loop on short transcripts like 'you' or 'Thanks.'"
 expectedOutput:
   - "▸ You: hello there"
   - "▸ Assistant:"
@@ -51,9 +65,9 @@ const vad_params = {
 `min_silence_duration_ms: 700` is the value that matters. VAD uses it to decide when the user stopped talking, so a longer quiet window keeps the TTS tail ringing through the speaker from getting folded into the user's turn.
 
 VAD handles the first issue. The other three happen in the loop body, so the fix is three helpers defined right before the main loop:
-- `isSpeaking` flag — the loop checks it at the top of each iteration to skip frames while TTS plays
-- `isMeaningfulTranscript` — filter that drops the empty and phantom transcripts before they reach the LLM
-- `sleep(ms)` helper — the main loop calls it to wait for the post-playback cooldown.
+- `isSpeaking` flag: the loop checks it at the top of each iteration to skip frames while TTS plays
+- `isMeaningfulTranscript`: filter that drops the empty and phantom transcripts before they reach the LLM
+- `sleep(ms)` helper: the main loop calls it to wait for the post-playback cooldown.
 
 Here's how that looks in code:
 
@@ -77,10 +91,20 @@ function sleep(ms: number) {
 let isSpeaking = false;
 ```
 
-Wired into the loop from the previous lesson: `isSpeaking` and `isMeaningfulTranscript` `continue` early at the top of each iteration, and `sleep(POST_PLAYBACK_COOLDOWN_MS)` sits after `ttsResult.buffer` resolves to let the TTS tail decay. The `try/finally` around the LLM+TTS block flips `isSpeaking` back to false even if the LLM throws, so a crashed turn doesn't leave the mic muted:
+The mic side gets a new gate. The previous lesson's data handler pipes every frame into the session; this one drops frames while the assistant is talking so the speaker output never reaches Whisper:
 
 ```ts
-for await (const rawText of transcribeStream({ modelId: asrModelId })) {
+ffmpeg.stdout.on("data", (chunk: Buffer) => {
+  if (isSpeaking) return;
+  session.write(chunk);
+});
+```
+
+The session is the async iterable; `transcribeStream({ modelId })` returns a `Promise<session>`, so you `await` it before the `for await`. The loop checks `isSpeaking` and `isMeaningfulTranscript` at the top of each iteration to skip frames, and the `try/finally` around the LLM+TTS block flips `isSpeaking` back to false even if the LLM throws, so a crashed turn doesn't leave the mic muted:
+
+```ts
+const session = await transcribeStream({ modelId: asrModelId });
+for await (const rawText of session) {
   if (isSpeaking) continue;
   if (!isMeaningfulTranscript(rawText)) continue;
   const userText = rawText.trim();
@@ -105,7 +129,14 @@ for await (const rawText of transcribeStream({ modelId: asrModelId })) {
         inputType: "text",
         stream: false,
       });
-      await ttsResult.buffer;
+      const samples = await ttsResult.buffer;
+      if (samples.length > 0) {
+        const wavBuffer = Buffer.concat([
+          createWavHeader(samples.length * 2, TTS_SAMPLE_RATE),
+          int16ArrayToBuffer(samples),
+        ]);
+        playAudio(wavBuffer);
+      }
       await sleep(POST_PLAYBACK_COOLDOWN_MS);
     }
   } finally {
@@ -118,8 +149,20 @@ Two tuning knobs to revisit if the loop still misbehaves. If VAD commits segment
 
 > Note: the `isSpeaking` flag drops the transcripts after Whisper processes them, but the mic is still recording the whole time. Pausing the ffmpeg pipe would let the buffer pile up, so we keep the pipe draining and drop the transcripts in software. The trade-off is a little extra VAD work on audio we'll throw away, in exchange for never stalling on a full buffer.
 
+The SDK installs its own `SIGINT` / `SIGTERM` handler that aborts in-flight RPC streams on shutdown. The abort rejects any pending `session.write()` or `unloadModel()` call with a `WorkerShutdownError`. The bare-rpc socket also emits an `RPCError` with `code: 'CHANNEL_CLOSED'` on the same teardown path. Both surface as unhandled stream errors. The `process.on("uncaughtException", ...)` filter ignores the shutdown noise and re-throws anything else:
+
+```ts
+process.on("uncaughtException", (err) => {
+  if (err instanceof WorkerShutdownError) return;
+  if (err?.code === "CHANNEL_CLOSED") return;
+  throw err;
+});
+```
+
 ## Put it to the test
 
 1. Add `vad_params` (threshold 0.6, min_speech_duration_ms 300, min_silence_duration_ms 700, max_speech_duration_s 15, speech_pad_ms 200) to the ASR `modelConfig`.
 2. Define `POST_PLAYBACK_COOLDOWN_MS = 300`, `MIN_UTTERANCE_CHARS = 3`, `isMeaningfulTranscript(text)`, `sleep(ms)`, and `let isSpeaking = false`.
-3. In the `for await (const rawText of transcribeStream(...))` loop, skip transcripts while `isSpeaking`, skip non-meaningful ones, push user turn into `history`, wrap completion + textToSpeech in a `try/finally` that flips `isSpeaking = true` at the start and `false` at the end, then `await sleep(POST_PLAYBACK_COOLDOWN_MS)` after `await ttsResult.buffer`.
+3. Gate on `ffmpeg` and `ffplay` being on `PATH` at startup. Define the WAV helpers (`createWavHeader`, `int16ArrayToBuffer`, `playAudio`) and the mic helper (`startMicrophone`) above `main`.
+4. Open a `const session = await transcribeStream({ modelId: asrModelId })` session, then `const ffmpeg = startMicrophone(...)`, then `ffmpeg.stdout.on("data", (chunk) => { if (isSpeaking) return; session.write(chunk) })`.
+5. Iterate with `for await (const rawText of session)`. Skip transcripts while `isSpeaking`, skip non-meaningful ones, push user turn into `history`, wrap completion + textToSpeech in a `try/finally` that flips `isSpeaking = true` at the start and `false` at the end. After `await ttsResult.buffer`, wrap the samples in a WAV header, `playAudio(wavBuffer)`, then `await sleep(POST_PLAYBACK_COOLDOWN_MS)`. Wire the `WorkerShutdownError` filter to `uncaughtException` so the SDK's shutdown abort doesn't dump a stack trace.

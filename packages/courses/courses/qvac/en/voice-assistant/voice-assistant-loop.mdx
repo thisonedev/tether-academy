@@ -12,19 +12,31 @@ tests:
   - id: loads-tts
     description: 'Loads a TTS model with the supertonic engine flag'
     pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc\\s*:\\s*TTS_EN_SUPERTONIC_Q8_0[\\s\\S]*?ttsEngine"
-  - id: transcribes-stream
-    description: 'Opens a transcribeStream session and iterates the result'
-    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+transcribeStream"
+  - id: starts-mic
+    description: 'Spawns ffmpeg via startMicrophone to capture the OS default mic'
+    pattern: "startMicrophone\\s*\\(\\s*\\{"
+  - id: pipes-audio
+    description: 'Hooks ffmpeg stdout chunks into session.write'
+    pattern: "ffmpeg\\.stdout\\.on\\s*\\(\\s*['\"]data['\"]"
+  - id: awaits-session
+    description: 'Awaits the transcribeStream call to get the session'
+    pattern: "await\\s+transcribeStream\\s*\\(\\s*\\{[^}]*modelId\\s*:\\s*asrModelId"
+  - id: iterates-session
+    description: 'Iterates the session with for-await, not the transcribeStream Promise'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+session"
   - id: runs-completion
     description: 'Calls completion() against the LLM model'
     pattern: "completion\\s*\\(\\s*\\{[^}]*modelId\\s*:\\s*llmModelId"
   - id: runs-tts
     description: 'Calls textToSpeech() against the TTS model'
     pattern: "textToSpeech\\s*\\(\\s*\\{[^}]*modelId\\s*:\\s*ttsModelId"
+  - id: plays-audio
+    description: 'Plays the TTS output as audio through ffplay'
+    pattern: "playAudio\\s*\\(\\s*wavBuffer"
 hints:
-  - "Three loadModel() calls: WHISPER_TINY with a vadModelSrc, LLAMA_3_2_1B_INST_Q4_0 with a ctx_size, and TTS_EN_SUPERTONIC_Q8_0 with ttsEngine: 'supertonic'."
-  - "The main loop iterates transcribeStream({ modelId: asrModelId }), pushes each user turn into history, then runs completion() with stream: true."
-  - "After streaming the assistant's text, push it into history and call textToSpeech() with inputType: 'text' and stream: false. await ttsResult.buffer before the next turn."
+  - "transcribeStream({ modelId }) returns a Promise<session>. await it to get the session, then iterate with for await (const rawText of session). rawText is a plain string with no metadata flag set."
+  - "ffmpeg and ffplay ship together. Gate on both with a for-loop startup check, then startMicrophone({ sampleRate: 16000, format: 'f32le' }) captures the OS default mic; hook ffmpeg.stdout.on('data', (chunk) => session.write(chunk)) to feed frames into the session."
+  - "textToSpeech({ modelId, text, inputType: 'text', stream: false }) returns raw 16-bit PCM samples at 44.1 kHz. Wrap them in a WAV header with createWavHeader(samples.length * 2, TTS_SAMPLE_RATE) and int16ArrayToBuffer(samples), then playAudio(Buffer.concat([header, samples]))."
 expectedOutput:
   - "▸ Loading whisper-tiny + Silero VAD..."
   - "▸ Loading Llama 3.2 1B..."
@@ -73,10 +85,25 @@ const history: Array<{
 }> = [{ role: "system", content: SYSTEM_PROMPT }];
 ```
 
-The main loop is one async `for await` over the stream of transcripts. Each iteration produces a user turn, runs the LLM, then speaks the answer. The main loop looks like this:
+`transcribeStream({ modelId })` returns a `Promise<TranscribeStreamSession>`. `await` it to get the session, then iterate with `for await (const rawText of session)`. The session yields plain text strings.
+
+Audio capture is a child ffmpeg process. The `startMicrophone()` helper spawns the system ffmpeg with the right `-i` args for the current platform (avfoundation on macOS, pulse on Linux, dshow on Windows) and pipes 16 kHz mono f32le PCM to stdout. Each chunk on stdout is a frame we feed into the session:
 
 ```ts
-for await (const rawText of transcribeStream({ modelId: asrModelId })) {
+const ffmpeg = startMicrophone({ sampleRate: 16000, format: "f32le" });
+const session = await transcribeStream({ modelId: asrModelId });
+
+ffmpeg.stdout.on("data", (chunk: Buffer) => {
+  session.write(chunk);
+});
+```
+
+A startup check on `ffmpeg -version` and `ffplay -version` makes the failure mode obvious if either is missing. The `for (const tool of ['ffmpeg', 'ffplay'])` loop keeps it to a few lines.
+
+The main loop is one async `for await` over the session. Each iteration produces a user turn, runs the LLM, then speaks the answer:
+
+```ts
+for await (const rawText of session) {
   const userText = rawText.trim();
   if (userText.length === 0) continue;
 
@@ -100,10 +127,46 @@ for await (const rawText of transcribeStream({ modelId: asrModelId })) {
     inputType: "text",
     stream: false,
   });
-  await ttsResult.buffer;
+  const samples = await ttsResult.buffer;
+  if (samples.length > 0) {
+    const wavBuffer = Buffer.concat([
+      createWavHeader(samples.length * 2, TTS_SAMPLE_RATE),
+      int16ArrayToBuffer(samples),
+    ]);
+    playAudio(wavBuffer);
+  }
 }
 ```
 
+`textToSpeech()` returns the audio as raw 16-bit signed PCM samples at 44.1 kHz mono. To play it we wrap the samples in a minimal WAV header and pipe the buffer into `ffplay`, which ships with ffmpeg.
+
+A `cleanup()` handler kills the ffmpeg child, ends the session, and unloads all three models. Wire it to `SIGINT` and `SIGTERM` so Ctrl+C exits cleanly:
+
+```ts
+async function cleanup() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  ffmpeg.kill();
+  try { session.end(); } catch {}
+  await unloadModel({ modelId: ttsModelId }).catch(() => {});
+  await unloadModel({ modelId: llmModelId }).catch(() => {});
+  await unloadModel({ modelId: asrModelId }).catch(() => {});
+  process.exit(0);
+}
+
+process.on("SIGINT", () => void cleanup());
+process.on("SIGTERM", () => void cleanup());
+```
+
+The SDK installs its own `SIGINT` / `SIGTERM` handler that aborts in-flight RPC streams on shutdown. The abort rejects any pending `session.write()` or `unloadModel()` call with a `WorkerShutdownError`. The bare-rpc socket also emits an `RPCError` with `code: 'CHANNEL_CLOSED'` on the same teardown path. Both surface as unhandled stream errors. The `process.on("uncaughtException", ...)` filter ignores the shutdown noise and re-throws anything else:
+
+```ts
+process.on("uncaughtException", (err) => {
+  if (err instanceof WorkerShutdownError) return;
+  if (err?.code === "CHANNEL_CLOSED") return;
+  throw err;
+});
+```
 
 > Note: the system prompt bans markdown and lists because the output is spoken aloud. A `### heading` or a `1. ` list reads as a stuttery mess through TTS.
 
@@ -111,4 +174,8 @@ for await (const rawText of transcribeStream({ modelId: asrModelId })) {
 
 1. Make three `loadModel()` calls for the ASR (Whisper + Silero VAD), LLM (Llama 3.2 1B), and TTS (Supertonic English) models.
 2. Declare `history` with the system prompt as the first message.
-3. Open a `for await (const rawText of transcribeStream({ modelId: asrModelId }))` loop. Each iteration: trim, push user turn into `history`, call `completion()` with `stream: true`, push assistant turn into `history`, then call `textToSpeech()` and `await ttsResult.buffer`. After the loop, `unloadModel()` the three models.
+3. Gate on `ffmpeg` and `ffplay` being on `PATH` at startup. Define the WAV helpers (`createWavHeader`, `int16ArrayToBuffer`, `playAudio`) and the mic helper (`startMicrophone`) above `main`.
+4. Open a `const session = await transcribeStream({ modelId: asrModelId })` session, then `const ffmpeg = startMicrophone(...)`, then `ffmpeg.stdout.on("data", (chunk) => session.write(chunk))`.
+5. Iterate with `for await (const rawText of session)`. Each iteration: trim the transcript, push it as a user turn into `history`, call `completion()` with `stream: true`, then push the assistant turn into `history`.
+6. After `completion()` returns, call `textToSpeech()` and `await ttsResult.buffer`. Wrap the samples in a WAV header and `playAudio(wavBuffer)`.
+7. After the loop, run the cleanup handler. Wire the `WorkerShutdownError` / `CHANNEL_CLOSED` filter to `uncaughtException` so the SDK's shutdown abort doesn't dump a stack.

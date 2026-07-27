@@ -1,3 +1,5 @@
+import { spawn, spawnSync } from "node:child_process";
+import { platform } from "node:os";
 import {
   loadModel,
   unloadModel,
@@ -10,17 +12,14 @@ import {
   TTS_EN_SUPERTONIC_Q8_0,
 } from "@qvac/sdk";
 
+const MIC_SAMPLE_RATE = 16000;
+const TTS_SAMPLE_RATE = 44100;
+
 const SYSTEM_PROMPT =
   "You are a concise, friendly voice assistant. Keep responses under two sentences. " +
   "Never use markdown, lists, or code blocks. Your output will be spoken aloud.";
 
 async function main() {
-  // 1: load the three models (ASR, LLM, TTS)
-
-  // 2: declare history with the system prompt
-
-  // 3: run the main loop
-
   await unloadModel({ modelId: ttsModelId });
   await unloadModel({ modelId: llmModelId });
   await unloadModel({ modelId: asrModelId });
