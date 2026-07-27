@@ -6,7 +6,12 @@ import {
   getCurriculumChapterBySlug,
   getCurriculumLessonBySlug,
 } from '@academy/courses';
-import { type LessonData, type LessonTest, LessonWorkspace } from '@academy/ui';
+import {
+  type LessonArgvSlot,
+  type LessonData,
+  type LessonTest,
+  LessonWorkspace,
+} from '@academy/ui';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { getPage, source } from '@/lib/source';
@@ -17,6 +22,7 @@ interface FrontMatter {
   hints?: string[];
   expectedOutput?: string[];
   platforms?: LessonData['platforms'];
+  argv?: LessonArgvSlot[];
 }
 
 // Vendored example code lives one repo level up, under packages/courses.
@@ -198,6 +204,7 @@ export default async function Layout({
       currentChapter,
       currentLesson,
       readOnly: !isCodeLesson,
+      argv: fm.argv,
     };
 
     return <LessonWorkspace data={data}>{children}</LessonWorkspace>;

@@ -1,7 +1,7 @@
 // Spawned via ELECTRON_RUN_AS_NODE so the CJS main can run an ESM .mts snippet.
 const { spawn } = require('node:child_process');
-const { mkdtemp, writeFile, rm } = require('node:fs/promises');
-const { mkdirSync } = require('node:fs');
+const { rm } = require('node:fs/promises');
+const { mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const path = require('node:path');
@@ -39,7 +39,8 @@ function precreateFinetuneOutputDirs(src, cwd) {
   }
 }
 
-async function runExample({ source, language, onChunk }) {
+// Returns { promise, abort } so the main process can kill the child.
+function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
     language === 'javascript' ||
     language === 'typescript' ||
@@ -47,15 +48,18 @@ async function runExample({ source, language, onChunk }) {
     language === 'jsx';
   if (!isJsLike) {
     return {
-      ok: false,
-      output: `[runner] language "${language}" is not executable in this shell.`,
+      promise: Promise.resolve({
+        ok: false,
+        output: `[runner] language "${language}" is not executable in this shell.`,
+      }),
+      abort: () => false,
     };
   }
 
   const childCwd = path.join(__dirname, '..', '..', 'packages', 'courses');
   precreateFinetuneOutputDirs(source, childCwd);
 
-  const dir = await mkdtemp(join(tmpdir(), 'ta-run-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ta-run-'));
 
   // Rewrite npm specifiers to absolute paths so the snippet in /tmp can resolve them.
   const resolvedSource = resolveAllImports(source);
@@ -71,54 +75,66 @@ async function runExample({ source, language, onChunk }) {
   // .mts so --experimental-strip-types accepts TS annotations; type imports are stripped first.
   const file = join(dir, 'snippet.mts');
 
-  try {
-    await writeFile(file, wrapped, 'utf-8');
-    return await new Promise((resolve) => {
-      const child = spawn(
-        process.execPath,
-        ['--experimental-strip-types', file],
-        {
-          // Anchor at packages/courses/ so lesson relative paths resolve next to vendored files.
-          cwd: childCwd,
-          env: {
-            ...process.env,
-            ELECTRON_RUN_AS_NODE: '1',
-            NODE_NO_WARNINGS: '1',
-            QVAC_LOG_LEVEL: 'warn',
-          },
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
-      );
-      let output = '';
-      let killed = false;
-      const timer = setTimeout(() => {
-        killed = true;
-        child.kill('SIGTERM');
-      }, MAX_RUNTIME_MS);
-      const handleChunk = (stream) => (chunk) => {
-        const s = chunk.toString();
-        output += s;
-        if (onChunk) onChunk({ stream, data: s });
-      };
-      child.stdout.on('data', handleChunk('stdout'));
-      child.stderr.on('data', handleChunk('stderr'));
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        resolve({ ok: false, output: `[runner] ${err.message}\n${output}` });
-      });
-      child.on('exit', (code) => {
-        clearTimeout(timer);
-        if (killed)
-          resolve({
-            ok: false,
-            output: `${output}\n[runner] killed after ${MAX_RUNTIME_MS / 1000}s`,
-          });
-        else resolve({ ok: code === 0, output });
-      });
+  const extraArgv = Array.isArray(argv) ? argv.filter((a) => typeof a === 'string') : [];
+
+  writeFileSync(file, wrapped, 'utf-8');
+
+  const child = spawn(
+    process.execPath,
+    ['--experimental-strip-types', file, ...extraArgv],
+    {
+      // Anchor at packages/courses/ so lesson relative paths resolve next to vendored files.
+      cwd: childCwd,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        NODE_NO_WARNINGS: '1',
+        QVAC_LOG_LEVEL: 'warn',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  const promise = new Promise((resolve) => {
+    let output = '';
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill('SIGTERM');
+    }, MAX_RUNTIME_MS);
+    const handleChunk = (stream) => (chunk) => {
+      const s = chunk.toString();
+      output += s;
+      if (onChunk) onChunk({ stream, data: s });
+    };
+    child.stdout.on('data', handleChunk('stdout'));
+    child.stderr.on('data', handleChunk('stderr'));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      rm(dir, { recursive: true, force: true }).catch(() => {});
+      resolve({ ok: false, output: `[runner] ${err.message}\n${output}` });
     });
-  } finally {
-    rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      rm(dir, { recursive: true, force: true }).catch(() => {});
+      if (killed)
+        resolve({
+          ok: false,
+          output: `${output}\n[runner] killed after ${MAX_RUNTIME_MS / 1000}s`,
+        });
+      else resolve({ ok: code === 0, output });
+    });
+  });
+
+  let aborted = false;
+  const abort = () => {
+    if (aborted || child.killed || child.exitCode !== null) return false;
+    aborted = true;
+    child.kill('SIGTERM');
+    return true;
+  };
+
+  return { promise, abort };
 }
 
 function extractImportedNames(src) {

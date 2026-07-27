@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const academyRunPayloadSchema = z.object({
   source: z.string(),
   language: z.string(),
+  argv: z.array(z.string()).optional(),
 });
 
 export const academyRunResultSchema = z.object({

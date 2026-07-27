@@ -103,14 +103,26 @@ ipcMain.handle('pear:startWorker', (_e, filename) => {
   return true;
 });
 
-ipcMain.handle('academy:run', async (evt, payload) => {
+// One slot for the in-flight run so the stop button can kill it.
+let currentRun = null;
+
+ipcMain.handle('academy:run', (evt, payload) => {
   const sender = evt.sender;
-  return runExample({
+  const run = runExample({
     ...payload,
     onChunk: (chunk) => {
       if (!sender.isDestroyed()) sender.send('academy:run:chunk', chunk);
     },
   });
+  currentRun = run;
+  return run.promise.finally(() => {
+    if (currentRun === run) currentRun = null;
+  });
+});
+
+ipcMain.handle('academy:stop', () => {
+  if (!currentRun) return false;
+  return currentRun.abort();
 });
 
 // Persistent state: a Corestore under userData/corestore (see state-store.cjs).

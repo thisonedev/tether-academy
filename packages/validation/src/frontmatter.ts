@@ -8,6 +8,20 @@ const lessonTest = z.object({
   contains: z.string().optional(),
 });
 
+// argv slot the runner fills before the lesson's snippet runs.
+const lessonArgvSlot = z.object({
+  name: z.string(),
+  // Where the runner looks up the value at run time.
+  from: z.enum([
+    'state:lastProviderPublicKey',
+    'literal',
+  ]),
+  // Used when `from: 'literal'`. Acts as a fallback when no override is set.
+  default: z.string().optional(),
+  // Human-readable label shown in the runner header override input.
+  label: z.string().optional(),
+});
+
 export const lessonFrontmatter = frontmatterSchema.extend({
   // Upstream SDK file this lesson's answer was vendored from. Path is
   // relative to the local upstream snapshot. The sync workflow reads
@@ -24,4 +38,6 @@ export const lessonFrontmatter = frontmatterSchema.extend({
   expectedOutput: z.array(z.string()).optional(),
   tests: z.array(lessonTest).optional(),
   platforms: z.array(z.enum(['node', 'web', 'mobile', 'desktop'])).optional(),
+  // argv slots the runner resolves before executing the lesson's snippet.
+  argv: z.array(lessonArgvSlot).optional(),
 });

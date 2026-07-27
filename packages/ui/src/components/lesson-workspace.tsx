@@ -6,7 +6,7 @@ import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
 import { javascript } from '@codemirror/lang-javascript';
 import { oneDark } from '@codemirror/theme-one-dark';
 import CodeMirror from '@uiw/react-codemirror';
-import { ArrowLeft, ArrowRight, Check, Copy, Play, RotateCcw, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Copy, Pencil, Play, RotateCcw, Square, X } from 'lucide-react';
 import Link from 'next/link';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { CurriculumStrip } from './curriculum-strip.js';
@@ -18,6 +18,13 @@ export interface LessonTest {
   description: string;
   pattern?: string;
   contains?: string;
+}
+
+export interface LessonArgvSlot {
+  name: string;
+  from: 'state:lastProviderPublicKey' | 'literal';
+  default?: string;
+  label?: string;
 }
 
 export type OutputLine = {
@@ -42,6 +49,7 @@ export interface LessonData {
   currentChapter?: CurriculumChapter;
   currentLesson?: CurriculumLesson;
   readOnly?: boolean;
+  argv?: LessonArgvSlot[];
 }
 
 const TABS = ['output', 'tests', 'preview'] as const;
@@ -49,6 +57,37 @@ type Tab = (typeof TABS)[number];
 
 const RUN_MODES = ['simulated', 'this-device', 'remote'] as const;
 type RunMode = (typeof RUN_MODES)[number];
+
+const ARGV_OVERRIDE_PREFIX = 'argv.override.';
+const ARGV_CAPTURED_PREFIX = 'argv.captured.';
+
+const CAPTURE_MARKERS: Array<{ pattern: RegExp; target: string }> = [
+  { pattern: /▸\s+Provider Public Key:\s+([a-f0-9]{64})/i, target: 'lastProviderPublicKey' },
+];
+
+function overrideKey(slotName: string): string {
+  return `${ARGV_OVERRIDE_PREFIX}${slotName}`;
+}
+
+function capturedKey(source: string): string {
+  return `${ARGV_CAPTURED_PREFIX}${source}`;
+}
+
+function sourceFromArgvFrom(from: LessonArgvSlot['from']): string | null {
+  const m = from.match(/^state:(.+)$/);
+  return m ? m[1] : null;
+}
+
+function argInputPlaceholder(slot: LessonArgvSlot, captured: Record<string, string>): string {
+  const source = sourceFromArgvFrom(slot.from);
+  if (source) {
+    const value = captured[source];
+    if (value) return `auto-captured: ${value}`;
+    return `auto from previous run (${source})`;
+  }
+  if (slot.from === 'literal' && slot.default) return slot.default;
+  return 'optional';
+}
 
 declare global {
   interface Window {
@@ -71,6 +110,8 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   // Bumped on each run and used as the key on OutputView so a re-run
   // remounts it with the cleared state.
   const [outputKey, setOutputKey] = useState(0);
+  const [argvOverrides, setArgvOverrides] = useState<Record<string, string>>({});
+  const [argvCaptured, setArgvCaptured] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (data.readOnly) {
@@ -85,6 +126,89 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     setShowCompleteModal(false);
     setHasShownModal(false);
   }, [data.startingCode, data.readOnly, isDesktop]);
+
+  useEffect(() => {
+    if (!isDesktop || !data.argv || data.argv.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const nextOverrides: Record<string, string> = {};
+      const nextCaptured: Record<string, string> = {};
+      for (const slot of data.argv ?? []) {
+        const overrideValue = await window.academy?.state?.get(overrideKey(slot.name));
+        if (cancelled) return;
+        if (typeof overrideValue === 'string' && overrideValue.length > 0) {
+          nextOverrides[slot.name] = overrideValue;
+        }
+        const source = sourceFromArgvFrom(slot.from);
+        if (source) {
+          const capturedValue = await window.academy?.state?.get(capturedKey(source));
+          if (cancelled) return;
+          if (typeof capturedValue === 'string' && capturedValue.length > 0) {
+            nextCaptured[source] = capturedValue;
+          }
+        }
+      }
+      if (!cancelled) {
+        setArgvOverrides(nextOverrides);
+        setArgvCaptured(nextCaptured);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDesktop, data.argv]);
+
+  // Empty value still represents an active override session; only non-empty values persist.
+  const setArgvOverrideValue = useCallback((name: string, value: string) => {
+    setArgvOverrides((prev) => {
+      if (!(name in prev) && value.length === 0) return prev;
+      return { ...prev, [name]: value };
+    });
+    if (isDesktop && value.length > 0) {
+      void window.academy?.state?.set(overrideKey(name), value);
+    }
+  }, [isDesktop]);
+
+  const startArgvOverride = useCallback((name: string) => {
+    setArgvOverrides((prev) => {
+      if (name in prev) return prev;
+      return { ...prev, [name]: '' };
+    });
+  }, []);
+
+  const clearArgvOverride = useCallback((name: string) => {
+    setArgvOverrides((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    if (isDesktop) {
+      void window.academy?.state?.remove(overrideKey(name));
+    }
+  }, [isDesktop]);
+
+  const resolveArgv = useCallback(async (): Promise<string[]> => {
+    if (!data.argv || data.argv.length === 0) return [];
+    const out: string[] = [];
+    for (const slot of data.argv) {
+      const override = argvOverrides[slot.name];
+      if (override && override.length > 0) {
+        out.push(override);
+        continue;
+      }
+      const source = sourceFromArgvFrom(slot.from);
+      if (source && isDesktop) {
+        const captured = await window.academy?.state?.get(capturedKey(source));
+        if (typeof captured === 'string' && captured.length > 0) {
+          out.push(captured);
+          continue;
+        }
+      }
+      out.push(slot.default ?? '');
+    }
+    return out;
+  }, [data.argv, argvOverrides, isDesktop]);
 
   const allPassed = testResults?.every((r) => r.passed) ?? false;
 
@@ -155,6 +279,8 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     const canRunForReal =
       runMode === 'this-device' && typeof window !== 'undefined' && window.academy?.run;
 
+    const resolvedArgv = await resolveArgv();
+
     // The "no output produced" fallback below reads this, not a stale state read.
     let producedOutput: OutputLine[] = [];
 
@@ -163,6 +289,21 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       // Stream chunks as they arrive so 30-60s finetune runs don't look frozen.
       // Local buffer keeps stream type so the panel can distinguish reasoning from answer text.
       const streamBuffer: OutputLine[] = [];
+      const captured = new Set<string>();
+      const scanForCaptures = (text: string) => {
+        if (!isDesktop || !text) return;
+        for (const { pattern, target } of CAPTURE_MARKERS) {
+          if (captured.has(target)) continue;
+          const m = text.match(pattern);
+          if (m && m[1]) {
+            captured.add(target);
+            const value = m[1];
+            void window.academy?.state?.set(capturedKey(target), value);
+            setArgvCaptured((prev) => ({ ...prev, [target]: value }));
+            void window.academy?.stop?.();
+          }
+        }
+      };
       const unsubscribe = window.academy?.onRunChunk?.((chunk) => {
         const newLines = chunk.data.split('\n').map((line) => ({
           stream: chunk.stream,
@@ -170,9 +311,14 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         }));
         streamBuffer.push(...newLines);
         setOutputLines((prev) => [...prev, ...newLines]);
+        if (chunk.stream === 'stdout') scanForCaptures(chunk.data);
       });
       try {
-        const result = await window.academy?.run({ source: userCode, language: 'typescript' });
+        const result = await window.academy?.run({
+          source: userCode,
+          language: 'typescript',
+          argv: resolvedArgv,
+        });
         if (!result) {
           producedOutput = [
             ...streamBuffer,
@@ -186,6 +332,8 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             { stream: 'stdout', line: '[exit non-zero]' },
           ];
         }
+        // In case a marker was split across chunk boundaries.
+        scanForCaptures(result?.output ?? '');
       } catch (err) {
         producedOutput = [
           ...streamBuffer,
@@ -233,13 +381,17 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       setTab('tests');
       setTestResults(runTests(userCode, data.tests));
     }
-  }, [runMode, userCode, data.expectedOutput, data.tests, data.readOnly, isLastLessonOfChapter]);
+  }, [runMode, userCode, data.expectedOutput, data.tests, data.readOnly, isLastLessonOfChapter, resolveArgv, isDesktop]);
 
   const reset = useCallback(() => {
     setUserCode(data.startingCode);
     setTestResults(null);
     setOutputLines([]);
   }, [data.startingCode]);
+
+  const stopRun = useCallback(() => {
+    if (isAnimating) void window.academy?.stop?.();
+  }, [isAnimating]);
 
   return (
     <div className="flex w-full flex-col lg:h-[calc(100vh-3.5rem)]">
@@ -288,12 +440,19 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             outputLines={outputLines}
             isAnimating={isAnimating}
             onRun={run}
+            onStop={stopRun}
             onReset={reset}
             platforms={data.platforms}
             readOnly={data.readOnly}
             hints={data.hints}
             answer={data.answer}
             outputKey={outputKey}
+            argv={data.argv}
+            argvOverrides={argvOverrides}
+            argvCaptured={argvCaptured}
+            onArgvOverrideValue={setArgvOverrideValue}
+            onArgvOverrideStart={startArgvOverride}
+            onArgvOverrideClear={clearArgvOverride}
           />
         </section>
       </div>
@@ -380,12 +539,19 @@ function Runner({
   outputLines,
   isAnimating,
   onRun,
+  onStop,
   onReset,
   platforms,
   readOnly = false,
   hints,
   answer,
   outputKey,
+  argv,
+  argvOverrides,
+  argvCaptured,
+  onArgvOverrideValue,
+  onArgvOverrideStart,
+  onArgvOverrideClear,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
@@ -400,14 +566,22 @@ function Runner({
   outputLines: OutputLine[];
   isAnimating: boolean;
   onRun: () => void;
+  onStop?: () => void;
   onReset: () => void;
   platforms: LessonData['platforms'];
   readOnly?: boolean;
   hints: string[];
   answer: string;
   outputKey: number;
+  argv?: LessonArgvSlot[];
+  argvOverrides: Record<string, string>;
+  argvCaptured: Record<string, string>;
+  onArgvOverrideValue: (name: string, value: string) => void;
+  onArgvOverrideStart: (name: string) => void;
+  onArgvOverrideClear: (name: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [capturedCopiedKey, setCapturedCopiedKey] = useState<string | null>(null);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -430,6 +604,29 @@ function Runner({
       // No-op: visual feedback just won't fire.
     }
   }, [userCode]);
+
+  const handleCopyCaptured = useCallback(async (slotName: string, value: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCapturedCopiedKey(slotName);
+      setTimeout(() => {
+        setCapturedCopiedKey((current) => (current === slotName ? null : current));
+      }, 1500);
+    } catch {
+      // No-op
+    }
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-canvas-border bg-canvas-muted">
@@ -500,12 +697,21 @@ function Runner({
           </select>
           <button
             type="button"
-            onClick={onRun}
-            disabled={isAnimating || readOnly}
-            className="inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title="Run code (R)"
+            onClick={isAnimating ? onStop : onRun}
+            disabled={readOnly || (isAnimating ? !onStop : false)}
+            className={`inline-flex items-center justify-center rounded p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              isAnimating
+                ? 'text-red-400 hover:bg-red-500/10 hover:text-red-300'
+                : 'text-canvas-muted-foreground hover:bg-canvas-muted hover:text-canvas-foreground'
+            }`}
+            title={isAnimating ? 'Stop run' : 'Run code (R)'}
+            aria-label={isAnimating ? 'Stop run' : 'Run code'}
           >
-            <Play className="size-4 fill-current" />
+            {isAnimating ? (
+              <Square className="size-4 fill-current" />
+            ) : (
+              <Play className="size-4 fill-current" />
+            )}
           </button>
           <button
             type="button"
@@ -520,6 +726,81 @@ function Runner({
           </button>
         </div>
       </div>
+
+      {argv && argv.length > 0 && isDesktop && runMode === 'this-device' && !readOnly ? (
+        <div className="flex flex-col gap-1.5 border-b border-canvas-border bg-canvas/60 px-3 py-2 sm:px-4">
+          {argv.map((slot) => {
+            const source = sourceFromArgvFrom(slot.from);
+            const capturedValue = source ? argvCaptured[source] ?? '' : '';
+            const isOverriding = slot.name in argvOverrides;
+            const displayValue = isOverriding ? argvOverrides[slot.name] : capturedValue;
+            const wasJustCopied = capturedCopiedKey === slot.name;
+            return (
+              <div key={slot.name} className="flex items-center gap-2 text-xs">
+                <label
+                  htmlFor={`argv-${slot.name}`}
+                  className="shrink-0 font-medium text-canvas-muted-foreground"
+                >
+                  {slot.label ?? slot.name}
+                </label>
+                <input
+                  id={`argv-${slot.name}`}
+                  type="text"
+                  value={displayValue}
+                  readOnly={!isOverriding}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onFocus={(e) => {
+                    if (!isOverriding) e.currentTarget.select();
+                  }}
+                  onChange={(e) => onArgvOverrideValue(slot.name, e.target.value)}
+                  placeholder={isOverriding ? '' : argInputPlaceholder(slot, argvCaptured)}
+                  className={
+                    isOverriding
+                      ? 'min-w-0 flex-1 rounded border border-canvas-border bg-canvas px-2 py-1 font-mono text-xs text-canvas-foreground placeholder:text-canvas-muted-foreground/50 focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30'
+                      : 'min-w-0 flex-1 cursor-default select-all rounded border border-canvas-border bg-canvas-muted/50 px-2 py-1 font-mono text-xs text-canvas-foreground focus:border-emerald-500/40 focus:outline-none focus:ring-1 focus:ring-emerald-500/20'
+                  }
+                />
+                {isOverriding ? (
+                  <button
+                    type="button"
+                    onClick={() => onArgvOverrideClear(slot.name)}
+                    className="shrink-0 rounded p-1 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground"
+                    title="Clear override (use captured value)"
+                  >
+                    <X className="size-3" />
+                  </button>
+                ) : (
+                  <>
+                    {capturedValue ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyCaptured(slot.name, capturedValue)}
+                        className={`shrink-0 rounded p-1 transition-colors hover:bg-canvas-muted ${
+                          wasJustCopied
+                            ? 'text-emerald-400'
+                            : 'text-canvas-muted-foreground hover:text-canvas-foreground'
+                        }`}
+                        title="Copy captured key"
+                      >
+                        {wasJustCopied ? <Check className="size-3" /> : <Copy className="size-3" />}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => onArgvOverrideStart(slot.name)}
+                      className="shrink-0 rounded p-1 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground"
+                      title="Use a different key"
+                    >
+                      <Pencil className="size-3" />
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-1 border-b border-canvas-border bg-canvas px-3 py-2 sm:px-4">
         {platforms.map((p) => (

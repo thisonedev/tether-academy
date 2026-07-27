@@ -2,6 +2,10 @@
 title: "Connect a delegated-inference consumer"
 sourceExample: "packages/sdk/examples/delegated-inference/consumer.ts"
 platforms: ['node']
+argv:
+  - name: providerPublicKey
+    from: state:lastProviderPublicKey
+    label: "Provider public key"
 tests:
   - id: delegate-public-key
     description: 'Passes providerPublicKey under a `delegate` block to loadModel'
@@ -32,9 +36,11 @@ expectedOutput:
 
 The previous lesson booted a provider. This one consumes it.
 
-The consumer side is the same `loadModel()` / `completion()` shape as every other lesson. The only new field is `delegate`, which routes the inference to a peer instead of running it locally.
+The runner captures the provider's public key from the previous run's output and passes it to this snippet as `process.argv[2]`. You don't have to copy anything. If you want to connect to a different provider (a peer you don't own, a test instance on another machine), type the key into the **Provider public key** field above the editor. That value takes precedence over the captured one and persists across runs, so you only set it once.
 
-The `loadModel()` call takes the same `modelSrc` and `modelType` shape, with one new field: `delegate` carries the routing fields (`providerPublicKey`, `timeout`, `fallbackToLocal`):
+The consumer side is the same `loadModel()` / `completion()` interface as every other lesson. The only new field is `delegate`, which routes the inference to a peer instead of running it locally.
+
+The `loadModel()` call takes the same `modelSrc` and `modelType` parameters. It also takes `delegate`, which carries the routing fields (`providerPublicKey`, `timeout`, `fallbackToLocal`):
 
 ```ts
 const modelId = await loadModel({

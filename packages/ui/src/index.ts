@@ -7,7 +7,7 @@ export { CurriculumStrip } from './components/curriculum-strip.js';
 export { HelpPanel } from './components/help-panel.js';
 export { LessonCompleteModal } from './components/lesson-complete-modal.js';
 export { LessonWorkspace } from './components/lesson-workspace.js';
-export type { LessonData, LessonTest } from './components/lesson-workspace.js';
+export type { LessonData, LessonTest, LessonArgvSlot } from './components/lesson-workspace.js';
 export { MdxPre } from './components/mdx-pre.js';
 export { SettingsPage } from './components/settings-page.js';
 export { SiteHeader } from './components/site-header.js';

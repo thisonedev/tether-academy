@@ -61,6 +61,8 @@ A seed makes the provider's identity deterministic: the same seed always boots t
 
 A consumer public key passed as the second argument locks the provider down. The firewall is allowlist-only; consumers not on the list are rejected at the network layer. Useful for staging, demos, and any setup where the provider is reachable from the public DHT.
 
+The runner watches the `▸ Provider Public Key: ...` line and captures the value into the state store. The next lesson reads it back as `process.argv[2]`, so you don't have to copy the key. Stop the provider with Ctrl+C when you're done, then head to the next lesson.
+
 > Note: `startQVACProvider()` doesn't return until the provider is listening on the DHT. Once it returns, consumers can connect. The provider process stays alive until you Ctrl+C.
 
 ## Put it to the test

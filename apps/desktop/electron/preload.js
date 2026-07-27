@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('academy', {
   pkg: () => ipcRenderer.sendSync('pkg'),
   run: (payload) => ipcRenderer.invoke('academy:run', payload),
+  stop: () => ipcRenderer.invoke('academy:stop'),
   onRunChunk: (callback) => {
     const handler = (_e, chunk) => callback(chunk);
     ipcRenderer.on('academy:run:chunk', handler);

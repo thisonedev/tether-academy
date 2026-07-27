@@ -70,6 +70,8 @@ export interface AcademyRunChunk {
 
 export interface AcademyAPI {
   run: (payload: AcademyRunPayload) => Promise<AcademyRunResult>;
+  /** Kill the current run. Returns false when nothing was running. */
+  stop?: () => Promise<boolean>;
   onRunChunk?: (callback: (chunk: AcademyRunChunk) => void) => () => void;
   qr: (text: string) => Promise<string>;
   state: AcademyStateAPI;
