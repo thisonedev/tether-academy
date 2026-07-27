@@ -1,18 +1,18 @@
-import { loadModel, transcribe, unloadModel, WHISPER_TINY } from "@qvac/sdk";
+import { spawn, spawnSync } from "node:child_process";
+import { platform } from "node:os";
+import { loadModel, unloadModel, transcribeStream, WHISPER_TINY, VAD_SILERO_5_1_2 } from "@qvac/sdk";
 
-async function audioStream(): AsyncIterable<Float32Array> {
-  yield new Float32Array(16000);
-}
+const MIC_SAMPLE_RATE = 16000;
 
 async function main() {
   const modelId = await loadModel({
     modelSrc: WHISPER_TINY,
-    modelConfig: { language: "en" },
+    modelConfig: {
+      vadModelSrc: VAD_SILERO_5_1_2,
+      audio_format: "f32le",
+      language: "en",
+    },
   });
-
-  // 1: call transcribe() with the audioStream and metadata: true
-
-  // 2: iterate the segments and log text + timestamps
 
   await unloadModel({ modelId });
 }

@@ -1,23 +1,29 @@
 ---
 title: Stream transcription from microphone
-sourceExample: "packages/sdk/examples/transcription/whispercpp-filesystem.ts"
+sourceExample: "packages/sdk/examples/transcription/whispercpp-microphone-record.ts"
 platforms: ['node']
 tests:
-  - id: imports-mic-input
-    description: References an audio stream (mic helper or generator)
-    pattern: "audioStream|microphone|MicInput|getUserMedia"
-  - id: calls-transcribe
-    description: 'Calls transcribe({ modelId, audioStream })'
-    pattern: "transcribe\\s*\\(\\s*\\{[^}]*modelId[^}]*audioStream"
-  - id: iterates-segments
-    description: Iterates over live segments
-    pattern: "for\\s*await|for\\s*\\(\\s*const"
+  - id: pairs-whisper-with-vad
+    description: 'Loads Whisper with a Silero VAD model (required for streaming)'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelSrc\\s*:\\s*WHISPER_TINY[\\s\\S]*?vadModelSrc"
+  - id: opens-duplex-session
+    description: 'Opens a transcribeStream duplex session with metadata: true'
+    pattern: "await\\s+transcribeStream\\s*\\(\\s*\\{[^}]*modelId[^}]*metadata\\s*:\\s*true"
+  - id: starts-mic
+    description: 'Spawns ffmpeg via startMicrophone to capture the OS default mic'
+    pattern: "startMicrophone\\s*\\(\\s*\\{"
+  - id: pipes-audio
+    description: 'Hooks ffmpeg stdout chunks into session.write'
+    pattern: "ffmpeg\\.stdout\\.on\\s*\\(\\s*['\"]data['\"]"
+  - id: iterates-session
+    description: 'Iterates the session, not a Promise, with for-await'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+session"
 hints:
-  - "transcribe accepts an audioStream AsyncIterable<Float32Array> in addition to a file path. Feed it frames from getUserMedia or any PCM source."
-  - "Set metadata: true to get per-segment timestamps. Each segment arrives as soon as Whisper finalizes it, so the transcript updates in real time."
-  - "The bundled examples/audio/mic-input.ts shows the full pattern using the node-record-lpcm16 package."
+  - "transcribeStream({ modelId, metadata: true }) returns a Promise<session>. await it to get the session; the session is the async iterable. session.write(buffer) pushes audio in, for-await pulls TranscribeSegment objects (text, startMs, endMs) out."
+  - "Whisper's streaming path requires a VAD model. Set vadModelSrc: VAD_SILERO_5_1_2 in the loadModel modelConfig; without it, the engine rejects the session with 'VAD model name is required'."
+  - "ffmpeg must be on PATH; gate on it with spawnSync('ffmpeg', ['-version']) at startup. startMicrophone({ sampleRate: 16000, format: 'f32le' }) spawns it; hook ffmpeg.stdout.on('data', (chunk) => { try { session.write(chunk) } catch {} }) to feed frames into the session. The try/catch is for the abort during teardown."
 expectedOutput:
-  - "▸ Listening..."
+  - "▸ Listening... speak and pause to see transcriptions."
   - "[0.00s → 2.30s] The first sentence the user said."
   - "[2.30s → 4.80s] A second sentence comes back from Whisper."
 ---
@@ -26,22 +32,44 @@ Now that we can transcribe files, we're going to stream transcription live.
 
 Whisper doesn't have to wait for the user to finish talking. We feed it a live audio stream and it returns segments as soon as it has enough context to commit to a transcription. Each segment carries timestamps, so the UI can render captions in sync with the audio.
 
-The shape mirrors the file-based `transcribe()` call, but `audioChunk` becomes `audioStream`. It's an `AsyncIterable<Float32Array>` of PCM frames at 16 kHz. You would call it like so:
+The streaming path requires a VAD model. The VAD decides when the speaker has paused long enough to commit a segment, so the engine refuses to open a streaming session without one. Pair `WHISPER_TINY` with `VAD_SILERO_5_1_2` in `loadModel` modelConfig:
 
 ```ts
-const audioStream = micInput(); // AsyncIterable<Float32Array>, 16 kHz mono PCM
+const modelId = await loadModel({
+  modelSrc: WHISPER_TINY,
+  modelConfig: {
+    vadModelSrc: VAD_SILERO_5_1_2,
+    audio_format: "f32le",
+    language: "en",
+  },
+});
+```
 
-const segments = transcribe({
+The streaming API is the duplex `transcribeStream()` call. It returns a session object with two surfaces: `session.write(buffer)` to push audio in, and `for await (const segment of session)` to pull segments out:
+
+```ts
+const session = await transcribeStream({
   modelId,
-  audioStream,
   metadata: true,
 });
 ```
 
-Each segment carries `startMs`, `endMs`, `confidence`. To render captions in lockstep with the speaker, iterate as they arrive. Consider the following loop:
+Audio capture is a child ffmpeg process. The `startMicrophone()` helper spawns the system ffmpeg with the right `-i` args for the current platform (avfoundation on macOS, pulse on Linux, dshow on Windows) and pipes 16 kHz mono f32le PCM to stdout. Each chunk on stdout is a frame we feed into the session:
 
 ```ts
-for await (const segment of segments) {
+const ffmpeg = startMicrophone({ sampleRate: 16000, format: "f32le" });
+
+ffmpeg.stdout.on("data", (chunk: Buffer) => {
+  try { session.write(chunk); } catch {}
+});
+```
+
+A startup check on `ffmpeg -version` makes the failure mode obvious if ffmpeg isn't on `PATH`. The try/catch around `session.write` ignores the abort when the worker is being torn down at shutdown.
+
+The consuming side is a `for await` over the session itself. With `metadata: true`, each iteration yields a `TranscribeSegment` with `text`, `startMs`, `endMs`, `append`, and `id`. The `append` flag tells the UI whether to overwrite the previous caption or extend it. Render captions like so:
+
+```ts
+for await (const segment of session) {
   const start = (segment.startMs / 1000).toFixed(2);
   const end = (segment.endMs / 1000).toFixed(2);
   console.log(`[${start}s → ${end}s] ${segment.text}`);
@@ -50,9 +78,38 @@ for await (const segment of segments) {
 
 Whisper's voice-activity detection commits to a segment when the speaker pauses or the buffer hits its maximum length. The `append` field on each segment tells us whether to overwrite the previous caption or append to it.
 
+A `cleanup()` handler kills the ffmpeg child, ends the session, and unloads the model. Wire it to `SIGINT` and `SIGTERM` so Ctrl+C exits cleanly:
+
+```ts
+async function cleanup() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  ffmpeg.kill();
+  try { session.end(); } catch {}
+  await unloadModel({ modelId }).catch(() => {});
+  process.exit(0);
+}
+
+process.on("SIGINT", () => void cleanup());
+process.on("SIGTERM", () => void cleanup());
+```
+
+The SDK installs its own `SIGINT` / `SIGTERM` handler that aborts in-flight RPC streams on shutdown. The abort rejects any pending `session.write()` with a `WorkerShutdownError`, and the bare-rpc socket emits a `CHANNEL_CLOSED` error. The `process.on("uncaughtException", ...)` filter ignores the shutdown noise and re-throws anything else:
+
+```ts
+process.on("uncaughtException", (err) => {
+  if (err instanceof WorkerShutdownError) return;
+  if (err?.code === "CHANNEL_CLOSED") return;
+  throw err;
+});
+```
+
 > Note: the running buffer has a maximum length. Long pauses or slow speakers may produce fewer segments than you'd expect. Tune the model's `vad_params.max_speech_duration_s` if you need more granularity.
 
 ## Put it to the test
 
-1. Set up a microphone capture. `node-record-lpcm16` is the bundled example, or `getUserMedia` in a browser.
-2. Call `transcribe({ modelId, audioStream, metadata: true })`, iterate the segments with `for await`, and render each segment's text and timestamps as it is finalized.
+1. Open `const session = await transcribeStream({ modelId, metadata: true })`. The `await` is required; iterating a Promise with `for await` is a syntax error.
+2. Gate on `ffmpeg` being on `PATH` at startup. Define the mic helper (`getAudioInputArgs`, `startMicrophone`) above `main`.
+3. Pipe `startMicrophone({ sampleRate: 16000, format: "f32le" }).stdout` into `session.write(chunk)` in a background task. Wrap the write in try/catch.
+4. Iterate the session with `for await (const segment of session)` and log each segment's `[start → end]` text as it is finalized.
+5. Wire `cleanup()` to `SIGINT` and `SIGTERM`, and add the `WorkerShutdownError` / `CHANNEL_CLOSED` filter to `uncaughtException` so the SDK's shutdown abort doesn't dump a stack.
