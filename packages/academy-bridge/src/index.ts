@@ -69,6 +69,51 @@ export interface AcademyDeviceAPI {
   info: () => Promise<AcademyDeviceInfo>;
 }
 
+/** One paired device. discoveryKey is the stable pair id (use it with drop()). */
+export interface AcademyPeerInfo {
+  discoveryKey: string;
+  sessionPublicKey: string | null;
+  role: 'host' | 'guest';
+  pairedAt: number;
+  userData: unknown;
+  autobaseKey: string;
+  inviteId: string | null;
+}
+
+export interface AcademyPeerIdentity {
+  publicKey: string;
+  createdAt: number | null;
+}
+
+export interface AcademyPeerInvite {
+  invite: string;
+  sessionPublicKey: string;
+  discoveryKey: string;
+  autobaseKey: string;
+  userData: unknown;
+}
+
+export interface AcademyPeerAcceptResult {
+  discoveryKey: string;
+  paired: boolean;
+}
+
+export type AcademyPeerEvent =
+  | { event: 'peer:paired'; payload: AcademyPeerInfo }
+  | { event: 'peer:dropped'; payload: { discoveryKey: string } };
+
+export interface AcademyPeerAPI {
+  identity: () => Promise<AcademyPeerIdentity | null>;
+  invite: (opts?: { userData?: unknown }) => Promise<AcademyPeerInvite>;
+  accept: (
+    inviteB64: string,
+    opts?: { userData?: unknown },
+  ) => Promise<AcademyPeerAcceptResult>;
+  list: () => Promise<AcademyPeerInfo[]>;
+  drop: (discoveryKey: string) => Promise<boolean>;
+  onEvent: (callback: (msg: AcademyPeerEvent) => void) => () => void;
+}
+
 export interface AcademyRunChunk {
   stream: "stdout" | "stderr";
   data: string;
@@ -84,4 +129,5 @@ export interface AcademyAPI {
   window?: AcademyWindowAPI;
   models?: AcademyModelsAPI;
   device?: AcademyDeviceAPI;
+  peer?: AcademyPeerAPI;
 }

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('academy', {
     ipcRenderer.on('academy:run:chunk', handler);
     return () => ipcRenderer.removeListener('academy:run:chunk', handler);
   },
+  qr: (text) => ipcRenderer.invoke('academy:qr', text),
   state: {
     get: (key) => ipcRenderer.invoke('academy:state:get', key),
     set: (key, value) => ipcRenderer.invoke('academy:state:set', key, value),
@@ -27,5 +28,17 @@ contextBridge.exposeInMainWorld('academy', {
   },
   device: {
     info: () => ipcRenderer.invoke('academy:device:info'),
+  },
+  peer: {
+    identity: () => ipcRenderer.invoke('academy:peer:identity'),
+    invite: (opts) => ipcRenderer.invoke('academy:peer:invite', opts),
+    accept: (inviteB64, opts) => ipcRenderer.invoke('academy:peer:accept', inviteB64, opts),
+    list: () => ipcRenderer.invoke('academy:peer:list'),
+    drop: (discoveryKey) => ipcRenderer.invoke('academy:peer:drop', discoveryKey),
+    onEvent: (callback) => {
+      const handler = (_e, payload) => callback(payload);
+      ipcRenderer.on('academy:peer:event', handler);
+      return () => ipcRenderer.removeListener('academy:peer:event', handler);
+    },
   },
 });

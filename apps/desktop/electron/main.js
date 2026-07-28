@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const PearRuntime = require('pear-runtime');
 const FramedStream = require('framed-stream');
+const QRCode = require('qrcode');
 const { isMac, isLinux, isWindows } = require('which-runtime');
 const { command, flag } = require('paparam');
 const { createServer } = require('node:http');
@@ -190,6 +191,37 @@ ipcMain.handle('academy:device:info', async () => {
   return getDeviceInfo();
 });
 
+ipcMain.handle('academy:qr', async (_e, text) => {
+  if (typeof text !== 'string' || text.length === 0) {
+    throw new Error('academy:qr: text must be a non-empty string');
+  }
+  return QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 1, width: 360 });
+});
+
+ipcMain.handle('academy:peer:identity', () => {
+  return peer.getIdentity();
+});
+
+ipcMain.handle('academy:peer:invite', async (_e, opts) => {
+  return peer.createInvite(opts ?? {});
+});
+
+ipcMain.handle('academy:peer:accept', async (_e, inviteB64, opts) => {
+  return peer.acceptInvite(inviteB64, opts ?? {});
+});
+
+ipcMain.handle('academy:peer:list', () => {
+  return peer.listPeers();
+});
+
+ipcMain.handle('academy:peer:drop', async (_e, discoveryKey) => {
+  return peer.dropPeer(discoveryKey);
+});
+
+peer.on((event, payload) => {
+  sendToAll('academy:peer:event', { event, payload });
+});
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -371,13 +403,16 @@ if (!lock) {
     const url = args.find((a) => a.startsWith(`${deeplinkProtocol}://`));
     if (url) console.log('deep link:', url);
   });
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    try {
+      const store = await getStateStore();
+      await peer.init({ store });
+    } catch (err) {
+      console.warn('[tether-academy-desktop] peer init failed:', err.message);
+    }
     createWindow().catch((err) => {
       console.error(err);
       app.quit();
-    });
-    peer.init().catch((err) => {
-      console.warn('[tether-academy-desktop] peer init failed:', err.message);
     });
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow().catch(console.error);
