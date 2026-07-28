@@ -119,13 +119,18 @@ ipcMain.handle('academy:run', async (evt, payload) => {
 
   if (payload.peerId) {
     const wrapped = buildLesson({ source: payload.source, cwd: COURSES_DIR });
-    const emitter = peer.exec({
-      peerId: payload.peerId,
-      code: wrapped,
-      mode: 'file',
-      argv: ['--experimental-strip-types', '--no-warnings', ...(Array.isArray(payload.argv) ? payload.argv : [])],
-      cwd: COURSES_DIR,
-    });
+    let emitter;
+    try {
+      emitter = peer.exec({
+        peerId: payload.peerId,
+        code: wrapped,
+        mode: 'file',
+        argv: ['--experimental-strip-types', '--no-warnings', ...(Array.isArray(payload.argv) ? payload.argv : [])],
+        cwd: COURSES_DIR,
+      });
+    } catch (err) {
+      return { ok: false, output: `[peer-exec] ${err.message}` };
+    }
     const collected = { stdout: '', stderr: '' };
     emitter.on('stdout', (data) => {
       collected.stdout += data;
@@ -147,6 +152,9 @@ ipcMain.handle('academy:run', async (evt, payload) => {
         emitter.on('error', (err) => {
           resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] ${err.message}` });
         });
+        setTimeout(() => {
+          resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] no response from peer after 60s` });
+        }, 60_000);
       }),
       abort: () => peer.cancelExec(payload.peerId),
     };
@@ -272,6 +280,10 @@ ipcMain.handle('academy:peer:pending', () => {
 
 ipcMain.handle('academy:peer:audit', (_e, opts) => {
   return peer.getAudit(opts ?? {});
+});
+
+ipcMain.handle('academy:peer:clear-audit', () => {
+  return peer.clearAudit();
 });
 
 ipcMain.handle('academy:peer:lockdown', async () => {

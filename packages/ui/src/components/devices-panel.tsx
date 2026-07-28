@@ -17,8 +17,6 @@ declare global {
   }
 }
 
-const AUDIT_DISPLAY_LIMIT = 50;
-
 function shortHex(hex: string, head = 8, tail = 6): string {
   if (hex.length <= head + tail + 1) return hex;
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
@@ -123,6 +121,22 @@ function auditLabel(entry: AcademyPeerAuditEntry): string {
       return 'Pair dropped';
     case 'peer:lockdown':
       return `Lockdown: ${entry.dropped ?? 0} dropped`;
+    case 'peer:exec:started':
+      return 'Exec started (on this device)';
+    case 'peer:exec:finished':
+      return `Exec finished (code ${entry.code ?? '?'}${entry.signal ? `, ${entry.signal}` : ''})`;
+    case 'peer:exec:error':
+      return `Exec error: ${entry.message ?? 'unknown'}`;
+    case 'peer:exec:remote-started':
+      return 'Exec started (on paired device)';
+    case 'peer:exec:remote-finished':
+      return `Exec finished on paired device (code ${entry.code ?? '?'}${entry.signal ? `, ${entry.signal}` : ''})`;
+    case 'peer:exec:remote-error':
+      return `Exec error on paired device: ${entry.message ?? 'unknown'}`;
+    case 'peer:pair:sent':
+      return 'Pair request sent, waiting for approval';
+    case 'peer:pair:error':
+      return `Pair failed: ${entry.message ?? 'unknown'}`;
     default:
       return entry.type;
   }
@@ -149,12 +163,9 @@ function PairingCodeDisplay({ code, label }: { code: string; label: string }) {
 
 export function DevicesPanel() {
   const [identity, setIdentity] = useState<AcademyPeerIdentity | null | 'loading'>('loading');
-  const [peers, setPeers] = useState<AcademyPeerInfo[]>([]);
-  const [pending, setPending] = useState<AcademyPeerPending[]>([]);
-  const [audit, setAudit] = useState<AcademyPeerAuditEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [deeplinkToast, setDeeplinkToast] = useState<{ invite: string; code: string | null } | null>(null);
-  const [now, setNow] = useState<number>(() => Date.now());
+  const [pairedToast, setPairedToast] = useState<{ name: string; role: 'host' | 'guest' } | null>(null);
 
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteModal, setInviteModal] = useState<{
@@ -165,22 +176,14 @@ export function DevicesPanel() {
   const [acceptBusy, setAcceptBusy] = useState(false);
   const [acceptText, setAcceptText] = useState('');
   const [acceptCode, setAcceptCode] = useState('');
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [lockdownBusy, setLockdownBusy] = useState(false);
   const [lockdownConfirm, setLockdownConfirm] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!window.academy?.peer) return;
-    const [id, p, pn, au] = await Promise.all([
-      window.academy.peer.identity().catch(() => null),
-      window.academy.peer.list().catch(() => []),
-      window.academy.peer.pending().catch(() => []),
-      window.academy.peer.audit({ limit: AUDIT_DISPLAY_LIMIT }).catch(() => []),
-    ]);
+    const id = await window.academy.peer.identity().catch(() => null);
     setIdentity(id);
-    setPeers(p);
-    setPending(pn);
-    setAudit(au.slice().reverse());
   }, []);
 
   useEffect(() => {
@@ -206,35 +209,21 @@ export function DevicesPanel() {
         if (payload.pairingCode) setAcceptCode(payload.pairingCode);
         setTimeout(() => setDeeplinkToast(null), 8000);
       }
-      if (msg.event === 'peer:audit') {
-        const entry = msg.payload as AcademyPeerAuditEntry;
-        setAudit((prev) => [entry, ...prev].slice(0, AUDIT_DISPLAY_LIMIT));
-        if (
-          entry.type === 'peer:paired' ||
-          entry.type === 'peer:dropped' ||
-          entry.type === 'peer:lockdown'
-        ) {
-          window.academy?.peer?.list().then(setPeers).catch(() => {});
-        }
-        if (
-          entry.type === 'peer:pending' ||
-          entry.type === 'peer:rejected' ||
-          entry.type === 'peer:approved'
-        ) {
-          window.academy?.peer?.pending().then(setPending).catch(() => {});
-        }
+      if (msg.event === 'peer:paired') {
+        setInviteModal(null);
+        const peerInfo = msg.payload as { role?: 'host' | 'guest'; userData?: unknown };
+        const name = pairUserDataLabel({ userData: peerInfo?.userData });
+        setPairedToast({ name, role: peerInfo?.role ?? 'guest' });
+        setTimeout(() => setPairedToast(null), 6000);
       }
-      if (msg.event === 'peer:paired' || msg.event === 'peer:dropped') {
-        window.academy?.peer?.list().then(setPeers).catch(() => {});
-      }
-      if (msg.event === 'peer:pending' || msg.event === 'peer:rejected') {
-        window.academy?.peer?.pending().then(setPending).catch(() => {});
+      if (msg.event === 'peer:dropped') {
+        setInviteModal(null);
+        setAcceptText('');
+        setAcceptCode('');
       }
     });
-    const tick = setInterval(() => setNow(Date.now()), 30_000);
     return () => {
       off();
-      clearInterval(tick);
     };
   }, [refresh]);
 
@@ -270,7 +259,7 @@ export function DevicesPanel() {
         return;
       }
       await window.academy.peer.accept(parsed.invite, {
-        userData: { name: 'controller', source: 'settings-panel' },
+        userData: { source: 'settings-panel' },
         code: acceptCode.trim() || parsed.code || undefined,
         hostIdentity: parsed.hostIdentity || undefined,
       });
@@ -283,52 +272,16 @@ export function DevicesPanel() {
     }
   }, [acceptText, acceptCode]);
 
-  const onApprove = useCallback(async (requestId: string) => {
-    if (!window.academy?.peer) return;
-    setActionBusy(requestId);
-    try {
-      await window.academy.peer.approve(requestId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Approve failed');
-    } finally {
-      setActionBusy(null);
-    }
-  }, []);
-
-  const onReject = useCallback(async (requestId: string) => {
-    if (!window.academy?.peer) return;
-    setActionBusy(requestId);
-    try {
-      await window.academy.peer.reject(requestId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reject failed');
-    } finally {
-      setActionBusy(null);
-    }
-  }, []);
-
-  const onDrop = useCallback(async (discoveryKey: string) => {
-    if (!window.academy?.peer) return;
-    setActionBusy(discoveryKey);
-    try {
-      await window.academy.peer.drop(discoveryKey);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Drop failed');
-    } finally {
-      setActionBusy(null);
-    }
-  }, []);
-
   const onLockdown = useCallback(async () => {
     if (!window.academy?.peer) return;
     setLockdownConfirm(false);
-    setActionBusy('lockdown');
+    setLockdownBusy(true);
     try {
       await window.academy.peer.lockdown();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lockdown failed');
     } finally {
-      setActionBusy(null);
+      setLockdownBusy(false);
     }
   }, []);
 
@@ -357,6 +310,13 @@ export function DevicesPanel() {
       {deeplinkToast ? (
         <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-400">
           Pair link opened. Tell the host the code and wait for their approval.
+        </div>
+      ) : null}
+
+      {pairedToast ? (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-400">
+          <span className="font-semibold">Paired.</span> Connected with {pairedToast.name}
+          {pairedToast.role === 'guest' ? ' (this device is the controller)' : ' (this device is running lessons for the controller)'}.
         </div>
       ) : null}
 
@@ -467,164 +427,15 @@ export function DevicesPanel() {
               className="inline-flex items-center justify-center gap-1.5 rounded-md border border-canvas-border bg-canvas-muted px-3 py-2 text-sm font-semibold text-canvas-foreground transition-colors hover:border-emerald-500/40 disabled:opacity-50"
             >
               {acceptBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Wifi className="size-3.5" />}
-              Pair
+              {acceptBusy ? 'Pairing…' : 'Pair'}
             </button>
           </div>
           <p className="mt-2 text-[11px] text-canvas-muted-foreground/80">
-            Code is required. Get it from the host via voice call or another channel. The link alone is not enough.
+            {acceptBusy
+              ? 'Waiting for the other device to approve. Open Settings > Devices on the other side, then click Approve.'
+              : 'Code is required. Get it from the host via voice call or another channel. The link alone is not enough.'}
           </p>
         </div>
-      </div>
-
-      <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
-        <div className="flex items-baseline justify-between">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-            Pending requests
-          </p>
-          <span className="text-xs text-canvas-muted-foreground">{pending.length}</span>
-        </div>
-        {pending.length === 0 ? (
-          <p className="mt-2 text-sm text-canvas-muted-foreground">No pending requests.</p>
-        ) : (
-          <>
-          <ul className="mt-3 max-h-[24rem] divide-y divide-canvas-border overflow-y-auto overflow-x-hidden rounded-lg border border-canvas-border bg-canvas-muted">
-            {pending.map((p) => {
-              const codeMatches =
-                p.enteredPairingCode &&
-                p.enteredPairingCode.toLowerCase().split('-').join('-') ===
-                  p.expectedPairingCode.toLowerCase().split('-').join('-');
-              return (
-                <li
-                  key={p.requestId}
-                  className="flex flex-col gap-3 px-4 py-3 sm:px-5"
-                >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-canvas-foreground">
-                        {pairUserDataLabel(p)}
-                      </p>
-                      <p
-                        className="mt-0.5 truncate font-mono text-[11px] text-canvas-muted-foreground"
-                        title={p.discoveryKey}
-                      >
-                        {shortHex(p.discoveryKey, 10, 6)} · {formatRelativeTime(p.receivedAt, now)}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onReject(p.requestId)}
-                        disabled={actionBusy === p.requestId}
-                        className="rounded border border-canvas-border bg-canvas px-2.5 py-1 text-xs text-canvas-muted-foreground transition-colors hover:border-red-500/40 hover:text-red-400 disabled:opacity-50"
-                      >
-                        {actionBusy === p.requestId ? (
-                          <Loader2 className="size-3 animate-spin" />
-                        ) : (
-                          'Reject'
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onApprove(p.requestId)}
-                        disabled={actionBusy === p.requestId || !codeMatches}
-                        className="inline-flex items-center gap-1 rounded bg-emerald-500 px-2.5 py-1 text-xs font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
-                      >
-                        {actionBusy === p.requestId ? (
-                          <Loader2 className="size-3 animate-spin" />
-                        ) : (
-                          'Approve'
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-                        You told them
-                      </p>
-                      <p className="mt-0.5 font-mono text-xs text-canvas-foreground">
-                        {p.expectedPairingCode}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-                        They entered
-                      </p>
-                      <p
-                        className={
-                          codeMatches
-                            ? 'mt-0.5 inline-flex items-center gap-1 font-mono text-xs text-emerald-400'
-                            : 'mt-0.5 inline-flex items-center gap-1 font-mono text-xs text-red-400'
-                        }
-                      >
-                        {codeMatches ? (
-                          <ShieldCheck className="size-3" />
-                        ) : (
-                          <ShieldAlert className="size-3" />
-                        )}
-                        {p.enteredPairingCode ?? 'no code'}
-                      </p>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          {pending.length > 4 ? (
-            <p className="mt-2 text-[11px] text-canvas-muted-foreground/70">
-              {pending.length} pending · scroll to see the rest
-            </p>
-          ) : null}
-          </>
-        )}
-      </div>
-
-      <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
-        <div className="flex items-baseline justify-between">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-            Paired devices
-          </p>
-          <span className="text-xs text-canvas-muted-foreground">{peers.length}</span>
-        </div>
-        {peers.length === 0 ? (
-          <p className="mt-2 text-sm text-canvas-muted-foreground">
-            No devices paired yet. Create or paste an invite to start.
-          </p>
-        ) : (
-          <ul className="mt-3 divide-y divide-canvas-border overflow-hidden rounded-lg border border-canvas-border bg-canvas-muted">
-            {peers.map((p) => (
-              <li
-                key={p.discoveryKey}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-canvas-foreground">
-                    {pairUserDataLabel(p)}
-                    <span className="ml-2 text-xs text-canvas-muted-foreground">({p.role})</span>
-                  </p>
-                  <p
-                    className="mt-0.5 truncate font-mono text-[11px] text-canvas-muted-foreground"
-                    title={p.discoveryKey}
-                  >
-                    {shortHex(p.discoveryKey, 10, 6)} · paired {formatRelativeTime(p.pairedAt, now)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onDrop(p.discoveryKey)}
-                  disabled={actionBusy === p.discoveryKey}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-canvas-border bg-canvas px-2.5 py-1 text-xs text-canvas-muted-foreground transition-colors hover:border-red-500/40 hover:text-red-400 disabled:opacity-50"
-                >
-                  {actionBusy === p.discoveryKey ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    'Drop'
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
       <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
@@ -650,10 +461,10 @@ export function DevicesPanel() {
                 <button
                   type="button"
                   onClick={onLockdown}
-                  disabled={actionBusy === 'lockdown'}
+                  disabled={lockdownBusy}
                   className="inline-flex items-center gap-1 rounded bg-red-500 px-2.5 py-1 text-xs font-semibold text-canvas transition-colors hover:bg-red-400 disabled:opacity-50"
                 >
-                  {actionBusy === 'lockdown' ? (
+                  {lockdownBusy ? (
                     <Loader2 className="size-3 animate-spin" />
                   ) : (
                     <ShieldAlert className="size-3" />
@@ -676,26 +487,6 @@ export function DevicesPanel() {
             </button>
           )}
         </div>
-      </div>
-
-      <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-          Activity
-        </p>
-        {audit.length === 0 ? (
-          <p className="mt-2 text-sm text-canvas-muted-foreground">No activity yet.</p>
-        ) : (
-          <ul className="mt-3 h-48 space-y-1 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted p-3 font-mono text-[11px] text-canvas-muted-foreground">
-            {audit.map((entry, idx) => (
-              <li key={`${entry.timestamp}-${idx}`} className="flex gap-2">
-                <span className="shrink-0 text-canvas-muted-foreground/60">
-                  {new Date(entry.timestamp).toLocaleTimeString()}
-                </span>
-                <span className="text-canvas-foreground">{auditLabel(entry)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
       {inviteModal ? (
@@ -800,6 +591,303 @@ function InviteModal({
           {url}
         </p>
       </div>
+    </div>
+  );
+}
+
+const ACTIVITY_LIMIT = 100;
+
+export function ActivitySection() {
+  const [audit, setAudit] = useState<AcademyPeerAuditEntry[]>([]);
+
+  useEffect(() => {
+    if (!window.academy?.peer) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const au = (await window.academy?.peer?.audit({ limit: ACTIVITY_LIMIT }).catch(() => [])) ?? [];
+      if (!cancelled) setAudit(au.slice().reverse());
+    };
+    refresh();
+    const off = window.academy.peer.onEvent((msg) => {
+      if (msg.event === 'peer:audit') {
+        const entry = msg.payload as AcademyPeerAuditEntry;
+        setAudit((prev) => [entry, ...prev].slice(0, ACTIVITY_LIMIT));
+      }
+      if (msg.event === 'peer:audit-cleared') {
+        setAudit([]);
+      }
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
+
+  return (
+    <div className="flex flex-col rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+          Activity
+        </p>
+        {audit.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => window.academy?.peer?.clearAudit?.()}
+            className="text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      {audit.length === 0 ? (
+        <p className="mt-3 text-sm text-canvas-muted-foreground">No activity yet.</p>
+      ) : (
+        <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted p-3 font-mono text-[11px] text-canvas-muted-foreground">
+          {audit.map((entry, idx) => (
+            <li key={`${entry.timestamp}-${idx}`} className="flex gap-2">
+              <span className="shrink-0 text-canvas-muted-foreground/60">
+                {new Date(entry.timestamp).toLocaleTimeString()}
+              </span>
+              <span className="text-canvas-foreground">{auditLabel(entry)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function PendingRequestsSection() {
+  const [pending, setPending] = useState<AcademyPeerPending[]>([]);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  const refresh = useCallback(async () => {
+    const pn = (await window.academy?.peer?.pending?.().catch(() => [])) ?? [];
+    if (Array.isArray(pn)) setPending(pn);
+  }, []);
+
+  useEffect(() => {
+    if (!window.academy?.peer) return;
+    let cancelled = false;
+    refresh();
+    const off = window.academy.peer.onEvent(() => {
+      if (cancelled) return;
+      refresh();
+    });
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    return () => {
+      cancelled = true;
+      off();
+      clearInterval(tick);
+    };
+  }, [refresh]);
+
+  const onApprove = useCallback(
+    async (requestId: string) => {
+      if (!window.academy?.peer) return;
+      setActionBusy(requestId);
+      try {
+        const ok = await window.academy.peer.approve(requestId);
+        if (ok) {
+          setPending((prev) => prev.filter((p) => p.requestId !== requestId));
+        } else {
+          await refresh();
+        }
+      } catch {
+        // approval errors are surfaced via audit; nothing to do here
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const onReject = useCallback(async (requestId: string) => {
+    if (!window.academy?.peer) return;
+    setActionBusy(requestId);
+    try {
+      await window.academy.peer.reject(requestId);
+    } catch {
+      // surface via audit
+    } finally {
+      setActionBusy(null);
+    }
+  }, []);
+
+  return (
+    <div className="flex flex-col rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
+      <div className="flex items-baseline justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+          Pending requests
+        </p>
+        <span className="text-xs text-canvas-muted-foreground">{pending.length}</span>
+      </div>
+      {pending.length === 0 ? (
+        <p className="mt-3 text-sm text-canvas-muted-foreground">No pending requests.</p>
+      ) : (
+        <ul className="mt-3 max-h-40 divide-y divide-canvas-border overflow-y-auto overflow-x-hidden rounded-lg border border-canvas-border bg-canvas-muted">
+          {pending.map((p) => {
+            const codeMatches =
+              p.enteredPairingCode &&
+              p.enteredPairingCode.toLowerCase().split('-').join('-') ===
+                p.expectedPairingCode.toLowerCase().split('-').join('-');
+            return (
+              <li key={p.requestId} className="flex flex-col gap-2 px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-canvas-foreground">
+                      {pairUserDataLabel(p)}
+                    </p>
+                    <p
+                      className="mt-0.5 truncate font-mono text-[11px] text-canvas-muted-foreground"
+                      title={p.discoveryKey}
+                    >
+                      {shortHex(p.discoveryKey, 10, 6)} · {formatRelativeTime(p.receivedAt, now)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onReject(p.requestId)}
+                      disabled={actionBusy === p.requestId}
+                      className="rounded border border-canvas-border bg-canvas px-2 py-1 text-[11px] text-canvas-muted-foreground transition-colors hover:border-red-500/40 hover:text-red-400 disabled:opacity-50"
+                    >
+                      {actionBusy === p.requestId ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        'Reject'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onApprove(p.requestId)}
+                      disabled={actionBusy === p.requestId || !codeMatches}
+                      className="inline-flex items-center gap-1 rounded bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
+                    >
+                      {actionBusy === p.requestId ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        'Approve'
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-[10px] text-canvas-muted-foreground">
+                  <span className="font-mono">{p.expectedPairingCode}</span>
+                  <span
+                    className={
+                      codeMatches
+                        ? 'inline-flex items-center gap-1 font-mono text-emerald-400'
+                        : 'inline-flex items-center gap-1 font-mono text-red-400'
+                    }
+                  >
+                    {codeMatches ? (
+                      <ShieldCheck className="size-3" />
+                    ) : (
+                      <ShieldAlert className="size-3" />
+                    )}
+                    {p.enteredPairingCode ?? 'no code'}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function PairedDevicesSection() {
+  const [peers, setPeers] = useState<AcademyPeerInfo[]>([]);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  const refresh = useCallback(async () => {
+    const p = (await window.academy?.peer?.list?.().catch(() => [])) ?? [];
+    if (Array.isArray(p)) setPeers(p);
+  }, []);
+
+  useEffect(() => {
+    if (!window.academy?.peer) return;
+    let cancelled = false;
+    refresh();
+    const off = window.academy.peer.onEvent(() => {
+      if (cancelled) return;
+      refresh();
+    });
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    return () => {
+      cancelled = true;
+      off();
+      clearInterval(tick);
+    };
+  }, [refresh]);
+
+  const onDrop = useCallback(
+    async (discoveryKey: string) => {
+      if (!window.academy?.peer) return;
+      setActionBusy(discoveryKey);
+      try {
+        await window.academy.peer.drop(discoveryKey);
+        await refresh();
+      } catch {
+        // surfaced via audit
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  return (
+    <div className="flex flex-col rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
+      <div className="flex items-baseline justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+          Paired devices
+        </p>
+        <span className="text-xs text-canvas-muted-foreground">{peers.length}</span>
+      </div>
+      {peers.length === 0 ? (
+        <p className="mt-3 text-sm text-canvas-muted-foreground">
+          No devices paired yet. Create or paste an invite to start.
+        </p>
+      ) : (
+        <ul className="mt-3 max-h-40 divide-y divide-canvas-border overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted">
+          {peers.map((p) => (
+            <li
+              key={p.discoveryKey}
+              className="flex items-center justify-between gap-2 px-4 py-3"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-canvas-foreground">
+                  {pairUserDataLabel(p)}
+                  <span className="ml-2 text-xs text-canvas-muted-foreground">({p.role})</span>
+                </p>
+                <p
+                  className="mt-0.5 truncate font-mono text-[11px] text-canvas-muted-foreground"
+                  title={p.discoveryKey}
+                >
+                  {shortHex(p.discoveryKey, 10, 6)} · paired {formatRelativeTime(p.pairedAt, now)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onDrop(p.discoveryKey)}
+                disabled={actionBusy === p.discoveryKey}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-canvas-border bg-canvas px-2 py-1 text-[11px] text-canvas-muted-foreground transition-colors hover:border-red-500/40 hover:text-red-400 disabled:opacity-50"
+              >
+                {actionBusy === p.discoveryKey ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  'Drop'
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('academy', {
     approve: (requestId) => ipcRenderer.invoke('academy:peer:approve', requestId),
     reject: (requestId) => ipcRenderer.invoke('academy:peer:reject', requestId),
     audit: (opts) => ipcRenderer.invoke('academy:peer:audit', opts),
+    clearAudit: () => ipcRenderer.invoke('academy:peer:clear-audit'),
     lockdown: () => ipcRenderer.invoke('academy:peer:lockdown'),
     drop: (discoveryKey) => ipcRenderer.invoke('academy:peer:drop', discoveryKey),
     onEvent: (callback) => {

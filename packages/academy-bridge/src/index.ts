@@ -105,7 +105,15 @@ export interface AcademyPeerAuditEntry {
     | 'peer:approved'
     | 'peer:rejected'
     | 'peer:dropped'
-    | 'peer:lockdown';
+    | 'peer:lockdown'
+    | 'peer:pair:sent'
+    | 'peer:pair:error'
+    | 'peer:exec:started'
+    | 'peer:exec:finished'
+    | 'peer:exec:error'
+    | 'peer:exec:remote-started'
+    | 'peer:exec:remote-finished'
+    | 'peer:exec:remote-error';
   timestamp: number;
   discoveryKey?: string;
   requestId?: string;
@@ -113,6 +121,9 @@ export interface AcademyPeerAuditEntry {
   dropped?: number;
   remoteUserData?: unknown;
   reason?: string;
+  code?: number | null;
+  signal?: string | null;
+  message?: string;
   expected?: string;
   entered?: string;
   remoteBuildId?: string;
@@ -144,6 +155,7 @@ export type AcademyPeerEvent =
   | { event: 'peer:dropped'; payload: { discoveryKey: string } }
   | { event: 'peer:rejected'; payload: { requestId: string; discoveryKey: string } }
   | { event: 'peer:audit'; payload: AcademyPeerAuditEntry }
+  | { event: 'peer:audit-cleared'; payload: { at: number } }
   | { event: 'peer:deeplink'; payload: { invite: string; pairingCode: string; url: string } };
 
 export interface AcademyPeerAPI {
@@ -158,6 +170,7 @@ export interface AcademyPeerAPI {
   approve: (requestId: string) => Promise<boolean>;
   reject: (requestId: string) => Promise<boolean>;
   audit: (opts?: { since?: number; limit?: number }) => Promise<AcademyPeerAuditEntry[]>;
+  clearAudit: () => Promise<boolean>;
   lockdown: () => Promise<number>;
   drop: (discoveryKey: string) => Promise<boolean>;
   onEvent: (callback: (msg: AcademyPeerEvent) => void) => () => void;

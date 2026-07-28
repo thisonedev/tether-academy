@@ -9,7 +9,7 @@ import { useUserHydrated, useUserStore } from '@academy/core';
 import { Box, Cpu, Database, HardDrive, Loader2, MemoryStick, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { DevicesPanel } from './devices-panel.js';
+import { ActivitySection, DevicesPanel, PairedDevicesSection, PendingRequestsSection } from './devices-panel.js';
 
 declare global {
   interface Window {
@@ -44,6 +44,13 @@ const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
   set: 'Companion set',
 };
 
+const SETTINGS_TABS = [
+  { id: 'models', label: 'Models' },
+  { id: 'paired', label: 'Paired devices' },
+  { id: 'device', label: 'My device' },
+] as const;
+type SettingsTabId = (typeof SETTINGS_TABS)[number]['id'];
+
 interface RemoveState {
   // The model id whose row is showing the inline confirm, or 'all' for the
   // "remove all" button, or null when no confirm is open.
@@ -65,6 +72,7 @@ export function SettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [remove, setRemove] = useState<RemoveState>({ pending: null, busy: false, error: null });
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
+  const [activeTab, setActiveTab] = useState<SettingsTabId>('models');
 
   // Settings is desktop-only: model management and device info both depend on
   // the `window.academy` bridge. On web, bounce back to the home page so a
@@ -209,9 +217,9 @@ export function SettingsPage() {
           Your workspace
         </h1>
         <p className="max-w-2xl text-sm text-canvas-muted-foreground sm:text-base">
-          Manage the models downloaded for the lessons on this device, and see the hardware
-          QVAC runs on. Share the device details when reporting a lesson that misbehaves on your
-          hardware.
+          Manage the models downloaded for the lessons, pair with another device, and see
+          what hardware QVAC runs on. Share the device details when reporting a lesson that
+          misbehaves on your hardware.
         </p>
       </header>
 
@@ -221,91 +229,155 @@ export function SettingsPage() {
         </div>
       ) : null}
 
-      <section className="mb-10 rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-canvas-foreground sm:text-xl">
-              Downloaded models
-            </h2>
-            <p className="mt-1 text-sm text-canvas-muted-foreground">
-              {models === null
-                ? 'Scanning…'
-                : models.length === 0
-                  ? 'Nothing downloaded yet. Run a lesson to pull a model.'
-                  : `${models.length} ${models.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
-            </p>
-          </div>
-          {models && models.length > 0 ? (
-            <RemoveAllButton
-              state={remove}
-              onConfirm={onRemoveAll}
-              onCancel={() => setRemove({ pending: null, busy: false, error: null })}
-            />
-          ) : null}
-        </div>
+      <div
+        role="tablist"
+        aria-label="Settings sections"
+        className="mb-6 flex flex-wrap gap-1 border-b border-canvas-border"
+      >
+        {SETTINGS_TABS.map((t) => {
+          const isActive = activeTab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${t.id}`}
+              aria-selected={isActive}
+              aria-controls={`settings-panel-${t.id}`}
+              onClick={() => setActiveTab(t.id)}
+              className={`relative -mb-px px-4 py-2.5 text-sm font-medium transition-colors ${
+                isActive
+                  ? 'text-emerald-400'
+                  : 'text-canvas-muted-foreground hover:text-canvas-foreground'
+              }`}
+            >
+              {t.label}
+              {isActive ? (
+                <span className="absolute inset-x-3 bottom-0 h-0.5 bg-emerald-400" />
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
 
-        {!isDesktop ? (
-          <p className="rounded-md border border-canvas-border bg-canvas p-4 text-sm text-canvas-muted-foreground">
-            Open the desktop app to see and manage downloaded models.
-          </p>
-        ) : models === null ? (
-          <p className="text-sm text-canvas-muted-foreground">Loading…</p>
-        ) : models.length === 0 ? (
-          <p className="rounded-md border border-canvas-border bg-canvas p-4 text-sm text-canvas-muted-foreground">
-            No models yet. Pick a lesson and hit run; QVAC downloads what it needs into your
-            home directory.
-          </p>
-        ) : (
-          <ul className="max-h-[28rem] divide-y divide-canvas-border overflow-y-auto overflow-x-hidden rounded-lg border border-canvas-border bg-canvas">
-            {models.map((m) => (
-              <ModelRow
-                key={m.id}
-                model={m}
+      {activeTab === 'models' ? (
+        <section
+          role="tabpanel"
+          id="settings-panel-models"
+          aria-labelledby="settings-tab-models"
+          className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6"
+        >
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-canvas-foreground sm:text-xl">
+                Downloaded models
+              </h2>
+              <p className="mt-1 text-sm text-canvas-muted-foreground">
+                {models === null
+                  ? 'Scanning…'
+                  : models.length === 0
+                    ? 'Nothing downloaded yet. Run a lesson to pull a model.'
+                    : `${models.length} ${models.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
+              </p>
+            </div>
+            {models && models.length > 0 ? (
+              <RemoveAllButton
                 state={remove}
-                onConfirm={() => onRemoveOne(m.id)}
+                onConfirm={onRemoveAll}
                 onCancel={() => setRemove({ pending: null, busy: false, error: null })}
               />
-            ))}
-          </ul>
-        )}
+            ) : null}
+          </div>
 
-        {models && models.length > 0 ? (
-          <p className="mt-2 text-[11px] text-canvas-muted-foreground/70">
-            {models.length} {models.length === 1 ? 'model' : 'models'} downloaded
-            {models.length > 6 ? ' · scroll to see the rest' : ''}
+          {!isDesktop ? (
+            <p className="rounded-md border border-canvas-border bg-canvas p-4 text-sm text-canvas-muted-foreground">
+              Open the desktop app to see and manage downloaded models.
+            </p>
+          ) : models === null ? (
+            <p className="text-sm text-canvas-muted-foreground">Loading…</p>
+          ) : models.length === 0 ? (
+            <p className="rounded-md border border-canvas-border bg-canvas p-4 text-sm text-canvas-muted-foreground">
+              No models yet. Pick a lesson and hit run; QVAC downloads what it needs into your
+              home directory.
+            </p>
+          ) : (
+            <ul className="max-h-[28rem] divide-y divide-canvas-border overflow-y-auto overflow-x-hidden rounded-lg border border-canvas-border bg-canvas">
+              {models.map((m) => (
+                <ModelRow
+                  key={m.id}
+                  model={m}
+                  state={remove}
+                  onConfirm={() => onRemoveOne(m.id)}
+                  onCancel={() => setRemove({ pending: null, busy: false, error: null })}
+                />
+              ))}
+            </ul>
+          )}
+
+          {models && models.length > 0 ? (
+            <p className="mt-2 text-[11px] text-canvas-muted-foreground/70">
+              {models.length} {models.length === 1 ? 'model' : 'models'} downloaded
+              {models.length > 6 ? ' · scroll to see the rest' : ''}
+            </p>
+          ) : null}
+
+          {remove.error ? (
+            <p role="alert" className="mt-3 text-xs text-red-400">
+              {remove.error}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {activeTab === 'paired' ? (
+        <section
+          role="tabpanel"
+          id="settings-panel-paired"
+          aria-labelledby="settings-tab-paired"
+        >
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <div className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">
+              <h2 className="mb-1 text-lg font-semibold text-canvas-foreground sm:text-xl">
+                Paired devices
+              </h2>
+              <p className="mb-4 text-sm text-canvas-muted-foreground">
+                Pair this desktop with another install to run lessons across machines. All
+                pairing happens peer-to-peer, no server in the path.
+              </p>
+              <DevicesPanel />
+            </div>
+            <div className="flex flex-col gap-5">
+              <ActivitySection />
+              <PendingRequestsSection />
+              <PairedDevicesSection />
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === 'device' ? (
+        <section
+          role="tabpanel"
+          id="settings-panel-device"
+          aria-labelledby="settings-tab-device"
+          className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6"
+        >
+          <h2 className="mb-1 text-lg font-semibold text-canvas-foreground sm:text-xl">
+            My device
+          </h2>
+          <p className="mb-4 text-sm text-canvas-muted-foreground">
+            Hardware QVAC sees on this machine. Different devices run the same lesson at very
+            different speeds.
           </p>
-        ) : null}
-
-        {remove.error ? (
-          <p role="alert" className="mt-3 text-xs text-red-400">
-            {remove.error}
-          </p>
-        ) : null}
-      </section>
-
-      <section className="mb-10 rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">
-        <h2 className="mb-1 text-lg font-semibold text-canvas-foreground sm:text-xl">Paired devices</h2>
-        <p className="mb-4 text-sm text-canvas-muted-foreground">
-          Pair this desktop with another install to run lessons across machines. All pairing
-          happens peer-to-peer, no server in the path.
-        </p>
-        <DevicesPanel />
-      </section>
-
-      <section className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">
-        <h2 className="mb-1 text-lg font-semibold text-canvas-foreground sm:text-xl">Device</h2>
-        <p className="mb-4 text-sm text-canvas-muted-foreground">
-          Hardware QVAC sees on this machine. Different devices run the same lesson at very
-          different speeds.
-        </p>
-        {device === null ? (
-          <p className="text-sm text-canvas-muted-foreground">
-            {isDesktop ? 'Loading…' : 'Open the desktop app to see device details.'}
-          </p>
-        ) : (
-          <DeviceTable info={device} />
-        )}
-      </section>
+          {device === null ? (
+            <p className="text-sm text-canvas-muted-foreground">
+              {isDesktop ? 'Loading…' : 'Open the desktop app to see device details.'}
+            </p>
+          ) : (
+            <DeviceTable info={device} />
+          )}
+        </section>
+      ) : null}
     </main>
   );
 }

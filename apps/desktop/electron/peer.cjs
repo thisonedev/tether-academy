@@ -22,6 +22,15 @@ const toHex = (buf) => {
 
 const fromHex = (hex) => Buffer.from(hex, 'hex');
 
+function defaultDeviceName() {
+  try {
+    const username = os.userInfo().username;
+    const host = os.hostname();
+    if (username && host) return `${username}@${host}`;
+  } catch {}
+  return os.hostname();
+}
+
 let swarm = null;
 let pairing = null;
 let identity = null;
@@ -30,6 +39,8 @@ const members = new Map();
 const candidates = new Map();
 const peers = new Map();
 const pendingRequests = new Map();
+const pendingByDiscovery = new Set();
+const pendingByInvite = new Set();
 const auditLog = [];
 const listeners = new Set();
 const execChannels = new Map();
@@ -90,31 +101,44 @@ function onSwarmConnection(conn) {
   }
 }
 
+function attachExecToAllConnections(discoveryKey) {
+  for (const conn of swarm.connections) {
+    const mux = Protomux.from(conn);
+    attachExecProtocol(mux, discoveryKey);
+  }
+}
+
 function attachExecProtocol(mux, discoveryKey) {
   const discoveryKeyHex = toHex(discoveryKey);
-  if (execChannels.has(discoveryKeyHex)) return;
-  mux.pair({ protocol: EXEC_PROTOCOL, id: discoveryKey }, () => {
-    const ch = mux.createChannel({
-      protocol: EXEC_PROTOCOL,
-      id: discoveryKey,
-      messages: [
-        { encoding: c.buffer, onmessage: (buf) => routeExecMessage(discoveryKeyHex, buf) },
-      ],
-    });
-    if (!ch) return;
-    ch.open();
-    execChannels.set(discoveryKeyHex, { channel: ch, mux });
-  });
-  const ch = mux.createChannel({
+  const existing = execChannels.get(discoveryKeyHex);
+  if (existing?.channel) return;
+  const channelOpts = {
     protocol: EXEC_PROTOCOL,
     id: discoveryKey,
     messages: [
       { encoding: c.buffer, onmessage: (buf) => routeExecMessage(discoveryKeyHex, buf) },
     ],
+    onclose: () => {
+      if (peers.has(discoveryKeyHex)) {
+        dropPeer(discoveryKeyHex).catch(() => {});
+      }
+      if (execChannels.get(discoveryKeyHex)?.channel?.onclose === channelOpts.onclose) {
+        execChannels.delete(discoveryKeyHex);
+      }
+    },
+  };
+  mux.pair({ protocol: EXEC_PROTOCOL, id: discoveryKey }, () => {
+    if (execChannels.get(discoveryKeyHex)?.channel) return;
+    const ch = mux.createChannel(channelOpts);
+    if (!ch) return;
+    execChannels.set(discoveryKeyHex, { channel: ch, mux });
+    ch.open();
   });
+  if (!members.has(discoveryKeyHex)) return;
+  const ch = mux.createChannel(channelOpts);
   if (!ch) return;
-  ch.open();
   execChannels.set(discoveryKeyHex, { channel: ch, mux });
+  ch.open();
 }
 
 function routeExecMessage(discoveryKeyHex, buf) {
@@ -215,6 +239,12 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
         return;
       }
 
+      if (pendingByDiscovery.has(discoveryKeyHex)) return;
+      pendingByDiscovery.add(discoveryKeyHex);
+
+      if (inviteIdHex && pendingByInvite.has(inviteIdHex)) return;
+      if (inviteIdHex) pendingByInvite.add(inviteIdHex);
+
       const requestId = crypto.randomUUID();
       const pending = {
         requestId,
@@ -248,6 +278,7 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
   });
   await member.flushed();
   members.set(discoveryKeyHex, member);
+  attachExecToAllConnections(discoveryKey);
 
   return {
     invite: Buffer.from(invite).toString('base64'),
@@ -264,6 +295,8 @@ async function approve(requestId) {
   const pending = pendingRequests.get(requestId);
   if (!pending) return false;
   pendingRequests.delete(requestId);
+  pendingByDiscovery.delete(pending.discoveryKey);
+  if (pending.inviteId) pendingByInvite.delete(pending.inviteId);
   pending.candidate.confirm({ key: pending.autobaseKey });
   finalizePair(
     pending.discoveryKey,
@@ -280,6 +313,8 @@ async function reject(requestId) {
   const pending = pendingRequests.get(requestId);
   if (!pending) return false;
   pendingRequests.delete(requestId);
+  pendingByDiscovery.delete(pending.discoveryKey);
+  if (pending.inviteId) pendingByInvite.delete(pending.inviteId);
   pending.candidate._denied = true;
   const member = members.get(pending.discoveryKey);
   if (member) {
@@ -300,6 +335,12 @@ function getAudit({ since = 0, limit = 200 } = {}) {
   return filtered.slice(-limit);
 }
 
+function clearAudit() {
+  auditLog.length = 0;
+  emit('peer:audit-cleared', { at: Date.now() });
+  return true;
+}
+
 async function acceptInvite(inviteB64, { userData = null, code = null, hostIdentity = null } = {}) {
   ensureReady();
   if (typeof inviteB64 !== 'string' || inviteB64.length === 0) {
@@ -310,7 +351,9 @@ async function acceptInvite(inviteB64, { userData = null, code = null, hostIdent
   const discoveryKeyHex = toHex(discoveryKey);
 
   const localUserData = {
-    ...(userData ?? { name: os.hostname(), app: 'tether-academy' }),
+    name: userData?.name || defaultDeviceName(),
+    app: 'tether-academy',
+    ...(userData ?? {}),
     pairingCode: code || null,
     buildId: BUILD_ID,
   };
@@ -332,7 +375,25 @@ async function acceptInvite(inviteB64, { userData = null, code = null, hostIdent
   });
   candidates.set(discoveryKeyHex, candidate);
 
-  await candidate.pairing;
+  appendAudit('peer:pair:sent', { discoveryKey: discoveryKeyHex });
+
+  try {
+    await Promise.race([
+      candidate.pairing,
+      new Promise((_, reject) => {
+        const onClose = () => reject(new Error('pairing closed before completion'));
+        candidate.once('close', onClose);
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('pairing timed out after 30 minutes')), 30 * 60_000)),
+    ]);
+  } catch (err) {
+    candidates.delete(discoveryKeyHex);
+    try { await candidate.close(); } catch {}
+    appendAudit('peer:pair:error', { discoveryKey: discoveryKeyHex, message: err?.message ?? 'pairing failed' });
+    throw err;
+  }
+
+  attachExecToAllConnections(discoveryKey);
 
   return {
     discoveryKey: discoveryKeyHex,
@@ -414,15 +475,21 @@ function handleExecReply(discoveryKeyHex, buf) {
   const active = activeGuestExec.get(discoveryKeyHex);
   if (!active) return;
   if (payload.kind === 'chunk') {
+    if (!active.announced) {
+      active.announced = true;
+      appendAudit('peer:exec:remote-started', { discoveryKey: discoveryKeyHex });
+    }
     active.emitter.emit(payload.stream, payload.data);
   } else if (payload.kind === 'exit') {
     active.emitter.emit('exit', { code: payload.code ?? null, signal: payload.signal ?? null });
     active.emitter.emit('end');
     activeGuestExec.delete(discoveryKeyHex);
+    appendAudit('peer:exec:remote-finished', { discoveryKey: discoveryKeyHex, code: payload.code, signal: payload.signal ?? null });
   } else if (payload.kind === 'error') {
     active.emitter.emit('error', new Error(payload.message ?? 'exec failed'));
     active.emitter.emit('end');
     activeGuestExec.delete(discoveryKeyHex);
+    appendAudit('peer:exec:remote-error', { discoveryKey: discoveryKeyHex, message: payload.message ?? 'exec failed' });
   }
 }
 
@@ -598,6 +665,7 @@ module.exports = {
   lockdown,
   exec,
   cancelExec,
+  clearAudit,
   on,
   close,
 };

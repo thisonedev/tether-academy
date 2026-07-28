@@ -105,7 +105,32 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   useEffect(() => {
     setIsDesktop(typeof window !== 'undefined' && typeof window.academy?.run === 'function');
   }, []);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    let cancelled = false;
+    const fetchPeers = async () => {
+      try {
+        const peers = await window.academy?.peer?.list?.();
+        if (!cancelled && Array.isArray(peers)) {
+          setRemotePeers(peers.map((p) => ({ discoveryKey: p.discoveryKey, userData: p.userData, role: p.role })));
+        }
+      } catch {
+        // silent; UI shows the empty state
+      }
+    };
+    fetchPeers();
+    const unsubscribe = window.academy?.peer?.onEvent?.(() => {
+      fetchPeers();
+    });
+    return () => {
+      cancelled = true;
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [isDesktop]);
   const [runMode, setRunMode] = useState<RunMode>('simulated');
+  const [remotePeers, setRemotePeers] = useState<Array<{ discoveryKey: string; userData: unknown; role: string }>>([]);
+  const [selectedPeerId, setSelectedPeerId] = useState<string>('');
   const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
   const [outputLines, setOutputLines] = useState<OutputLine[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -267,21 +292,33 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     }
 
     if (runMode === 'remote') {
-      setOutputLines([
-        {
-          stream: 'stdout',
-          line: '[coming soon] Run on a remote device needs a paired device. Open on the desktop app to run for real, or use Simulated.',
-        },
-      ]);
-      if (isLastLessonOfChapter && !data.readOnly) {
-        setTab('tests');
-        setTestResults(runTests(userCode, data.tests));
+      if (remotePeers.length === 0) {
+        setOutputLines([
+          { stream: 'stdout', line: '[paired] No paired devices. Open Settings to pair one, then come back.' },
+        ]);
+        if (isLastLessonOfChapter && !data.readOnly) {
+          setTab('tests');
+          setTestResults(runTests(userCode, data.tests));
+        }
+        return;
       }
-      return;
+      if (!selectedPeerId) {
+        setOutputLines([
+          { stream: 'stdout', line: '[paired] Pick a paired device from the picker next to Run, then click Run again.' },
+        ]);
+        if (isLastLessonOfChapter && !data.readOnly) {
+          setTab('tests');
+          setTestResults(runTests(userCode, data.tests));
+        }
+        return;
+      }
+      // Falls through to the same this-device path, but with peerId in the payload.
     }
 
     const canRunForReal =
-      runMode === 'this-device' && typeof window !== 'undefined' && window.academy?.run;
+      (runMode === 'this-device' || (runMode === 'remote' && !!selectedPeerId)) &&
+      typeof window !== 'undefined' &&
+      window.academy?.run;
 
     const resolvedArgv = await resolveArgv();
 
@@ -322,6 +359,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           source: userCode,
           language: 'typescript',
           argv: resolvedArgv,
+          ...(runMode === 'remote' && selectedPeerId ? { peerId: selectedPeerId } : {}),
         });
         if (!result) {
           producedOutput = [
@@ -330,6 +368,11 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           ];
         } else if (result.ok) {
           producedOutput = streamBuffer;
+        } else if (result.output && result.output.trim().length > 0) {
+          producedOutput = [
+            ...streamBuffer,
+            { stream: 'stdout', line: result.output.trim() },
+          ];
         } else {
           producedOutput = [
             ...streamBuffer,
@@ -355,7 +398,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       setIsAnimating(true);
       await delay(900);
       producedOutput = data.expectedOutput.map((line) => ({ stream: 'stdout', line }));
-      if (runMode === 'this-device' && typeof window !== 'undefined' && !window.academy?.run) {
+      if ((runMode === 'this-device' || runMode === 'remote') && typeof window !== 'undefined' && !window.academy?.run) {
         producedOutput = [
           ...producedOutput,
           { stream: 'stdout', line: '' },
@@ -385,7 +428,18 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       setTab('tests');
       setTestResults(runTests(userCode, data.tests));
     }
-  }, [runMode, userCode, data.expectedOutput, data.tests, data.readOnly, isLastLessonOfChapter, resolveArgv, isDesktop]);
+  }, [
+    runMode,
+    userCode,
+    data.expectedOutput,
+    data.tests,
+    data.readOnly,
+    isLastLessonOfChapter,
+    resolveArgv,
+    isDesktop,
+    remotePeers,
+    selectedPeerId,
+  ]);
 
   const reset = useCallback(() => {
     setUserCode(data.startingCode);
@@ -457,6 +511,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             onArgvOverrideValue={setArgvOverrideValue}
             onArgvOverrideStart={startArgvOverride}
             onArgvOverrideClear={clearArgvOverride}
+            remotePeers={remotePeers}
+            selectedPeerId={selectedPeerId}
+            setSelectedPeerId={setSelectedPeerId}
           />
         </section>
       </div>
@@ -556,6 +613,9 @@ function Runner({
   onArgvOverrideValue,
   onArgvOverrideStart,
   onArgvOverrideClear,
+  remotePeers,
+  selectedPeerId,
+  setSelectedPeerId,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
@@ -583,6 +643,9 @@ function Runner({
   onArgvOverrideValue: (name: string, value: string) => void;
   onArgvOverrideStart: (name: string) => void;
   onArgvOverrideClear: (name: string) => void;
+  remotePeers: Array<{ discoveryKey: string; userData: unknown; role: string }>;
+  selectedPeerId: string;
+  setSelectedPeerId: (id: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [capturedCopiedKey, setCapturedCopiedKey] = useState<string | null>(null);
@@ -679,7 +742,31 @@ function Runner({
           >
             <option value="this-device">This device</option>
             <option value="simulated">Simulated</option>
+            <option value="remote">Paired device</option>
           </select>
+          {runMode === 'remote' ? (
+            <select
+              aria-label="Pick a paired device"
+              value={selectedPeerId}
+              onChange={(e) => setSelectedPeerId(e.target.value)}
+              disabled={readOnly}
+              suppressHydrationWarning
+              className="ml-1 max-w-[10rem] truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              title={remotePeers.length === 0 ? 'No paired devices. Pair one in Settings.' : 'Pick a paired device'}
+            >
+              <option value="">{remotePeers.length === 0 ? 'No paired devices' : 'Pick a device'}</option>
+              {remotePeers.map((p) => {
+                const name = p.userData && typeof p.userData === 'object' && 'name' in p.userData
+                  ? String((p.userData as { name: unknown }).name)
+                  : p.discoveryKey.slice(0, 8);
+                return (
+                  <option key={p.discoveryKey} value={p.discoveryKey}>
+                    {name}
+                  </option>
+                );
+              })}
+            </select>
+          ) : null}
           {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static string, no user input */}
           <script
             suppressHydrationWarning
@@ -871,7 +958,22 @@ function Runner({
 
       <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted p-4 font-mono text-sm text-canvas-foreground">
         {tab === 'output' ? (
-          <OutputView key={outputKey} lines={outputLines} isAnimating={isAnimating} />
+          runMode === 'remote' && remotePeers.length === 0 ? (
+            <div className="flex h-full items-center justify-center font-sans text-sm text-canvas-muted-foreground">
+              <div className="flex max-w-sm flex-col items-center gap-2 text-center">
+                <div className="text-canvas-foreground">No paired devices yet.</div>
+                <div>
+                  Pair another device in{' '}
+                  <Link href="/settings" className="text-emerald-400 underline-offset-2 hover:underline">
+                    Settings
+                  </Link>{' '}
+                  to run this lesson there.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <OutputView key={outputKey} lines={outputLines} isAnimating={isAnimating} />
+          )
         ) : null}
         {tab === 'tests' ? <TestsView results={testResults} tests={null as never} /> : null}
         {tab === 'preview' ? <PreviewView /> : null}
