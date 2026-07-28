@@ -149,6 +149,58 @@ async function main() {
   }
   console.log('[test-peer-exec] PASS: stderr streams and exit code propagates');
 
+  const fileCode = [
+    'const greeting = "file mode hi";',
+    'const n = 41 + 1;',
+    'process.stdout.write(greeting + " n=" + n + " script=" + process.argv[1] + "\\n");',
+    'process.stdout.write("execArgv=" + JSON.stringify(process.execArgv) + "\\n");',
+    'process.exit(0);',
+  ].join('\n');
+  const fileResult = await new Promise((resolve, reject) => {
+    const emitter = guest.exec({
+      peerId: guestEvent.discoveryKey,
+      code: fileCode,
+      mode: 'file',
+      argv: ['--no-warnings', '--no-deprecation'],
+    });
+    let stdout = '';
+    emitter.on('stdout', (chunk) => { stdout += chunk; });
+    emitter.on('stderr', (chunk) => process.stderr.write(chunk));
+    emitter.on('exit', (info) => resolve({ stdout, ...info }));
+    emitter.on('error', reject);
+    setTimeout(() => reject(new Error('file-mode exec timed out')), 10_000);
+  });
+  console.log('[test-peer-exec] file-mode result:', fileResult);
+  if (!fileResult.stdout.includes('file mode hi') || !fileResult.stdout.includes('n=42')) {
+    console.error('[test-peer-exec] FAIL: file mode did not run');
+    process.exit(1);
+  }
+  if (!fileResult.stdout.includes('script=') || !fileResult.stdout.includes('.mts')) {
+    console.error('[test-peer-exec] FAIL: file mode did not pass script path as argv[1]');
+    process.exit(1);
+  }
+  if (!fileResult.stdout.includes('"--no-warnings"') || !fileResult.stdout.includes('"--no-deprecation"')) {
+    console.error('[test-peer-exec] FAIL: file mode did not pass argv to node');
+    process.exit(1);
+  }
+  if (fileResult.code !== 0) {
+    console.error('[test-peer-exec] FAIL: file mode non-zero exit');
+    process.exit(1);
+  }
+  console.log('[test-peer-exec] PASS: file mode runs file with argv, .mts script path, execArgv flags');
+
+  let threwOnBadMode = false;
+  try {
+    guest.exec({ peerId: guestEvent.discoveryKey, code: 'x', mode: 'wat' });
+  } catch (err) {
+    threwOnBadMode = String(err.message).includes("mode must be 'inline' or 'file'");
+  }
+  if (!threwOnBadMode) {
+    console.error('[test-peer-exec] FAIL: bad mode did not throw');
+    process.exit(1);
+  }
+  console.log('[test-peer-exec] PASS: bad mode rejected');
+
   await host.dropPeer(hostEvent.discoveryKey);
   await new Promise((r) => setTimeout(r, 100));
   await host.close();

@@ -430,9 +430,17 @@ function sendExecReply(discoveryKeyHex, payload) {
   }
 }
 
-function spawnExec(discoveryKeyHex, { code, cwd }) {
+function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [] }) {
   const workDir = cwd && fs.existsSync(cwd) ? cwd : fs.mkdtempSync(path.join(os.tmpdir(), 'academy-exec-'));
-  const child = spawn(process.execPath, ['-e', code], {
+  let args;
+  if (mode === 'file') {
+    const file = path.join(workDir, 'snippet.mts');
+    fs.writeFileSync(file, code, 'utf-8');
+    args = [...argv, file];
+  } else {
+    args = ['-e', code, ...argv];
+  }
+  const child = spawn(process.execPath, args, {
     cwd: workDir,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -457,12 +465,23 @@ function spawnExec(discoveryKeyHex, { code, cwd }) {
 
 const activeGuestExec = new Map();
 
-function exec({ peerId, code, cwd = null }) {
+function exec({ peerId, code, cwd = null, mode = 'inline', argv = [] }) {
   if (typeof peerId !== 'string' || !peerId) {
     throw new Error('exec: peerId is required');
   }
   if (typeof code !== 'string' || !code) {
     throw new Error('exec: code is required');
+  }
+  if (mode !== 'inline' && mode !== 'file') {
+    throw new Error(`exec: mode must be 'inline' or 'file', got ${mode}`);
+  }
+  if (!Array.isArray(argv)) {
+    throw new Error('exec: argv must be an array of strings');
+  }
+  for (const a of argv) {
+    if (typeof a !== 'string') {
+      throw new Error('exec: argv entries must be strings');
+    }
   }
   const entry = execChannels.get(peerId);
   if (!entry?.channel) {
@@ -478,7 +497,7 @@ function exec({ peerId, code, cwd = null }) {
   const emitter = new EventEmitter();
   activeGuestExec.set(peerId, { emitter });
   try {
-    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, cwd }), 'utf8'));
+    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, cwd, mode, argv }), 'utf8'));
   } catch (err) {
     activeGuestExec.delete(peerId);
     throw err;
