@@ -43,7 +43,11 @@ function copyToClipboard(text: string): Promise<void> {
   });
 }
 
-function parsePairInput(input: string): { invite: string; code: string | null } | null {
+function parsePairInput(input: string): {
+  invite: string;
+  code: string | null;
+  hostIdentity: string | null;
+} | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
   if (trimmed.startsWith('tether-academy://')) {
@@ -51,7 +55,7 @@ function parsePairInput(input: string): { invite: string; code: string | null } 
       const url = new URL(trimmed);
       const invite = url.searchParams.get('i');
       if (!invite) return null;
-      return { invite, code: url.searchParams.get('c') };
+      return { invite, code: url.searchParams.get('c'), hostIdentity: url.searchParams.get('h') };
     } catch {
       return null;
     }
@@ -60,13 +64,19 @@ function parsePairInput(input: string): { invite: string; code: string | null } 
     const invite = trimmed.split('?i=')[1]?.split('&')[0];
     if (!invite) return null;
     const code = trimmed.includes('&c=') ? trimmed.split('&c=')[1]?.split('&')[0] ?? null : null;
-    return { invite: decodeURIComponent(invite), code: code ? decodeURIComponent(code) : null };
+    const hostIdentity = trimmed.includes('&h=') ? trimmed.split('&h=')[1]?.split('&')[0] ?? null : null;
+    return {
+      invite: decodeURIComponent(invite),
+      code: code ? decodeURIComponent(code) : null,
+      hostIdentity: hostIdentity ? decodeURIComponent(hostIdentity) : null,
+    };
   }
-  return { invite: trimmed, code: null };
+  return { invite: trimmed, code: null, hostIdentity: null };
 }
 
-function pairUrl(invite: string, code: string): string {
-  return `tether-academy://pair?i=${encodeURIComponent(invite)}&c=${encodeURIComponent(code)}`;
+function pairUrl(invite: string, code: string, hostIdentity: string | null): string {
+  const base = `tether-academy://pair?i=${encodeURIComponent(invite)}&c=${encodeURIComponent(code)}`;
+  return hostIdentity ? `${base}&h=${encodeURIComponent(hostIdentity)}` : base;
 }
 
 function pairUserDataLabel(info: { userData: unknown }): string {
@@ -147,7 +157,11 @@ export function DevicesPanel() {
   const [now, setNow] = useState<number>(() => Date.now());
 
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteModal, setInviteModal] = useState<{ invite: AcademyPeerInvite; qrDataUrl: string } | null>(null);
+  const [inviteModal, setInviteModal] = useState<{
+    invite: AcademyPeerInvite;
+    qrDataUrl: string;
+    hostIdentity: string | null;
+  } | null>(null);
   const [acceptBusy, setAcceptBusy] = useState(false);
   const [acceptText, setAcceptText] = useState('');
   const [acceptCode, setAcceptCode] = useState('');
@@ -177,9 +191,18 @@ export function DevicesPanel() {
     refresh();
     const off = window.academy.peer.onEvent((msg) => {
       if (msg.event === 'peer:deeplink') {
-        const payload = msg.payload as { invite: string; pairingCode: string | null };
+        const payload = msg.payload as unknown as {
+          invite: string;
+          pairingCode: string | null;
+          hostIdentity: string | null;
+        };
         setDeeplinkToast({ invite: payload.invite, code: payload.pairingCode });
-        setAcceptText(`tether-academy://pair?i=${encodeURIComponent(payload.invite)}`);
+        const url = pairUrl(
+          payload.invite,
+          payload.pairingCode ?? '',
+          payload.hostIdentity ?? null,
+        );
+        setAcceptText(url);
         if (payload.pairingCode) setAcceptCode(payload.pairingCode);
         setTimeout(() => setDeeplinkToast(null), 8000);
       }
@@ -220,9 +243,15 @@ export function DevicesPanel() {
     setInviteBusy(true);
     setError(null);
     try {
-      const invite = await window.academy.peer.invite();
-      const qrDataUrl = await window.academy.qr(pairUrl(invite.invite, invite.pairingCode));
-      setInviteModal({ invite, qrDataUrl });
+      const [invite, identityInfo] = await Promise.all([
+        window.academy.peer.invite(),
+        window.academy.peer.identity(),
+      ]);
+      const hostIdentity = identityInfo?.publicKey ?? null;
+      const qrDataUrl = await window.academy.qr(
+        pairUrl(invite.invite, invite.pairingCode, hostIdentity),
+      );
+      setInviteModal({ invite, qrDataUrl, hostIdentity });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create invite');
     } finally {
@@ -243,6 +272,7 @@ export function DevicesPanel() {
       await window.academy.peer.accept(parsed.invite, {
         userData: { name: 'controller', source: 'settings-panel' },
         code: acceptCode.trim() || parsed.code || undefined,
+        hostIdentity: parsed.hostIdentity || undefined,
       });
       setAcceptText('');
       setAcceptCode('');
@@ -672,6 +702,7 @@ export function DevicesPanel() {
         <InviteModal
           invite={inviteModal.invite}
           qrDataUrl={inviteModal.qrDataUrl}
+          hostIdentity={inviteModal.hostIdentity}
           copied={copied}
           onCopy={onCopy}
           onClose={() => setInviteModal(null)}
@@ -684,17 +715,19 @@ export function DevicesPanel() {
 function InviteModal({
   invite,
   qrDataUrl,
+  hostIdentity,
   copied,
   onCopy,
   onClose,
 }: {
   invite: AcademyPeerInvite;
   qrDataUrl: string;
+  hostIdentity: string | null;
   copied: string | null;
   onCopy: (text: string, key: string) => void;
   onClose: () => void;
 }) {
-  const url = pairUrl(invite.invite, invite.pairingCode);
+  const url = pairUrl(invite.invite, invite.pairingCode, hostIdentity);
   return (
     <div
       role="dialog"

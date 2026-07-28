@@ -107,7 +107,8 @@ ipcMain.handle('pear:startWorker', (_e, filename) => {
 // One slot for the in-flight run so the stop button can kill it.
 let currentRun = null;
 
-ipcMain.handle('academy:run', (evt, payload) => {
+ipcMain.handle('academy:run', async (evt, payload) => {
+  await ensureQVACSeed();
   const sender = evt.sender;
   const run = runExample({
     ...payload,
@@ -138,6 +139,13 @@ function getStateStore() {
     });
   }
   return stateStorePromise;
+}
+
+async function ensureQVACSeed() {
+  const store = await getStateStore();
+  if (process.env.QVAC_HYPERSWARM_SEED !== store.identity.publicKey) {
+    process.env.QVAC_HYPERSWARM_SEED = store.identity.publicKey;
+  }
 }
 
 ipcMain.handle('academy:state:get', async (_e, key) => {
@@ -422,8 +430,9 @@ function parsePairUrl(url) {
   }
   const invite = parsed.searchParams.get('i');
   const code = parsed.searchParams.get('c');
+  const hostIdentity = parsed.searchParams.get('h');
   if (!invite) return null;
-  return { invite, code: code ?? null, url };
+  return { invite, code: code ?? null, hostIdentity: hostIdentity ?? null, url };
 }
 
 async function handlePairDeepLink(url) {
@@ -437,6 +446,7 @@ async function handlePairDeepLink(url) {
     await peer.acceptInvite(parsed.invite, {
       userData: { name: 'deep-link', source: 'tether-academy://pair' },
       code: parsed.code,
+      hostIdentity: parsed.hostIdentity,
     });
     sendToAll('academy:peer:event', { event: 'peer:deeplink', payload: parsed });
   } catch (err) {

@@ -84,7 +84,7 @@ function getIdentity() {
   };
 }
 
-function finalizePair(discoveryKeyHex, role, userData, autobaseKey, inviteId) {
+function finalizePair(discoveryKeyHex, role, userData, autobaseKey, inviteId, hostIdentity) {
   const peerInfo = {
     discoveryKey: discoveryKeyHex,
     sessionPublicKey: null,
@@ -93,6 +93,7 @@ function finalizePair(discoveryKeyHex, role, userData, autobaseKey, inviteId) {
     userData,
     autobaseKey: toHex(autobaseKey),
     inviteId: inviteId ?? null,
+    hostIdentity: role === 'guest' ? hostIdentity ?? null : null,
   };
   peers.set(discoveryKeyHex, peerInfo);
   appendAudit('peer:paired', {
@@ -200,6 +201,7 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
     autobaseKey: toHex(autobaseKey),
     userData,
     pairingCode: expectedCode,
+    hostIdentity: identity?.publicKey ?? null,
   };
 }
 
@@ -243,7 +245,7 @@ function getAudit({ since = 0, limit = 200 } = {}) {
   return filtered.slice(-limit);
 }
 
-async function acceptInvite(inviteB64, { userData = null, code = null } = {}) {
+async function acceptInvite(inviteB64, { userData = null, code = null, hostIdentity = null } = {}) {
   ensureReady();
   if (typeof inviteB64 !== 'string' || inviteB64.length === 0) {
     throw new Error('acceptInvite: invite must be a non-empty base64 string');
@@ -269,6 +271,7 @@ async function acceptInvite(inviteB64, { userData = null, code = null } = {}) {
         localUserData,
         Buffer.isBuffer(keyBuf) ? keyBuf : null,
         null,
+        hostIdentity,
       );
     },
   });

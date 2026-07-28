@@ -78,6 +78,9 @@ export interface AcademyPeerInfo {
   userData: unknown;
   autobaseKey: string;
   inviteId: string | null;
+  /** For guest-role peers: the host install's main public key. Use it as
+   *  `providerPublicKey` in `loadModel({ delegate })` to target the host. */
+  hostIdentity: string | null;
 }
 
 /** A pair request waiting for the host to approve or reject. */
@@ -148,7 +151,7 @@ export interface AcademyPeerAPI {
   invite: (opts?: { userData?: unknown; autoApprove?: boolean; code?: string }) => Promise<AcademyPeerInvite>;
   accept: (
     inviteB64: string,
-    opts?: { userData?: unknown; code?: string },
+    opts?: { userData?: unknown; code?: string; hostIdentity?: string },
   ) => Promise<AcademyPeerAcceptResult>;
   list: () => Promise<AcademyPeerInfo[]>;
   pending: () => Promise<AcademyPeerPending[]>;

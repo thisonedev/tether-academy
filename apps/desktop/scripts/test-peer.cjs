@@ -59,6 +59,7 @@ async function main() {
   const acceptResult = await freshGuest.acceptInvite(invite.invite, {
     userData: { name: 'guest-from-test', hostname: os.hostname() },
     code: invite.pairingCode,
+    hostIdentity: hostStore.identity.publicKey,
   });
   console.log('[test-peer] guest accepted, paired with discovery:', acceptResult.discoveryKey.slice(0, 16) + '...');
 
@@ -84,10 +85,22 @@ async function main() {
     console.error('[test-peer] FAIL: guest did not echo the pairing code', hostEvent.userData);
     process.exit(1);
   }
+  if (guestEvent.hostIdentity !== hostStore.identity.publicKey) {
+    console.error('[test-peer] FAIL: guest did not learn host identity', {
+      expected: hostStore.identity.publicKey,
+      got: guestEvent.hostIdentity,
+    });
+    process.exit(1);
+  }
+  if (hostEvent.hostIdentity !== null) {
+    console.error('[test-peer] FAIL: host peerInfo should not carry hostIdentity', hostEvent.hostIdentity);
+    process.exit(1);
+  }
 
-  console.log('[test-peer] PASS: both sides paired, autobaseKey matched, userData delivered');
+  console.log('[test-peer] PASS: both sides paired, autobaseKey matched, userData delivered, hostIdentity flows');
   console.log('[test-peer]   hostEvent.userData:', hostEvent.userData);
   console.log('[test-peer]   guestEvent.autobaseKey:', guestEvent.autobaseKey.slice(0, 16) + '...');
+  console.log('[test-peer]   guestEvent.hostIdentity:', guestEvent.hostIdentity);
 
   const peersHost = freshHost.listPeers();
   const peersGuest = freshGuest.listPeers();
