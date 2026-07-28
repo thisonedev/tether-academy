@@ -22,6 +22,9 @@ importers:
       blind-pairing:
         specifier: ^2.3.1
         version: 2.3.1(bare-abort-controller@1.1.2)(bare-buffer@3.6.2)(bare-events@2.9.1(bare-abort-controller@1.1.2))(bare-url@2.4.6)
+      compact-encoding:
+        specifier: ^3.3.0
+        version: 3.3.0
       corestore:
         specifier: ^7.11.1
         version: 7.11.1(bare-abort-controller@1.1.2)(bare-buffer@3.6.2)(bare-url@2.4.6)
