@@ -3,11 +3,15 @@ const BlindPairing = require('blind-pairing');
 const crypto = require('node:crypto');
 const os = require('node:os');
 
+const AUDIT_CAP = 1000;
+
 const toHex = (buf) => {
   if (buf == null) return null;
   if (typeof buf === 'string') return buf;
   return Buffer.from(buf).toString('hex');
 };
+
+const fromHex = (hex) => Buffer.from(hex, 'hex');
 
 let swarm = null;
 let pairing = null;
@@ -16,6 +20,8 @@ let identity = null;
 const members = new Map();
 const candidates = new Map();
 const peers = new Map();
+const pendingRequests = new Map();
+const auditLog = [];
 const listeners = new Set();
 
 function emit(event, payload) {
@@ -26,6 +32,13 @@ function emit(event, payload) {
       console.warn('[peer] listener error:', err?.message ?? err);
     }
   }
+}
+
+function appendAudit(type, payload) {
+  const entry = { type, timestamp: Date.now(), ...payload };
+  auditLog.push(entry);
+  if (auditLog.length > AUDIT_CAP) auditLog.shift();
+  emit('peer:audit', entry);
 }
 
 function safeParseJson(str) {
@@ -57,10 +70,6 @@ async function init({ store, bootstrap = null }) {
   return pairing;
 }
 
-function fromHex(hex) {
-  return Buffer.from(hex, 'hex');
-}
-
 function ensureReady() {
   if (!pairing) throw new Error('peer not initialized; call peer.init first');
 }
@@ -73,7 +82,27 @@ function getIdentity() {
   };
 }
 
-async function createInvite({ userData = null } = {}) {
+function finalizePair(discoveryKeyHex, sessionPublicKey, role, userData, autobaseKey, inviteId) {
+  const peerInfo = {
+    discoveryKey: discoveryKeyHex,
+    sessionPublicKey,
+    role,
+    pairedAt: Date.now(),
+    userData,
+    autobaseKey: toHex(autobaseKey),
+    inviteId: inviteId ?? null,
+  };
+  peers.set(discoveryKeyHex, peerInfo);
+  appendAudit('peer:paired', {
+    discoveryKey: discoveryKeyHex,
+    role,
+    remoteUserData: userData,
+  });
+  emit('peer:paired', peerInfo);
+  return peerInfo;
+}
+
+async function createInvite({ userData = null, autoApprove = false } = {}) {
   ensureReady();
   const autobaseKey = crypto.randomBytes(32);
   const { invite, publicKey, discoveryKey } = BlindPairing.createInvite(autobaseKey);
@@ -87,19 +116,39 @@ async function createInvite({ userData = null } = {}) {
       const remoteUserData = candidate.userData
         ? safeParseJson(Buffer.from(candidate.userData).toString('utf8'))
         : null;
-      candidate.confirm({ key: autobaseKey });
+      const inviteIdHex = candidate.inviteId ? toHex(candidate.inviteId) : null;
 
-      const peerInfo = {
+      if (autoApprove) {
+        candidate.confirm({ key: autobaseKey });
+        finalizePair(discoveryKeyHex, sessionPublicKey, 'host', remoteUserData, autobaseKey, inviteIdHex);
+        return;
+      }
+
+      const requestId = crypto.randomUUID();
+      const pending = {
+        requestId,
         discoveryKey: discoveryKeyHex,
         sessionPublicKey,
-        role: 'host',
-        pairedAt: Date.now(),
+        candidate,
+        autobaseKey,
+        inviteId: inviteIdHex,
         userData: remoteUserData,
-        autobaseKey: toHex(autobaseKey),
-        inviteId: candidate.inviteId ? toHex(candidate.inviteId) : null,
+        receivedAt: Date.now(),
       };
-      peers.set(discoveryKeyHex, peerInfo);
-      emit('peer:paired', peerInfo);
+      pendingRequests.set(requestId, pending);
+      appendAudit('peer:pending', {
+        requestId,
+        discoveryKey: discoveryKeyHex,
+        remoteUserData,
+      });
+      emit('peer:pending', {
+        requestId,
+        discoveryKey: discoveryKeyHex,
+        sessionPublicKey,
+        inviteId: inviteIdHex,
+        userData: remoteUserData,
+        receivedAt: pending.receivedAt,
+      });
     },
   });
   await member.flushed();
@@ -112,6 +161,47 @@ async function createInvite({ userData = null } = {}) {
     autobaseKey: toHex(autobaseKey),
     userData,
   };
+}
+
+async function approve(requestId) {
+  const pending = pendingRequests.get(requestId);
+  if (!pending) return false;
+  pendingRequests.delete(requestId);
+  pending.candidate.confirm({ key: pending.autobaseKey });
+  finalizePair(
+    pending.discoveryKey,
+    pending.sessionPublicKey,
+    'host',
+    pending.userData,
+    pending.autobaseKey,
+    pending.inviteId,
+  );
+  appendAudit('peer:approved', { requestId, discoveryKey: pending.discoveryKey });
+  return true;
+}
+
+async function reject(requestId) {
+  const pending = pendingRequests.get(requestId);
+  if (!pending) return false;
+  pendingRequests.delete(requestId);
+  pending.candidate._denied = true;
+  const member = members.get(pending.discoveryKey);
+  if (member) {
+    await member.close().catch(() => {});
+    members.delete(pending.discoveryKey);
+  }
+  appendAudit('peer:rejected', { requestId, discoveryKey: pending.discoveryKey });
+  emit('peer:rejected', { requestId, discoveryKey: pending.discoveryKey });
+  return true;
+}
+
+function listPending() {
+  return Array.from(pendingRequests.values()).map(({ candidate, ...rest }) => rest);
+}
+
+function getAudit({ since = 0, limit = 200 } = {}) {
+  const filtered = auditLog.filter((e) => e.timestamp >= since);
+  return filtered.slice(-limit);
 }
 
 async function acceptInvite(inviteB64, { userData = null } = {}) {
@@ -133,16 +223,14 @@ async function acceptInvite(inviteB64, { userData = null } = {}) {
     userData: Buffer.from(JSON.stringify(localUserData), 'utf8'),
     async onadd(result) {
       const keyBuf = result?.key;
-      const peerInfo = {
-        discoveryKey: discoveryKeyHex,
-        sessionPublicKey: null,
-        role: 'guest',
-        pairedAt: Date.now(),
-        userData: localUserData,
-        autobaseKey: Buffer.isBuffer(keyBuf) ? toHex(keyBuf) : null,
-      };
-      peers.set(discoveryKeyHex, peerInfo);
-      emit('peer:paired', peerInfo);
+      finalizePair(
+        discoveryKeyHex,
+        null,
+        'guest',
+        localUserData,
+        Buffer.isBuffer(keyBuf) ? keyBuf : null,
+        null,
+      );
     },
   });
   candidates.set(discoveryKeyHex, candidate);
@@ -175,8 +263,23 @@ async function dropPeer(discoveryKeyHex) {
   }
 
   peers.delete(discoveryKeyHex);
+  appendAudit('peer:dropped', { discoveryKey: discoveryKeyHex, role: peer.role });
   emit('peer:dropped', { discoveryKey: discoveryKeyHex });
   return true;
+}
+
+async function lockdown() {
+  let dropped = 0;
+  for (const requestId of Array.from(pendingRequests.keys())) {
+    await reject(requestId);
+    dropped++;
+  }
+  for (const discoveryKeyHex of Array.from(peers.keys())) {
+    await dropPeer(discoveryKeyHex);
+    dropped++;
+  }
+  appendAudit('peer:lockdown', { dropped });
+  return dropped;
 }
 
 function on(listener) {
@@ -190,6 +293,8 @@ async function close() {
   members.clear();
   candidates.clear();
   peers.clear();
+  pendingRequests.clear();
+  auditLog.length = 0;
   listeners.clear();
   if (pairing) await pairing.close().catch(() => {});
   if (swarm) await swarm.destroy().catch(() => {});
@@ -202,9 +307,14 @@ module.exports = {
   init,
   getIdentity,
   createInvite,
+  approve,
+  reject,
+  listPending,
+  getAudit,
   acceptInvite,
   listPeers,
   dropPeer,
+  lockdown,
   on,
   close,
 };

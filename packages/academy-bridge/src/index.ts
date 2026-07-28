@@ -80,6 +80,33 @@ export interface AcademyPeerInfo {
   inviteId: string | null;
 }
 
+/** A pair request waiting for the host to approve or reject. */
+export interface AcademyPeerPending {
+  requestId: string;
+  discoveryKey: string;
+  sessionPublicKey: string;
+  inviteId: string | null;
+  userData: unknown;
+  receivedAt: number;
+}
+
+/** One line in the rolling pair-event log. */
+export interface AcademyPeerAuditEntry {
+  type:
+    | 'peer:pending'
+    | 'peer:paired'
+    | 'peer:approved'
+    | 'peer:rejected'
+    | 'peer:dropped'
+    | 'peer:lockdown';
+  timestamp: number;
+  discoveryKey?: string;
+  requestId?: string;
+  role?: 'host' | 'guest';
+  dropped?: number;
+  remoteUserData?: unknown;
+}
+
 export interface AcademyPeerIdentity {
   publicKey: string;
   createdAt: number | null;
@@ -99,17 +126,25 @@ export interface AcademyPeerAcceptResult {
 }
 
 export type AcademyPeerEvent =
+  | { event: 'peer:pending'; payload: AcademyPeerPending }
   | { event: 'peer:paired'; payload: AcademyPeerInfo }
-  | { event: 'peer:dropped'; payload: { discoveryKey: string } };
+  | { event: 'peer:dropped'; payload: { discoveryKey: string } }
+  | { event: 'peer:rejected'; payload: { requestId: string; discoveryKey: string } }
+  | { event: 'peer:audit'; payload: AcademyPeerAuditEntry };
 
 export interface AcademyPeerAPI {
   identity: () => Promise<AcademyPeerIdentity | null>;
-  invite: (opts?: { userData?: unknown }) => Promise<AcademyPeerInvite>;
+  invite: (opts?: { userData?: unknown; autoApprove?: boolean }) => Promise<AcademyPeerInvite>;
   accept: (
     inviteB64: string,
     opts?: { userData?: unknown },
   ) => Promise<AcademyPeerAcceptResult>;
   list: () => Promise<AcademyPeerInfo[]>;
+  pending: () => Promise<AcademyPeerPending[]>;
+  approve: (requestId: string) => Promise<boolean>;
+  reject: (requestId: string) => Promise<boolean>;
+  audit: (opts?: { since?: number; limit?: number }) => Promise<AcademyPeerAuditEntry[]>;
+  lockdown: () => Promise<number>;
   drop: (discoveryKey: string) => Promise<boolean>;
   onEvent: (callback: (msg: AcademyPeerEvent) => void) => () => void;
 }

@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('academy', {
     invite: (opts) => ipcRenderer.invoke('academy:peer:invite', opts),
     accept: (inviteB64, opts) => ipcRenderer.invoke('academy:peer:accept', inviteB64, opts),
     list: () => ipcRenderer.invoke('academy:peer:list'),
+    pending: () => ipcRenderer.invoke('academy:peer:pending'),
+    approve: (requestId) => ipcRenderer.invoke('academy:peer:approve', requestId),
+    reject: (requestId) => ipcRenderer.invoke('academy:peer:reject', requestId),
+    audit: (opts) => ipcRenderer.invoke('academy:peer:audit', opts),
+    lockdown: () => ipcRenderer.invoke('academy:peer:lockdown'),
     drop: (discoveryKey) => ipcRenderer.invoke('academy:peer:drop', discoveryKey),
     onEvent: (callback) => {
       const handler = (_e, payload) => callback(payload);

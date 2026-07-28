@@ -206,6 +206,26 @@ ipcMain.handle('academy:peer:invite', async (_e, opts) => {
   return peer.createInvite(opts ?? {});
 });
 
+ipcMain.handle('academy:peer:approve', async (_e, requestId) => {
+  return peer.approve(requestId);
+});
+
+ipcMain.handle('academy:peer:reject', async (_e, requestId) => {
+  return peer.reject(requestId);
+});
+
+ipcMain.handle('academy:peer:pending', () => {
+  return peer.listPending();
+});
+
+ipcMain.handle('academy:peer:audit', (_e, opts) => {
+  return peer.getAudit(opts ?? {});
+});
+
+ipcMain.handle('academy:peer:lockdown', async () => {
+  return peer.lockdown();
+});
+
 ipcMain.handle('academy:peer:accept', async (_e, inviteB64, opts) => {
   return peer.acceptInvite(inviteB64, opts ?? {});
 });
