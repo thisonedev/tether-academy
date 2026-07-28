@@ -384,7 +384,15 @@ function handleExecRequest(discoveryKeyHex, buf) {
   } catch {
     return;
   }
-  if (!msg || msg.kind !== 'request') return;
+  if (!msg) return;
+  if (msg.kind === 'cancel') {
+    const state = execStates.get(discoveryKeyHex);
+    if (state?.child && !state.child.killed) {
+      state.child.kill('SIGTERM');
+    }
+    return;
+  }
+  if (msg.kind !== 'request') return;
   if (execStates.has(discoveryKeyHex)) {
     sendExecReply(discoveryKeyHex, {
       kind: 'error',
@@ -430,22 +438,24 @@ function sendExecReply(discoveryKeyHex, payload) {
   }
 }
 
-function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [] }) {
-  const workDir = cwd && fs.existsSync(cwd) ? cwd : fs.mkdtempSync(path.join(os.tmpdir(), 'academy-exec-'));
+function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [], fileName = 'snippet.mts' }) {
+  const fileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-exec-'));
+  const childCwd = cwd && fs.existsSync(cwd) ? cwd : fileDir;
   let args;
   if (mode === 'file') {
-    const file = path.join(workDir, 'snippet.mts');
+    const file = path.join(fileDir, fileName);
     fs.writeFileSync(file, code, 'utf-8');
     args = [...argv, file];
   } else {
     args = ['-e', code, ...argv];
   }
   const child = spawn(process.execPath, args, {
-    cwd: workDir,
+    cwd: childCwd,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   execStates.set(discoveryKeyHex, { child });
+  appendAudit('peer:exec:started', { discoveryKey: discoveryKeyHex, mode, fileName });
 
   child.stdout.on('data', (chunk) => {
     sendExecReply(discoveryKeyHex, { kind: 'chunk', stream: 'stdout', data: chunk.toString('utf8') });
@@ -455,17 +465,19 @@ function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [] }) {
   });
   child.on('error', (err) => {
     sendExecReply(discoveryKeyHex, { kind: 'error', message: err?.message ?? String(err) });
+    appendAudit('peer:exec:error', { discoveryKey: discoveryKeyHex, message: err?.message ?? String(err) });
     execStates.delete(discoveryKeyHex);
   });
   child.on('exit', (code, signal) => {
     sendExecReply(discoveryKeyHex, { kind: 'exit', code, signal: signal ?? null });
+    appendAudit('peer:exec:finished', { discoveryKey: discoveryKeyHex, code, signal: signal ?? null });
     execStates.delete(discoveryKeyHex);
   });
 }
 
 const activeGuestExec = new Map();
 
-function exec({ peerId, code, cwd = null, mode = 'inline', argv = [] }) {
+function exec({ peerId, code, cwd = null, mode = 'inline', argv = [], fileName = 'snippet.mts' }) {
   if (typeof peerId !== 'string' || !peerId) {
     throw new Error('exec: peerId is required');
   }
@@ -483,6 +495,9 @@ function exec({ peerId, code, cwd = null, mode = 'inline', argv = [] }) {
       throw new Error('exec: argv entries must be strings');
     }
   }
+  if (typeof fileName !== 'string' || !fileName) {
+    throw new Error('exec: fileName must be a non-empty string');
+  }
   const entry = execChannels.get(peerId);
   if (!entry?.channel) {
     throw new Error(`exec: no exec channel for peer ${peerId.slice(0, 16)}...`);
@@ -497,12 +512,30 @@ function exec({ peerId, code, cwd = null, mode = 'inline', argv = [] }) {
   const emitter = new EventEmitter();
   activeGuestExec.set(peerId, { emitter });
   try {
-    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, cwd, mode, argv }), 'utf8'));
+    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, cwd, mode, argv, fileName }), 'utf8'));
   } catch (err) {
     activeGuestExec.delete(peerId);
     throw err;
   }
   return emitter;
+}
+
+function cancelExec(peerId) {
+  if (typeof peerId !== 'string' || !peerId) {
+    throw new Error('cancelExec: peerId is required');
+  }
+  if (!activeGuestExec.has(peerId)) return false;
+  const entry = execChannels.get(peerId);
+  if (!entry?.channel) return false;
+  const msg = entry.channel.messages?.[0];
+  if (!msg) return false;
+  try {
+    msg.send(Buffer.from(JSON.stringify({ kind: 'cancel' }), 'utf8'));
+    return true;
+  } catch (err) {
+    console.warn('[peer] cancelExec send failed:', err?.message ?? err);
+    return false;
+  }
 }
 
 async function lockdown() {
@@ -564,6 +597,7 @@ module.exports = {
   dropPeer,
   lockdown,
   exec,
+  cancelExec,
   on,
   close,
 };

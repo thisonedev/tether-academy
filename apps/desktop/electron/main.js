@@ -13,6 +13,7 @@ const { runExample } = require('../runner.cjs');
 const { createStore } = require('./state-store.cjs');
 const { listModels, removeModel, removeAllModels } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
+const { buildLesson } = require('./runner-process.cjs');
 const peer = require('./peer.cjs');
 
 const pkg = require('../package.json');
@@ -107,14 +108,57 @@ ipcMain.handle('pear:startWorker', (_e, filename) => {
 // One slot for the in-flight run so the stop button can kill it.
 let currentRun = null;
 
+const COURSES_DIR = path.join(app.getAppPath(), '..', '..', 'packages', 'courses');
+
 ipcMain.handle('academy:run', async (evt, payload) => {
   await ensureQVACSeed();
   const sender = evt.sender;
+  const sendChunk = (chunk) => {
+    if (!sender.isDestroyed()) sender.send('academy:run:chunk', chunk);
+  };
+
+  if (payload.peerId) {
+    const wrapped = buildLesson({ source: payload.source, cwd: COURSES_DIR });
+    const emitter = peer.exec({
+      peerId: payload.peerId,
+      code: wrapped,
+      mode: 'file',
+      argv: ['--experimental-strip-types', '--no-warnings', ...(Array.isArray(payload.argv) ? payload.argv : [])],
+      cwd: COURSES_DIR,
+    });
+    const collected = { stdout: '', stderr: '' };
+    emitter.on('stdout', (data) => {
+      collected.stdout += data;
+      sendChunk({ stream: 'stdout', data });
+    });
+    emitter.on('stderr', (data) => {
+      collected.stderr += data;
+      sendChunk({ stream: 'stderr', data });
+    });
+    const run = {
+      promise: new Promise((resolve) => {
+        emitter.on('exit', (info) => {
+          resolve({
+            ok: info.code === 0,
+            output: collected.stdout,
+            remoteExit: { code: info.code, signal: info.signal },
+          });
+        });
+        emitter.on('error', (err) => {
+          resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] ${err.message}` });
+        });
+      }),
+      abort: () => peer.cancelExec(payload.peerId),
+    };
+    currentRun = run;
+    return run.promise.finally(() => {
+      if (currentRun === run) currentRun = null;
+    });
+  }
+
   const run = runExample({
     ...payload,
-    onChunk: (chunk) => {
-      if (!sender.isDestroyed()) sender.send('academy:run:chunk', chunk);
-    },
+    onChunk: sendChunk,
   });
   currentRun = run;
   return run.promise.finally(() => {

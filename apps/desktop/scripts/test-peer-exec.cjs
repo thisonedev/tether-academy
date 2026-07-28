@@ -201,6 +201,53 @@ async function main() {
   }
   console.log('[test-peer-exec] PASS: bad mode rejected');
 
+  const longRunCode = 'setInterval(() => process.stdout.write("tick\\n"), 50);';
+  let cancelEmitter;
+  const cancelResult = await new Promise((resolve, reject) => {
+    cancelEmitter = guest.exec({ peerId: guestEvent.discoveryKey, code: longRunCode });
+    let stdout = '';
+    let cancelled = false;
+    cancelEmitter.on('stdout', (chunk) => {
+      stdout += chunk;
+      if (!cancelled && stdout.length > 30) {
+        cancelled = true;
+        const ok = guest.cancelExec(guestEvent.discoveryKey);
+        if (!ok) reject(new Error('cancelExec returned false'));
+      }
+    });
+    cancelEmitter.on('stderr', (chunk) => process.stderr.write(chunk));
+    cancelEmitter.on('exit', (info) => resolve({ stdout, ...info }));
+    cancelEmitter.on('error', reject);
+    setTimeout(() => reject(new Error('cancel exec timed out')), 10_000);
+  });
+  console.log('[test-peer-exec] cancel result:', cancelResult);
+  if (!cancelResult.stdout.includes('tick')) {
+    console.error('[test-peer-exec] FAIL: long-run did not produce any output before cancel');
+    process.exit(1);
+  }
+  const killedBySignal = cancelResult.signal === 'SIGTERM' || cancelResult.code !== 0;
+  if (!killedBySignal) {
+    console.error('[test-peer-exec] FAIL: cancel did not kill the child', cancelResult);
+    process.exit(1);
+  }
+  console.log('[test-peer-exec] PASS: cancelExec killed the in-flight child');
+
+  const audit = host.getAudit();
+  const execStarted = audit.find((e) => e.type === 'peer:exec:started');
+  const execFinished = audit.find((e) => e.type === 'peer:exec:finished');
+  if (!execStarted || !execFinished) {
+    console.error('[test-peer-exec] FAIL: audit log missing exec:started or exec:finished', { execStarted, execFinished });
+    process.exit(1);
+  }
+  console.log('[test-peer-exec] PASS: audit log has peer:exec:started and peer:exec:finished');
+
+  let cancelWithoutExec = guest.cancelExec(guestEvent.discoveryKey);
+  if (cancelWithoutExec !== false) {
+    console.error('[test-peer-exec] FAIL: cancelExec with no in-flight exec should return false, got', cancelWithoutExec);
+    process.exit(1);
+  }
+  console.log('[test-peer-exec] PASS: cancelExec on idle peer returns false');
+
   await host.dropPeer(hostEvent.discoveryKey);
   await new Promise((r) => setTimeout(r, 100));
   await host.close();
