@@ -88,6 +88,10 @@ export interface AcademyPeerPending {
   inviteId: string | null;
   userData: unknown;
   receivedAt: number;
+  /** Code the host generated and shared with the guest out-of-band. */
+  expectedPairingCode: string;
+  /** Code the guest entered in the pair request. null if the guest sent none. */
+  enteredPairingCode: string | null;
 }
 
 /** One line in the rolling pair-event log. */
@@ -105,6 +109,10 @@ export interface AcademyPeerAuditEntry {
   role?: 'host' | 'guest';
   dropped?: number;
   remoteUserData?: unknown;
+  reason?: string;
+  expected?: string;
+  entered?: string;
+  remoteBuildId?: string;
 }
 
 export interface AcademyPeerIdentity {
@@ -118,6 +126,8 @@ export interface AcademyPeerInvite {
   discoveryKey: string;
   autobaseKey: string;
   userData: unknown;
+  /** 6-character code the host generates. Share out-of-band with the guest. */
+  pairingCode: string;
 }
 
 export interface AcademyPeerAcceptResult {
@@ -130,14 +140,15 @@ export type AcademyPeerEvent =
   | { event: 'peer:paired'; payload: AcademyPeerInfo }
   | { event: 'peer:dropped'; payload: { discoveryKey: string } }
   | { event: 'peer:rejected'; payload: { requestId: string; discoveryKey: string } }
-  | { event: 'peer:audit'; payload: AcademyPeerAuditEntry };
+  | { event: 'peer:audit'; payload: AcademyPeerAuditEntry }
+  | { event: 'peer:deeplink'; payload: { invite: string; pairingCode: string; url: string } };
 
 export interface AcademyPeerAPI {
   identity: () => Promise<AcademyPeerIdentity | null>;
-  invite: (opts?: { userData?: unknown; autoApprove?: boolean }) => Promise<AcademyPeerInvite>;
+  invite: (opts?: { userData?: unknown; autoApprove?: boolean; code?: string }) => Promise<AcademyPeerInvite>;
   accept: (
     inviteB64: string,
-    opts?: { userData?: unknown },
+    opts?: { userData?: unknown; code?: string },
   ) => Promise<AcademyPeerAcceptResult>;
   list: () => Promise<AcademyPeerInfo[]>;
   pending: () => Promise<AcademyPeerPending[]>;

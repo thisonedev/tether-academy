@@ -9,6 +9,7 @@ import { useUserHydrated, useUserStore } from '@academy/core';
 import { Box, Cpu, Database, HardDrive, Loader2, MemoryStick, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
+import { DevicesPanel } from './devices-panel.js';
 
 declare global {
   interface Window {
@@ -255,7 +256,7 @@ export function SettingsPage() {
             home directory.
           </p>
         ) : (
-          <ul className="divide-y divide-canvas-border overflow-hidden rounded-lg border border-canvas-border bg-canvas">
+          <ul className="max-h-[28rem] divide-y divide-canvas-border overflow-y-auto overflow-x-hidden rounded-lg border border-canvas-border bg-canvas">
             {models.map((m) => (
               <ModelRow
                 key={m.id}
@@ -268,11 +269,27 @@ export function SettingsPage() {
           </ul>
         )}
 
+        {models && models.length > 0 ? (
+          <p className="mt-2 text-[11px] text-canvas-muted-foreground/70">
+            {models.length} {models.length === 1 ? 'model' : 'models'} downloaded
+            {models.length > 6 ? ' · scroll to see the rest' : ''}
+          </p>
+        ) : null}
+
         {remove.error ? (
           <p role="alert" className="mt-3 text-xs text-red-400">
             {remove.error}
           </p>
         ) : null}
+      </section>
+
+      <section className="mb-10 rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">
+        <h2 className="mb-1 text-lg font-semibold text-canvas-foreground sm:text-xl">Paired devices</h2>
+        <p className="mb-4 text-sm text-canvas-muted-foreground">
+          Pair this desktop with another install to run lessons across machines. All pairing
+          happens peer-to-peer, no server in the path.
+        </p>
+        <DevicesPanel />
       </section>
 
       <section className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">

@@ -54,9 +54,10 @@ async function testApprovalFlow() {
 
   console.log('[sec]   creating invite...');
   const invite = await host.createInvite();
-  console.log('[sec]   invite created, firing acceptInvite...');
+  console.log('[sec]   invite created, pairing code:', invite.pairingCode);
   const acceptPromise = guest.acceptInvite(invite.invite, {
     userData: { name: 'guest-needs-approval', hostname: os.hostname() },
+    code: invite.pairingCode,
   });
 
   const pending = await pendingPromise;
@@ -114,6 +115,7 @@ async function testRejectFlow() {
   const invite = await host.createInvite();
   const acceptPromise = guest.acceptInvite(invite.invite, {
     userData: { name: 'guest-to-reject' },
+    code: invite.pairingCode,
   });
 
   const pending = await pendingPromise;
@@ -149,7 +151,10 @@ async function testLockdown() {
 
   const pairedPromise = waitFor(guest, 'peer:paired');
   const invite = await host.createInvite({ autoApprove: true });
-  await guest.acceptInvite(invite.invite, { userData: { name: 'guest-for-lockdown' } });
+  await guest.acceptInvite(invite.invite, {
+    userData: { name: 'guest-for-lockdown' },
+    code: invite.pairingCode,
+  });
   await pairedPromise;
 
   if (guest.listPeers().length !== 1) {
@@ -178,13 +183,52 @@ async function testLockdown() {
   await testnet.destroy();
 }
 
+async function testCodeMismatch() {
+  console.log('[sec] === code mismatch rejects silently ===');
+  const { testnet, host, guest } = await makePeers('mismatch');
+
+  const mismatchPromise = waitFor(
+    host,
+    'peer:audit',
+    (a) => a.type === 'peer:rejected' && a.reason === 'pairing-code-mismatch',
+  );
+  const invite = await host.createInvite();
+  const acceptPromise = guest.acceptInvite(invite.invite, {
+    userData: { name: 'wrong-code-guest' },
+    code: 'apple-baker-coral-drift',
+  });
+
+  const audit = await mismatchPromise;
+  if (!audit) {
+    console.error('[sec] FAIL: host did not log mismatch rejection');
+    process.exit(1);
+  }
+  if (host.listPeers().length !== 0) {
+    console.error('[sec] FAIL: host has peer after mismatch');
+    process.exit(1);
+  }
+  if (host.listPending().length !== 0) {
+    console.error('[sec] FAIL: mismatch created a pending entry');
+    process.exit(1);
+  }
+  console.log('[sec]   mismatch audit:', { expected: audit.expected, entered: audit.entered });
+  console.log('[sec] PASS: wrong pairing code rejected silently');
+
+  acceptPromise.catch(() => {});
+  await cleanup([host, guest]);
+  await testnet.destroy();
+}
+
 async function testLockdownWithPending() {
   console.log('[sec] === lockdown rejects pending ===');
   const { testnet, host, guest } = await makePeers('lockdown-pending');
 
   const pendingPromise = waitFor(host, 'peer:pending');
   const invite = await host.createInvite();
-  const acceptPromise = guest.acceptInvite(invite.invite, { userData: { name: 'never-approved' } });
+  const acceptPromise = guest.acceptInvite(invite.invite, {
+    userData: { name: 'never-approved' },
+    code: invite.pairingCode,
+  });
   const pending = await pendingPromise;
 
   if (host.listPending().length !== 1) {
@@ -211,6 +255,7 @@ async function testLockdownWithPending() {
   try {
     await testApprovalFlow();
     await testRejectFlow();
+    await testCodeMismatch();
     await testLockdown();
     await testLockdownWithPending();
     console.log('[sec] all security tests passed');

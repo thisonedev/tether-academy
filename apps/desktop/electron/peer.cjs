@@ -2,8 +2,10 @@ const Hyperswarm = require('hyperswarm');
 const BlindPairing = require('blind-pairing');
 const crypto = require('node:crypto');
 const os = require('node:os');
+const pairingCode = require('./pairing-code.cjs');
 
 const AUDIT_CAP = 1000;
+const BUILD_ID = 'tether-academy-desktop';
 
 const toHex = (buf) => {
   if (buf == null) return null;
@@ -82,10 +84,10 @@ function getIdentity() {
   };
 }
 
-function finalizePair(discoveryKeyHex, sessionPublicKey, role, userData, autobaseKey, inviteId) {
+function finalizePair(discoveryKeyHex, role, userData, autobaseKey, inviteId) {
   const peerInfo = {
     discoveryKey: discoveryKeyHex,
-    sessionPublicKey,
+    sessionPublicKey: null,
     role,
     pairedAt: Date.now(),
     userData,
@@ -102,12 +104,13 @@ function finalizePair(discoveryKeyHex, sessionPublicKey, role, userData, autobas
   return peerInfo;
 }
 
-async function createInvite({ userData = null, autoApprove = false } = {}) {
+async function createInvite({ userData = null, autoApprove = false, code = null } = {}) {
   ensureReady();
   const autobaseKey = crypto.randomBytes(32);
   const { invite, publicKey, discoveryKey } = BlindPairing.createInvite(autobaseKey);
   const sessionPublicKey = toHex(publicKey);
   const discoveryKeyHex = toHex(discoveryKey);
+  const expectedCode = code || pairingCode.generate();
 
   const member = pairing.addMember({
     discoveryKey,
@@ -117,10 +120,42 @@ async function createInvite({ userData = null, autoApprove = false } = {}) {
         ? safeParseJson(Buffer.from(candidate.userData).toString('utf8'))
         : null;
       const inviteIdHex = candidate.inviteId ? toHex(candidate.inviteId) : null;
+      const enteredCode = remoteUserData && typeof remoteUserData === 'object'
+        ? (remoteUserData.pairingCode ?? null)
+        : null;
+      const codeMatches = enteredCode && pairingCode.equal(enteredCode, expectedCode);
+      const remoteBuildId = remoteUserData && typeof remoteUserData === 'object'
+        ? (remoteUserData.buildId ?? null)
+        : null;
+      const buildVerified = remoteBuildId === BUILD_ID;
+
+      if (!codeMatches) {
+        candidate._denied = true;
+        appendAudit('peer:rejected', {
+          discoveryKey: discoveryKeyHex,
+          reason: 'pairing-code-mismatch',
+          expected: expectedCode,
+          entered: enteredCode,
+        });
+        await member.close().catch(() => {});
+        members.delete(discoveryKeyHex);
+        return;
+      }
+
+      if (!buildVerified) {
+        candidate._denied = true;
+        appendAudit('peer:rejected', {
+          discoveryKey: discoveryKeyHex,
+          reason: 'unverified-build',
+        });
+        await member.close().catch(() => {});
+        members.delete(discoveryKeyHex);
+        return;
+      }
 
       if (autoApprove) {
         candidate.confirm({ key: autobaseKey });
-        finalizePair(discoveryKeyHex, sessionPublicKey, 'host', remoteUserData, autobaseKey, inviteIdHex);
+        finalizePair(discoveryKeyHex, 'host', remoteUserData, autobaseKey, inviteIdHex);
         return;
       }
 
@@ -134,6 +169,8 @@ async function createInvite({ userData = null, autoApprove = false } = {}) {
         inviteId: inviteIdHex,
         userData: remoteUserData,
         receivedAt: Date.now(),
+        expectedPairingCode: expectedCode,
+        enteredPairingCode: enteredCode,
       };
       pendingRequests.set(requestId, pending);
       appendAudit('peer:pending', {
@@ -148,6 +185,8 @@ async function createInvite({ userData = null, autoApprove = false } = {}) {
         inviteId: inviteIdHex,
         userData: remoteUserData,
         receivedAt: pending.receivedAt,
+        expectedPairingCode: expectedCode,
+        enteredPairingCode: enteredCode,
       });
     },
   });
@@ -160,6 +199,7 @@ async function createInvite({ userData = null, autoApprove = false } = {}) {
     discoveryKey: discoveryKeyHex,
     autobaseKey: toHex(autobaseKey),
     userData,
+    pairingCode: expectedCode,
   };
 }
 
@@ -170,7 +210,6 @@ async function approve(requestId) {
   pending.candidate.confirm({ key: pending.autobaseKey });
   finalizePair(
     pending.discoveryKey,
-    pending.sessionPublicKey,
     'host',
     pending.userData,
     pending.autobaseKey,
@@ -204,7 +243,7 @@ function getAudit({ since = 0, limit = 200 } = {}) {
   return filtered.slice(-limit);
 }
 
-async function acceptInvite(inviteB64, { userData = null } = {}) {
+async function acceptInvite(inviteB64, { userData = null, code = null } = {}) {
   ensureReady();
   if (typeof inviteB64 !== 'string' || inviteB64.length === 0) {
     throw new Error('acceptInvite: invite must be a non-empty base64 string');
@@ -213,9 +252,10 @@ async function acceptInvite(inviteB64, { userData = null } = {}) {
   const { discoveryKey } = BlindPairing.decodeInvite(invite);
   const discoveryKeyHex = toHex(discoveryKey);
 
-  const localUserData = userData ?? {
-    name: os.hostname(),
-    app: 'tether-academy',
+  const localUserData = {
+    ...(userData ?? { name: os.hostname(), app: 'tether-academy' }),
+    pairingCode: code || null,
+    buildId: BUILD_ID,
   };
 
   const candidate = pairing.addCandidate({
@@ -225,7 +265,6 @@ async function acceptInvite(inviteB64, { userData = null } = {}) {
       const keyBuf = result?.key;
       finalizePair(
         discoveryKeyHex,
-        null,
         'guest',
         localUserData,
         Buffer.isBuffer(keyBuf) ? keyBuf : null,

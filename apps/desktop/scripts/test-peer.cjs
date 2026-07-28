@@ -53,10 +53,12 @@ async function main() {
   await freshGuest.init({ store: guestStore, bootstrap });
 
   const invite = await freshHost.createInvite({ autoApprove: true });
-  console.log('[test-peer] host created invite, session pub:', invite.sessionPublicKey.slice(0, 16) + '...');
+  console.log('[test-peer] host created invite, pairing code:', invite.pairingCode);
+  console.log('[test-peer]   session pub:', invite.sessionPublicKey.slice(0, 16) + '...');
 
   const acceptResult = await freshGuest.acceptInvite(invite.invite, {
     userData: { name: 'guest-from-test', hostname: os.hostname() },
+    code: invite.pairingCode,
   });
   console.log('[test-peer] guest accepted, paired with discovery:', acceptResult.discoveryKey.slice(0, 16) + '...');
 
@@ -76,6 +78,10 @@ async function main() {
   }
   if (!hostEvent.userData || hostEvent.userData.name !== 'guest-from-test') {
     console.error('[test-peer] FAIL: host did not receive userData', hostEvent.userData);
+    process.exit(1);
+  }
+  if (hostEvent.userData.pairingCode !== invite.pairingCode) {
+    console.error('[test-peer] FAIL: guest did not echo the pairing code', hostEvent.userData);
     process.exit(1);
   }
 

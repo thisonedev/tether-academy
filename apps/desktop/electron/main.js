@@ -410,9 +410,43 @@ async function startStaticServer(root) {
 // (`@tether-academy/desktop`) so derive a letter-led scheme from productName.
 const deeplinkProtocol = (productName || name).toLowerCase().replace(/[^a-z0-9-]/g, '-');
 app.setAsDefaultProtocolClient(deeplinkProtocol);
+
+function parsePairUrl(url) {
+  if (typeof url !== 'string') return null;
+  if (!url.startsWith(`${deeplinkProtocol}://pair`)) return null;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const invite = parsed.searchParams.get('i');
+  const code = parsed.searchParams.get('c');
+  if (!invite) return null;
+  return { invite, code: code ?? null, url };
+}
+
+async function handlePairDeepLink(url) {
+  const parsed = parsePairUrl(url);
+  if (!parsed) return;
+  try {
+    if (!peer.getIdentity()) {
+      const store = await getStateStore();
+      await peer.init({ store });
+    }
+    await peer.acceptInvite(parsed.invite, {
+      userData: { name: 'deep-link', source: 'tether-academy://pair' },
+      code: parsed.code,
+    });
+    sendToAll('academy:peer:event', { event: 'peer:deeplink', payload: parsed });
+  } catch (err) {
+    console.warn('[tether-academy-desktop] deeplink accept failed:', err.message);
+  }
+}
+
 app.on('open-url', (evt, url) => {
   evt.preventDefault();
-  console.log('deep link:', url);
+  handlePairDeepLink(url);
 });
 
 const lock = app.requestSingleInstanceLock();
@@ -421,14 +455,25 @@ if (!lock) {
 } else {
   app.on('second-instance', (_e, args) => {
     const url = args.find((a) => a.startsWith(`${deeplinkProtocol}://`));
-    if (url) console.log('deep link:', url);
+    if (url) handlePairDeepLink(url);
   });
   app.whenReady().then(async () => {
-    try {
-      const store = await getStateStore();
-      await peer.init({ store });
-    } catch (err) {
-      console.warn('[tether-academy-desktop] peer init failed:', err.message);
+    const coldUrl = process.argv.find((a) => a.startsWith(`${deeplinkProtocol}://`));
+    if (coldUrl) {
+      try {
+        const store = await getStateStore();
+        await peer.init({ store });
+        await handlePairDeepLink(coldUrl);
+      } catch (err) {
+        console.warn('[tether-academy-desktop] cold deeplink failed:', err.message);
+      }
+    } else {
+      try {
+        const store = await getStateStore();
+        await peer.init({ store });
+      } catch (err) {
+        console.warn('[tether-academy-desktop] peer init failed:', err.message);
+      }
     }
     createWindow().catch((err) => {
       console.error(err);
