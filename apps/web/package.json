@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "dev:webpack": "next dev",
     "dev:clean": "node ../../packages/courses/scripts/dev-clean.mjs && next dev --turbopack",
-    "prebuild": "pnpm -w run build:packages && pnpm -w run check:yaml && pnpm -w run verify:tests:check",
+    "prebuild": "pnpm -w run build:packages && pnpm -w run check:yaml && pnpm -w run verify:tests:check && pnpm lint && pnpm check",
     "build": "next build",
     "build:dev": "next build",
     "start": "BASE_PATH=/tether-academy node serve.mjs",
