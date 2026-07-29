@@ -27,10 +27,13 @@ echo "[peer-test] killing any leftover Electron instances (from previous runs)"
 pkill -f "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" 2>/dev/null || true
 sleep 1
 
-echo "[peer-test] rebuilding bridge and UI (clears incremental cache so the latest source lands in the running app)"
+echo "[peer-test] rebuilding bridge, UI, and web static export (clears incremental cache so the latest source lands in the running app)"
 rm -f packages/ui/tsconfig.tsbuildinfo packages/academy-bridge/tsconfig.tsbuildinfo
 pnpm --filter '@academy/academy-bridge' build
 pnpm --filter '@academy/ui' build
+# Refreshes the bundled web app the renderer loads; skips the lint/yaml pre-checks for speed.
+echo "[peer-test] running next build for apps/web (skipping lint/yaml pre-checks)"
+pnpm --filter '@academy/web' exec next build
 
 # If a previous run left a SingletonLock behind, clear it so instance 1 can start fresh.
 LOCK="/Users/source/Library/Application Support/Tether Academy/SingletonLock"

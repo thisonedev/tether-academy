@@ -1,6 +1,4 @@
-// Single guest accepting the same invite twice should surface only one
-// pending request on the host. The two candidates have different discovery
-// keys (different sessions) but the same invite ID.
+// Single guest accepting the same invite twice should surface only one pending request on the host.
 
 const os = require('node:os');
 const path = require('node:path');
@@ -33,13 +31,12 @@ async function main() {
   const invite = await host.createInvite();
   console.log('[test-peer-dedupe-invite] invite code:', invite.pairingCode);
 
-  // First accept from the same guest store.
   guest.acceptInvite(invite.invite, {
     userData: { name: 'same-guest', source: 'invite-dedupe-test' },
     code: invite.pairingCode,
   }).catch(() => {});
 
-  // Wait for the first candidate to land.
+  // Wait for the first candidate to land on the host.
   await new Promise((r) => setTimeout(r, 2000));
 
   let pending = host.listPending();
@@ -49,7 +46,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Second accept from the same guest (new session, same invite ID).
+  // Second accept: same guest, same invite ID, new session.
   guest.acceptInvite(invite.invite, {
     userData: { name: 'same-guest', source: 'invite-dedupe-test' },
     code: invite.pairingCode,

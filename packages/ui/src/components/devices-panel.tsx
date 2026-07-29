@@ -8,8 +8,8 @@ import type {
   AcademyPeerInvite,
   AcademyPeerPending,
 } from '@academy/academy-bridge';
-import { Check, Copy, Loader2, Lock, QrCode, ShieldAlert, ShieldCheck, Wifi, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { Check, Copy, Eraser, Loader2, Lock, QrCode, ShieldAlert, ShieldCheck, Wifi, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 declare global {
   interface Window {
@@ -17,7 +17,7 @@ declare global {
   }
 }
 
-function shortHex(hex: string, head = 8, tail = 6): string {
+export function shortHex(hex: string, head = 8, tail = 6): string {
   if (hex.length <= head + tail + 1) return hex;
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
 }
@@ -77,7 +77,7 @@ function pairUrl(invite: string, code: string, hostIdentity: string | null): str
   return hostIdentity ? `${base}&h=${encodeURIComponent(hostIdentity)}` : base;
 }
 
-function pairUserDataLabel(info: { userData: unknown }): string {
+export function pairUserDataLabel(info: { userData: unknown }): string {
   const data = info.userData;
   if (data && typeof data === 'object' && 'name' in data && typeof data.name === 'string') {
     return data.name;
@@ -88,7 +88,7 @@ function pairUserDataLabel(info: { userData: unknown }): string {
   return 'Unknown device';
 }
 
-function formatRelativeTime(ts: number, now: number): string {
+export function formatRelativeTime(ts: number, now: number): string {
   const diff = Math.max(0, now - ts);
   const sec = Math.floor(diff / 1000);
   if (sec < 5) return 'just now';
@@ -101,7 +101,22 @@ function formatRelativeTime(ts: number, now: number): string {
   return `${day}d ago`;
 }
 
-function auditLabel(entry: AcademyPeerAuditEntry): string {
+export function formatClockTime(ts: number): string {
+  const d = new Date(ts);
+  const hours24 = d.getHours();
+  const minutes = d.getMinutes();
+  const ampm = hours24 >= 12 ? 'pm' : 'am';
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+  return `${hours12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+}
+
+function formatExecSample(entry: AcademyPeerAuditEntry): string | null {
+  if (entry.mode === 'inline') return 'inline snippet';
+  if (entry.fileName) return entry.fileName;
+  return null;
+}
+
+function auditLabel(entry: AcademyPeerAuditEntry, peerName?: string | null): string {
   switch (entry.type) {
     case 'peer:pending':
       return `Pair request from ${pairUserDataLabel({ userData: entry.remoteUserData })}`;
@@ -121,18 +136,39 @@ function auditLabel(entry: AcademyPeerAuditEntry): string {
       return 'Pair dropped';
     case 'peer:lockdown':
       return `Lockdown: ${entry.dropped ?? 0} dropped`;
-    case 'peer:exec:started':
-      return 'Exec started (on this device)';
-    case 'peer:exec:finished':
-      return `Exec finished (code ${entry.code ?? '?'}${entry.signal ? `, ${entry.signal}` : ''})`;
-    case 'peer:exec:error':
-      return `Exec error: ${entry.message ?? 'unknown'}`;
-    case 'peer:exec:remote-started':
-      return 'Exec started (on paired device)';
-    case 'peer:exec:remote-finished':
-      return `Exec finished on paired device (code ${entry.code ?? '?'}${entry.signal ? `, ${entry.signal}` : ''})`;
-    case 'peer:exec:remote-error':
-      return `Exec error on paired device: ${entry.message ?? 'unknown'}`;
+    case 'peer:exec:started': {
+      const sample = formatExecSample(entry);
+      const tail = sample ? ` · ${sample}` : '';
+      return `Exec started on this device${tail}`;
+    }
+    case 'peer:exec:finished': {
+      const sample = formatExecSample(entry);
+      const tail = sample ? ` · ${sample}` : '';
+      return `Exec finished on this device · code ${entry.code ?? '?'}${entry.signal ? `, ${entry.signal}` : ''}${tail}`;
+    }
+    case 'peer:exec:error': {
+      const sample = formatExecSample(entry);
+      const tail = sample ? ` · ${sample}` : '';
+      return `Exec error on this device: ${entry.message ?? 'unknown'}${tail}`;
+    }
+    case 'peer:exec:remote-started': {
+      const sample = formatExecSample(entry);
+      const tail = sample ? ` · ${sample}` : '';
+      const who = peerName ? ` on ${peerName}` : ' on paired device';
+      return `Exec started${who}${tail}`;
+    }
+    case 'peer:exec:remote-finished': {
+      const sample = formatExecSample(entry);
+      const tail = sample ? ` · ${sample}` : '';
+      const who = peerName ? ` on ${peerName}` : ' on paired device';
+      return `Exec finished${who} · code ${entry.code ?? '?'}${entry.signal ? `, ${entry.signal}` : ''}${tail}`;
+    }
+    case 'peer:exec:remote-error': {
+      const sample = formatExecSample(entry);
+      const tail = sample ? ` · ${sample}` : '';
+      const who = peerName ? ` on ${peerName}` : ' on paired device';
+      return `Exec error${who}: ${entry.message ?? 'unknown'}${tail}`;
+    }
     case 'peer:pair:sent':
       return 'Pair request sent, waiting for approval';
     case 'peer:pair:error':
@@ -165,7 +201,6 @@ export function DevicesPanel() {
   const [identity, setIdentity] = useState<AcademyPeerIdentity | null | 'loading'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [deeplinkToast, setDeeplinkToast] = useState<{ invite: string; code: string | null } | null>(null);
-  const [pairedToast, setPairedToast] = useState<{ name: string; role: 'host' | 'guest' } | null>(null);
 
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteModal, setInviteModal] = useState<{
@@ -186,12 +221,25 @@ export function DevicesPanel() {
     setIdentity(id);
   }, []);
 
+  const [pairedPeers, setPairedPeers] = useState<AcademyPeerInfo[]>([]);
+  const [pairedPeersLoaded, setPairedPeersLoaded] = useState(false);
+
+  const refreshPeers = useCallback(async () => {
+    if (!window.academy?.peer) return;
+    const list = await window.academy.peer.list().catch(() => []);
+    if (Array.isArray(list)) {
+      setPairedPeers(list);
+      setPairedPeersLoaded(true);
+    }
+  }, []);
+
   useEffect(() => {
     if (!window.academy?.peer) {
       setError('Peer layer unavailable in this build.');
       return;
     }
     refresh();
+    refreshPeers();
     const off = window.academy.peer.onEvent((msg) => {
       if (msg.event === 'peer:deeplink') {
         const payload = msg.payload as unknown as {
@@ -211,21 +259,19 @@ export function DevicesPanel() {
       }
       if (msg.event === 'peer:paired') {
         setInviteModal(null);
-        const peerInfo = msg.payload as { role?: 'host' | 'guest'; userData?: unknown };
-        const name = pairUserDataLabel({ userData: peerInfo?.userData });
-        setPairedToast({ name, role: peerInfo?.role ?? 'guest' });
-        setTimeout(() => setPairedToast(null), 6000);
+        void refreshPeers();
       }
       if (msg.event === 'peer:dropped') {
         setInviteModal(null);
         setAcceptText('');
         setAcceptCode('');
+        void refreshPeers();
       }
     });
     return () => {
       off();
     };
-  }, [refresh]);
+  }, [refresh, refreshPeers]);
 
   const onCreateInvite = useCallback(async () => {
     if (!window.academy?.peer) return;
@@ -313,16 +359,9 @@ export function DevicesPanel() {
         </div>
       ) : null}
 
-      {pairedToast ? (
-        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-400">
-          <span className="font-semibold">Paired.</span> Connected with {pairedToast.name}
-          {pairedToast.role === 'guest' ? ' (this device is the controller)' : ' (this device is running lessons for the controller)'}.
-        </div>
-      ) : null}
-
       <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
               This device
             </p>
@@ -338,6 +377,7 @@ export function DevicesPanel() {
                 {shortHex(identity.publicKey, 12, 8)}
               </p>
             )}
+            <ThisDeviceRoleSummary peers={pairedPeers} loaded={pairedPeersLoaded} />
           </div>
           {identity && identity !== 'loading' ? (
             <button
@@ -599,13 +639,23 @@ const ACTIVITY_LIMIT = 100;
 
 export function ActivitySection() {
   const [audit, setAudit] = useState<AcademyPeerAuditEntry[]>([]);
+  const [peerNames, setPeerNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!window.academy?.peer) return;
     let cancelled = false;
     const refresh = async () => {
-      const au = (await window.academy?.peer?.audit({ limit: ACTIVITY_LIMIT }).catch(() => [])) ?? [];
-      if (!cancelled) setAudit(au.slice().reverse());
+      const [au, peers] = await Promise.all([
+        window.academy?.peer?.audit({ limit: ACTIVITY_LIMIT }).catch(() => []) ?? [],
+        window.academy?.peer?.list().catch(() => []) ?? [],
+      ]);
+      if (cancelled) return;
+      setAudit(au.slice().reverse());
+      const map: Record<string, string> = {};
+      for (const p of peers) {
+        if (p.discoveryKey) map[p.discoveryKey] = pairUserDataLabel(p);
+      }
+      setPeerNames(map);
     };
     refresh();
     const off = window.academy.peer.onEvent((msg) => {
@@ -615,6 +665,9 @@ export function ActivitySection() {
       }
       if (msg.event === 'peer:audit-cleared') {
         setAudit([]);
+      }
+      if (msg.event === 'peer:paired' || msg.event === 'peer:dropped') {
+        refresh();
       }
     });
     return () => {
@@ -633,22 +686,26 @@ export function ActivitySection() {
           <button
             type="button"
             onClick={() => window.academy?.peer?.clearAudit?.()}
-            className="text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground"
+            title="Clear activity log"
+            aria-label="Clear activity log"
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-canvas-border bg-canvas-muted p-1.5 text-canvas-muted-foreground transition-colors hover:border-canvas-foreground/40 hover:text-canvas-foreground"
           >
-            Clear
+            <Eraser className="size-3" />
           </button>
         ) : null}
       </div>
       {audit.length === 0 ? (
         <p className="mt-3 text-sm text-canvas-muted-foreground">No activity yet.</p>
       ) : (
-        <ul className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted p-3 font-mono text-[11px] text-canvas-muted-foreground">
+        <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted p-3 font-mono text-[11px] text-canvas-muted-foreground">
           {audit.map((entry, idx) => (
-            <li key={`${entry.timestamp}-${idx}`} className="flex gap-2">
+            <li key={`${entry.timestamp}-${idx}`} className="flex flex-wrap items-baseline gap-2">
               <span className="shrink-0 text-canvas-muted-foreground/60">
-                {new Date(entry.timestamp).toLocaleTimeString()}
+                {formatClockTime(entry.timestamp)}
               </span>
-              <span className="text-canvas-foreground">{auditLabel(entry)}</span>
+              <span className="text-canvas-foreground">
+                {auditLabel(entry, entry.discoveryKey ? peerNames[entry.discoveryKey] : null)}
+              </span>
             </li>
           ))}
         </ul>
@@ -861,10 +918,12 @@ export function PairedDevicesSection() {
               className="flex items-center justify-between gap-2 px-4 py-3"
             >
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm text-canvas-foreground">
-                  {pairUserDataLabel(p)}
-                  <span className="ml-2 text-xs text-canvas-muted-foreground">({p.role})</span>
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm text-canvas-foreground">
+                    {pairUserDataLabel(p)}
+                  </p>
+                  <RoleBadge role={p.role} />
+                </div>
                 <p
                   className="mt-0.5 truncate font-mono text-[11px] text-canvas-muted-foreground"
                   title={p.discoveryKey}
@@ -888,6 +947,267 @@ export function PairedDevicesSection() {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function RoleBadge({ role }: { role: 'host' | 'guest' }) {
+  if (role === 'host') {
+    return (
+      <span
+        title="This device runs the code; the other side is the guest."
+        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400 ring-1 ring-emerald-500/30"
+      >
+        host
+      </span>
+    );
+  }
+  return (
+    <span
+      title="This device is the guest; the other side runs the code."
+      className="inline-flex shrink-0 items-center gap-1 rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400 ring-1 ring-sky-500/30"
+    >
+      guest
+    </span>
+  );
+}
+
+function ThisDeviceRoleSummary({
+  peers,
+  loaded,
+}: {
+  peers: AcademyPeerInfo[];
+  loaded: boolean;
+}) {
+  if (!loaded) return null;
+  if (peers.length === 0) {
+    return (
+      <p className="mt-2 text-[11px] text-canvas-muted-foreground/80">
+        No active pairings.
+      </p>
+    );
+  }
+  const hostCount = peers.filter((p) => p.role === 'host').length;
+  const guestCount = peers.filter((p) => p.role === 'guest').length;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground/80">
+        Acting as
+      </span>
+      {hostCount > 0 ? <RoleChip role="host" count={hostCount} /> : null}
+      {guestCount > 0 ? <RoleChip role="guest" count={guestCount} /> : null}
+    </div>
+  );
+}
+
+function RoleChip({ role, count }: { role: 'host' | 'guest'; count: number }) {
+  const label = role === 'host' ? 'host' : 'guest';
+  const base =
+    role === 'host'
+      ? 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/30'
+      : 'bg-sky-500/15 text-sky-400 ring-sky-500/30';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1 ${base}`}
+    >
+      {label}
+      {count > 1 ? <span className="opacity-70">× {count}</span> : null}
+    </span>
+  );
+}
+
+const EXEC_EVENT_TYPES = new Set<AcademyPeerAuditEntry['type']>([
+  'peer:exec:started',
+  'peer:exec:finished',
+  'peer:exec:error',
+  'peer:exec:remote-started',
+  'peer:exec:remote-finished',
+  'peer:exec:remote-error',
+]);
+
+function execEventLabel(
+  entry: AcademyPeerAuditEntry,
+  peerRole: 'host' | 'guest',
+  peerName?: string | null,
+): { text: string; tone: 'running' | 'ok' | 'err' | 'info' } {
+  const sample = formatExecSample(entry);
+  const sampleTail = sample ? ` · ${sample}` : '';
+  const onPeer = peerRole === 'guest' && peerName ? ` on ${peerName}` : '';
+  switch (entry.type) {
+    case 'peer:exec:started':
+    case 'peer:exec:remote-started':
+      return { text: `Run started${onPeer}${sampleTail}`, tone: 'running' };
+    case 'peer:exec:finished':
+    case 'peer:exec:remote-finished': {
+      const code = entry.code;
+      const signal = entry.signal;
+      const base =
+        code === 0
+          ? `Run finished${onPeer} · exit 0`
+          : code != null
+            ? `Run failed${onPeer} · exit ${code}`
+            : signal
+              ? `Run stopped${onPeer} · ${signal}`
+              : `Run finished${onPeer}`;
+      return { text: `${base}${sampleTail}`, tone: code === 0 ? 'ok' : 'err' };
+    }
+    case 'peer:exec:error':
+    case 'peer:exec:remote-error':
+      return {
+        text: `Run error${onPeer}${entry.message ? `: ${entry.message}` : ''}${sampleTail}`,
+        tone: 'err',
+      };
+    default:
+      return { text: entry.type, tone: 'info' };
+  }
+}
+
+function execEventToneClass(tone: 'running' | 'ok' | 'err' | 'info'): string {
+  switch (tone) {
+    case 'running':
+      return 'text-sky-400';
+    case 'ok':
+      return 'text-emerald-400';
+    case 'err':
+      return 'text-red-400';
+    default:
+      return 'text-canvas-muted-foreground';
+  }
+}
+
+function formatRunDuration(startTs: number, endTs: number): string {
+  const sec = Math.max(0, Math.round((endTs - startTs) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rest = sec % 60;
+  return `${min}m ${rest}s`;
+}
+
+type ExecRunRow = {
+  key: string;
+  label: string;
+  tone: 'running' | 'ok' | 'err' | 'info';
+  ts: number;
+  duration: string | null;
+};
+
+function useExecRunRows(peer: AcademyPeerInfo, audit: AcademyPeerAuditEntry[]): ExecRunRow[] {
+  const events = useMemo(() => {
+    const list = audit.filter(
+      (e) => e.discoveryKey === peer.discoveryKey && EXEC_EVENT_TYPES.has(e.type),
+    );
+    list.sort((a, b) => a.timestamp - b.timestamp);
+    return list;
+  }, [audit, peer.discoveryKey]);
+
+  const peerName = pairUserDataLabel(peer);
+
+  return useMemo(() => {
+    const result: ExecRunRow[] = [];
+    const openStartByRun = new Map<string, number>();
+    let runIndex = 0;
+    for (const e of events) {
+      const isStarted = e.type === 'peer:exec:started' || e.type === 'peer:exec:remote-started';
+      const isFinished = e.type === 'peer:exec:finished' || e.type === 'peer:exec:remote-finished';
+      const isError = e.type === 'peer:exec:error' || e.type === 'peer:exec:remote-error';
+      if (isStarted) {
+        openStartByRun.set(`run-${runIndex}`, e.timestamp);
+        const { text, tone } = execEventLabel(e, peer.role, peerName);
+        result.push({ key: `start-${e.timestamp}-${runIndex}`, label: text, tone, ts: e.timestamp, duration: null });
+        runIndex += 1;
+        continue;
+      }
+      if (isFinished || isError) {
+        const startKey = Array.from(openStartByRun.keys()).pop();
+        const startTs = startKey ? openStartByRun.get(startKey) : undefined;
+        if (startKey && startTs != null) openStartByRun.delete(startKey);
+        const { text, tone } = execEventLabel(e, peer.role, peerName);
+        result.push({
+          key: `end-${e.timestamp}-${runIndex}`,
+          label: text,
+          tone,
+          ts: e.timestamp,
+          duration: startTs != null ? formatRunDuration(startTs, e.timestamp) : null,
+        });
+        continue;
+      }
+    }
+    for (const [key, startTs] of openStartByRun) {
+      result.push({
+        key: `unfinished-${key}-${startTs}`,
+        label: 'Run started · no completion recorded',
+        tone: 'err',
+        ts: startTs,
+        duration: null,
+      });
+    }
+    return result.reverse();
+  }, [events, peer.role, peerName]);
+}
+
+export function ExecRunList({
+  rows,
+  emptyHint,
+}: {
+  rows: ExecRunRow[];
+  emptyHint?: string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs text-canvas-muted-foreground">
+        {emptyHint ?? 'No code runs on this pair yet.'}
+      </p>
+    );
+  }
+  return (
+    <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted p-3 font-mono text-[11px] text-canvas-muted-foreground">
+      {rows.map((row) => (
+        <li key={row.key} className="flex flex-wrap items-baseline gap-2">
+          <span className="shrink-0 text-canvas-muted-foreground/60">
+            {formatClockTime(row.ts)}
+            {row.duration ? ` • ${row.duration}` : ''}
+          </span>
+          <span className={execEventToneClass(row.tone)}>{row.label}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function PairedDeviceActivity({
+  peer,
+  audit,
+  now,
+}: {
+  peer: AcademyPeerInfo;
+  audit: AcademyPeerAuditEntry[];
+  now: number;
+}) {
+  const rows = useExecRunRows(peer, audit);
+
+  return (
+    <div className="flex flex-col rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
+      <div className="flex items-center gap-2">
+        <p className="truncate text-sm font-medium text-canvas-foreground">
+          {pairUserDataLabel(peer)}
+        </p>
+        <RoleBadge role={peer.role} />
+        <span className="ml-auto text-xs text-canvas-muted-foreground">
+          {rows.length} {rows.length === 1 ? 'run' : 'runs'}
+        </span>
+      </div>
+      <p
+        className="mt-0.5 truncate font-mono text-[11px] text-canvas-muted-foreground"
+        title={peer.discoveryKey}
+      >
+        {shortHex(peer.discoveryKey, 10, 6)} · paired {formatRelativeTime(peer.pairedAt, now)}
+      </p>
+      <div className="mt-3">
+        <ExecRunList
+          rows={rows}
+          emptyHint="No code runs on this pair yet. Open a lesson, switch run mode to Paired device, and pick this one to send a run here."
+        />
+      </div>
     </div>
   );
 }

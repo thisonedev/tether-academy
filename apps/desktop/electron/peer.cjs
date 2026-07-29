@@ -3,6 +3,7 @@ const BlindPairing = require('blind-pairing');
 const Protomux = require('protomux');
 const c = require('compact-encoding');
 const crypto = require('node:crypto');
+const hypercoreCrypto = require('hypercore-crypto');
 const { spawn } = require('node:child_process');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
@@ -10,9 +11,19 @@ const os = require('node:os');
 const path = require('node:path');
 const pairingCode = require('./pairing-code.cjs');
 
+const DOCK_HIDE_SHIM = path.join(__dirname, 'dock-hide-shim.cjs');
+const DOCK_HIDE_ARGS = process.platform === 'darwin' ? ['--require', DOCK_HIDE_SHIM] : [];
+
 const AUDIT_CAP = 1000;
 const BUILD_ID = 'tether-academy-desktop';
 const EXEC_PROTOCOL = 'academy-exec';
+
+// Re-derive the reply keypair manually: blind-pairing's poll adds the peer to
+// its skip cache before approve, so the response would never land on the DHT.
+const [BLIND_NS_EPHEMERAL, BLIND_NS_REPLY] = hypercoreCrypto.namespace('blind-pairing/dht', 3);
+function deriveReplyKeyPair(token) {
+  return hypercoreCrypto.keyPair(hypercoreCrypto.hash([BLIND_NS_REPLY, token]));
+}
 
 const toHex = (buf) => {
   if (buf == null) return null;
@@ -142,12 +153,51 @@ function attachExecProtocol(mux, discoveryKey) {
 }
 
 function routeExecMessage(discoveryKeyHex, buf) {
+  // Pairing-wake may arrive before the peer entry exists; route it before the lookup.
+  if (isPairingWake(buf)) {
+    triggerPairingPoll(discoveryKeyHex);
+    return;
+  }
   const peer = peers.get(discoveryKeyHex);
   if (!peer) return;
   if (peer.role === 'host') {
     handleExecRequest(discoveryKeyHex, buf);
   } else {
     handleExecReply(discoveryKeyHex, buf);
+  }
+}
+
+function isPairingWake(buf) {
+  if (!buf) return false;
+  // Pre-check the head so large stdout chunks skip JSON.parse.
+  const head = Buffer.from(buf).subarray(0, Math.min(buf.length, 32)).toString('utf8');
+  if (!head.includes('"pairing-wake"')) return false;
+  try {
+    const msg = JSON.parse(Buffer.from(buf).toString('utf8'));
+    return msg && msg.kind === 'pairing-wake';
+  } catch {
+    return false;
+  }
+}
+
+function triggerPairingPoll(discoveryKeyHex) {
+  const candidate = candidates.get(discoveryKeyHex);
+  if (!candidate || typeof candidate._poll !== 'function') return;
+  // _poll is fire-and-forget; errors are swallowed inside blind-pairing.
+  Promise.resolve(candidate._poll()).catch(() => {});
+}
+
+function sendPairingWake(discoveryKeyHex) {
+  const entry = execChannels.get(discoveryKeyHex);
+  if (!entry?.channel) return false;
+  const msg = entry.channel.messages?.[0];
+  if (!msg) return false;
+  try {
+    msg.send(Buffer.from(JSON.stringify({ kind: 'pairing-wake' }), 'utf8'));
+    return true;
+  } catch (err) {
+    console.warn('[peer] pairing-wake send failed:', err?.message ?? err);
+    return false;
   }
 }
 
@@ -239,6 +289,9 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
         return;
       }
 
+      // Already paired with this guest; candidate is a retry or duplicate.
+      if (peers.has(discoveryKeyHex)) return;
+
       if (pendingByDiscovery.has(discoveryKeyHex)) return;
       pendingByDiscovery.add(discoveryKeyHex);
 
@@ -295,9 +348,30 @@ async function approve(requestId) {
   const pending = pendingRequests.get(requestId);
   if (!pending) return false;
   pendingRequests.delete(requestId);
-  pendingByDiscovery.delete(pending.discoveryKey);
-  if (pending.inviteId) pendingByInvite.delete(pending.inviteId);
+  // Keep dedupe entries after approve so the guest's continuous candidate
+  // retries don't create a second pending request. Cleared on drop.
   pending.candidate.confirm({ key: pending.autobaseKey });
+
+  // Re-drive the response on the DHT: the member's poll ran onadd before
+  // approve, so the peer landed in the skip cache without a response ever put.
+  const member = members.get(pending.discoveryKey);
+  if (member) {
+    try {
+      const response = pending.candidate?.response;
+      const token = pending.candidate?.token;
+      if (response && token) {
+        const replyKeyPair = deriveReplyKeyPair(token);
+        await member.dht.mutablePut(replyKeyPair, response);
+      }
+    } catch (err) {
+      console.warn('[peer] manual response put failed:', err?.message ?? err);
+    }
+  }
+
+  // Wake the guest on the exec channel so it polls immediately instead of
+  // waiting for the next 30s tick. No-op if the channel isn't open yet.
+  sendPairingWake(pending.discoveryKey);
+
   finalizePair(
     pending.discoveryKey,
     'host',
@@ -341,6 +415,21 @@ function clearAudit() {
   return true;
 }
 
+function clearPeerAudit(discoveryKey) {
+  if (typeof discoveryKey !== 'string' || !discoveryKey) {
+    throw new Error('clearPeerAudit: discoveryKey is required');
+  }
+  let removed = 0;
+  for (let i = auditLog.length - 1; i >= 0; i--) {
+    if (auditLog[i].discoveryKey === discoveryKey) {
+      auditLog.splice(i, 1);
+      removed += 1;
+    }
+  }
+  emit('peer:audit-cleared-for-peer', { discoveryKey, at: Date.now(), removed });
+  return removed;
+}
+
 async function acceptInvite(inviteB64, { userData = null, code = null, hostIdentity = null } = {}) {
   ensureReady();
   if (typeof inviteB64 !== 'string' || inviteB64.length === 0) {
@@ -374,6 +463,9 @@ async function acceptInvite(inviteB64, { userData = null, code = null, hostIdent
     },
   });
   candidates.set(discoveryKeyHex, candidate);
+  // Attach the exec protocol to current connections before awaiting pairing
+  // so the host's pairing-wake has somewhere to land. No-op if no connection.
+  attachExecToAllConnections(discoveryKey);
 
   appendAudit('peer:pair:sent', { discoveryKey: discoveryKeyHex });
 
@@ -433,6 +525,9 @@ async function dropPeer(discoveryKeyHex) {
   execChannels.delete(discoveryKeyHex);
 
   peers.delete(discoveryKeyHex);
+  // Clear dedupe entries that approve() leaves in place so a re-pair isn't blocked.
+  pendingByDiscovery.delete(discoveryKeyHex);
+  if (peer.inviteId) pendingByInvite.delete(peer.inviteId);
   appendAudit('peer:dropped', { discoveryKey: discoveryKeyHex, role: peer.role });
   emit('peer:dropped', { discoveryKey: discoveryKeyHex });
   return true;
@@ -450,11 +545,25 @@ function handleExecRequest(discoveryKeyHex, buf) {
     const state = execStates.get(discoveryKeyHex);
     if (state?.child && !state.child.killed) {
       state.child.kill('SIGTERM');
+      // Native inference ignores SIGTERM; escalate to SIGKILL after 3s.
+      setTimeout(() => {
+        const s = execStates.get(discoveryKeyHex);
+        if (s?.child && !s.child.killed) s.child.kill('SIGKILL');
+      }, 3000);
     }
     return;
   }
   if (msg.kind !== 'request') return;
   if (execStates.has(discoveryKeyHex)) {
+    const existing = execStates.get(discoveryKeyHex);
+    const age = existing?.startedAt ? Date.now() - existing.startedAt : 0;
+    // Previous exec alive >5 min means the prior cancel likely didn't take; force-kill and accept.
+    if (existing?.child && !existing.child.killed && age > 5 * 60_000) {
+      existing.child.kill('SIGKILL');
+      // Exit handler tears down state; if state still exists the new exec will queue.
+      setTimeout(() => spawnExec(discoveryKeyHex, msg), 100);
+      return;
+    }
     sendExecReply(discoveryKeyHex, {
       kind: 'error',
       message: 'another exec is already running on this peer',
@@ -474,22 +583,35 @@ function handleExecReply(discoveryKeyHex, buf) {
   if (!payload) return;
   const active = activeGuestExec.get(discoveryKeyHex);
   if (!active) return;
-  if (payload.kind === 'chunk') {
-    if (!active.announced) {
-      active.announced = true;
-      appendAudit('peer:exec:remote-started', { discoveryKey: discoveryKeyHex });
-    }
+  if (payload.kind === 'started') {
+    appendAudit('peer:exec:remote-started', {
+      discoveryKey: discoveryKeyHex,
+      mode: payload.mode ?? null,
+      fileName: payload.fileName ?? null,
+    });
+  } else if (payload.kind === 'chunk') {
     active.emitter.emit(payload.stream, payload.data);
   } else if (payload.kind === 'exit') {
     active.emitter.emit('exit', { code: payload.code ?? null, signal: payload.signal ?? null });
     active.emitter.emit('end');
     activeGuestExec.delete(discoveryKeyHex);
-    appendAudit('peer:exec:remote-finished', { discoveryKey: discoveryKeyHex, code: payload.code, signal: payload.signal ?? null });
+    appendAudit('peer:exec:remote-finished', {
+      discoveryKey: discoveryKeyHex,
+      code: payload.code,
+      signal: payload.signal ?? null,
+      mode: payload.mode ?? null,
+      fileName: payload.fileName ?? null,
+    });
   } else if (payload.kind === 'error') {
     active.emitter.emit('error', new Error(payload.message ?? 'exec failed'));
     active.emitter.emit('end');
     activeGuestExec.delete(discoveryKeyHex);
-    appendAudit('peer:exec:remote-error', { discoveryKey: discoveryKeyHex, message: payload.message ?? 'exec failed' });
+    appendAudit('peer:exec:remote-error', {
+      discoveryKey: discoveryKeyHex,
+      message: payload.message ?? 'exec failed',
+      mode: payload.mode ?? null,
+      fileName: payload.fileName ?? null,
+    });
   }
 }
 
@@ -512,17 +634,18 @@ function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [], fil
   if (mode === 'file') {
     const file = path.join(fileDir, fileName);
     fs.writeFileSync(file, code, 'utf-8');
-    args = [...argv, file];
+    args = [...DOCK_HIDE_ARGS, ...argv, file];
   } else {
-    args = ['-e', code, ...argv];
+    args = [...DOCK_HIDE_ARGS, '-e', code, ...argv];
   }
   const child = spawn(process.execPath, args, {
     cwd: childCwd,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  execStates.set(discoveryKeyHex, { child });
+  execStates.set(discoveryKeyHex, { child, startedAt: Date.now(), mode, fileName });
   appendAudit('peer:exec:started', { discoveryKey: discoveryKeyHex, mode, fileName });
+  sendExecReply(discoveryKeyHex, { kind: 'started', mode, fileName });
 
   child.stdout.on('data', (chunk) => {
     sendExecReply(discoveryKeyHex, { kind: 'chunk', stream: 'stdout', data: chunk.toString('utf8') });
@@ -531,13 +654,37 @@ function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [], fil
     sendExecReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data: chunk.toString('utf8') });
   });
   child.on('error', (err) => {
-    sendExecReply(discoveryKeyHex, { kind: 'error', message: err?.message ?? String(err) });
-    appendAudit('peer:exec:error', { discoveryKey: discoveryKeyHex, message: err?.message ?? String(err) });
+    const meta = execStates.get(discoveryKeyHex);
+    sendExecReply(discoveryKeyHex, {
+      kind: 'error',
+      message: err?.message ?? String(err),
+      mode: meta?.mode ?? null,
+      fileName: meta?.fileName ?? null,
+    });
+    appendAudit('peer:exec:error', {
+      discoveryKey: discoveryKeyHex,
+      message: err?.message ?? String(err),
+      mode: meta?.mode ?? null,
+      fileName: meta?.fileName ?? null,
+    });
     execStates.delete(discoveryKeyHex);
   });
   child.on('exit', (code, signal) => {
-    sendExecReply(discoveryKeyHex, { kind: 'exit', code, signal: signal ?? null });
-    appendAudit('peer:exec:finished', { discoveryKey: discoveryKeyHex, code, signal: signal ?? null });
+    const meta = execStates.get(discoveryKeyHex);
+    sendExecReply(discoveryKeyHex, {
+      kind: 'exit',
+      code,
+      signal: signal ?? null,
+      mode: meta?.mode ?? null,
+      fileName: meta?.fileName ?? null,
+    });
+    appendAudit('peer:exec:finished', {
+      discoveryKey: discoveryKeyHex,
+      code,
+      signal: signal ?? null,
+      mode: meta?.mode ?? null,
+      fileName: meta?.fileName ?? null,
+    });
     execStates.delete(discoveryKeyHex);
   });
 }
@@ -666,6 +813,7 @@ module.exports = {
   exec,
   cancelExec,
   clearAudit,
+  clearPeerAudit,
   on,
   close,
 };

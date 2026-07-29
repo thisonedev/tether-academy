@@ -241,6 +241,37 @@ async function main() {
   }
   console.log('[test-peer-exec] PASS: audit log has peer:exec:started and peer:exec:finished');
 
+  // The host must echo fileName and mode back to the guest on remote exec start.
+  const remoteRunFile = 'guest-side-remote-exec.mts';
+  const auditBefore = guest.getAudit().length;
+  await new Promise((resolve, reject) => {
+    const emitter = guest.exec({
+      peerId: guestEvent.discoveryKey,
+      code: 'process.exit(0);',
+      fileName: remoteRunFile,
+    });
+    emitter.on('exit', () => resolve());
+    emitter.on('error', reject);
+    setTimeout(() => reject(new Error('remote-started audit timed out')), 10_000);
+  });
+  const guestAudit = guest.getAudit();
+  const remoteStarted = guestAudit
+    .slice(auditBefore)
+    .find((e) => e.type === 'peer:exec:remote-started');
+  if (!remoteStarted) {
+    console.error('[test-peer-exec] FAIL: guest audit missing peer:exec:remote-started');
+    process.exit(1);
+  }
+  if (remoteStarted.fileName !== remoteRunFile) {
+    console.error('[test-peer-exec] FAIL: remote-started fileName mismatch', { got: remoteStarted.fileName, want: remoteRunFile });
+    process.exit(1);
+  }
+  if (remoteStarted.mode !== 'inline') {
+    console.error('[test-peer-exec] FAIL: remote-started mode should default to inline', { got: remoteStarted.mode });
+    process.exit(1);
+  }
+  console.log('[test-peer-exec] PASS: peer:exec:remote-started carries fileName and mode');
+
   let cancelWithoutExec = guest.cancelExec(guestEvent.discoveryKey);
   if (cancelWithoutExec !== false) {
     console.error('[test-peer-exec] FAIL: cancelExec with no in-flight exec should return false, got', cancelWithoutExec);

@@ -9,6 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --no-sandbox",
+    "dev:host": "electron . --no-sandbox --storage .dev-host",
     "capture": "electron . --capture --no-sandbox"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "framed-stream": "^1.0.1",
     "hello-pear-worker": "^1.0.0",
     "hypercore": "^11.35.0",
+    "hypercore-crypto": "^3.7.0",
     "hyperswarm": "^4.14.0",
     "paparam": "^1.10.0",
     "pear-runtime": "^1.1.4",

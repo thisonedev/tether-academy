@@ -29,6 +29,19 @@ function loadUsageMap() {
   return usageMap;
 }
 
+let descriptionMap = null;
+function loadDescriptionMap() {
+  if (descriptionMap !== null) return descriptionMap;
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, 'model-descriptions.json'), 'utf-8');
+    descriptionMap = JSON.parse(raw);
+    if (!descriptionMap || typeof descriptionMap !== 'object') descriptionMap = {};
+  } catch {
+    descriptionMap = {};
+  }
+  return descriptionMap;
+}
+
 function modelsRoot() {
   return path.join(os.homedir(), '.qvac', 'models');
 }
@@ -82,6 +95,7 @@ async function listModels() {
   if (!rootStat || !rootStat.isDirectory()) return [];
 
   const usage = loadUsageMap();
+  const descriptions = loadDescriptionMap();
   const out = [];
   let entries;
   try {
@@ -105,6 +119,7 @@ async function listModels() {
         sourceHash: hashMatch ? hashMatch[1] : '',
         fileCount: 1,
         usedIn: usage[displayName] ?? [],
+        description: descriptions[displayName] ?? '',
       });
     } else if (entry.isDirectory() && (entry.name === 'sharded' || entry.name === 'sets')) {
       const groups = await fsp.readdir(abs, { withFileTypes: true });
@@ -121,6 +136,7 @@ async function listModels() {
           sourceHash: '',
           fileCount: count,
           usedIn: usage[group.name] ?? [],
+          description: descriptions[group.name] ?? '',
         });
       }
     }

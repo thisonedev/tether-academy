@@ -125,6 +125,7 @@ ipcMain.handle('academy:run', async (evt, payload) => {
         peerId: payload.peerId,
         code: wrapped,
         mode: 'file',
+        fileName: typeof payload.fileName === 'string' && payload.fileName ? payload.fileName : 'snippet.mts',
         argv: ['--experimental-strip-types', '--no-warnings', ...(Array.isArray(payload.argv) ? payload.argv : [])],
         cwd: COURSES_DIR,
       });
@@ -152,9 +153,10 @@ ipcMain.handle('academy:run', async (evt, payload) => {
         emitter.on('error', (err) => {
           resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] ${err.message}` });
         });
+        // 5 minutes: model downloads on first run can easily exceed a minute.
         setTimeout(() => {
-          resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] no response from peer after 60s` });
-        }, 60_000);
+          resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] no response from peer after 5m` });
+        }, 5 * 60_000);
       }),
       abort: () => peer.cancelExec(payload.peerId),
     };
@@ -284,6 +286,10 @@ ipcMain.handle('academy:peer:audit', (_e, opts) => {
 
 ipcMain.handle('academy:peer:clear-audit', () => {
   return peer.clearAudit();
+});
+
+ipcMain.handle('academy:peer:clear-peer-audit', (_e, discoveryKey) => {
+  return peer.clearPeerAudit(discoveryKey);
 });
 
 ipcMain.handle('academy:peer:lockdown', async () => {

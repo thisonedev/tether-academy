@@ -82,7 +82,7 @@ async function main() {
   await candidate.pairing;
   console.log('[test] candidate.pairing resolved');
 
-  // Give the host's onadd a tick to fire after the response lands.
+  // Give the host's onadd a tick to fire after the DHT response lands.
   await new Promise((r) => setTimeout(r, 500));
 
   if (!hostPaired) {

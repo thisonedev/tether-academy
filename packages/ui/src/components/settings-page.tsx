@@ -4,12 +4,22 @@ import type {
   AcademyAPI,
   AcademyDeviceInfo,
   AcademyModelEntry,
+  AcademyPeerAuditEntry,
+  AcademyPeerInfo,
 } from '@academy/academy-bridge';
 import { useUserHydrated, useUserStore } from '@academy/core';
-import { Box, Cpu, Database, HardDrive, Loader2, MemoryStick, Trash2 } from 'lucide-react';
+import { Box, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivitySection, DevicesPanel, PairedDevicesSection, PendingRequestsSection } from './devices-panel.js';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivitySection,
+  DevicesPanel,
+  ExecRunList,
+  formatRelativeTime,
+  pairUserDataLabel,
+  PendingRequestsSection,
+  shortHex,
+} from './devices-panel.js';
 
 declare global {
   interface Window {
@@ -301,7 +311,7 @@ export function SettingsPage() {
               home directory.
             </p>
           ) : (
-            <ul className="max-h-[28rem] divide-y divide-canvas-border overflow-y-auto overflow-x-hidden rounded-lg border border-canvas-border bg-canvas">
+            <ul className="divide-y divide-canvas-border overflow-x-hidden rounded-lg border border-canvas-border bg-canvas">
               {models.map((m) => (
                 <ModelRow
                   key={m.id}
@@ -317,7 +327,6 @@ export function SettingsPage() {
           {models && models.length > 0 ? (
             <p className="mt-2 text-[11px] text-canvas-muted-foreground/70">
               {models.length} {models.length === 1 ? 'model' : 'models'} downloaded
-              {models.length > 6 ? ' · scroll to see the rest' : ''}
             </p>
           ) : null}
 
@@ -334,6 +343,7 @@ export function SettingsPage() {
           role="tabpanel"
           id="settings-panel-paired"
           aria-labelledby="settings-tab-paired"
+          className="pb-8 sm:pb-12"
         >
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <div className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">
@@ -346,10 +356,18 @@ export function SettingsPage() {
               </p>
               <DevicesPanel />
             </div>
-            <div className="flex flex-col gap-5">
-              <ActivitySection />
-              <PendingRequestsSection />
-              <PairedDevicesSection />
+            <div className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6">
+              <h2 className="mb-1 text-lg font-semibold text-canvas-foreground sm:text-xl">
+                Activity
+              </h2>
+              <p className="mb-4 text-sm text-canvas-muted-foreground">
+                Live event log, pending pair requests, and run history for paired devices.
+              </p>
+              <div className="space-y-6">
+                <ActivitySection />
+                <PendingRequestsSection />
+                <PerDeviceRunLog />
+              </div>
             </div>
           </div>
         </section>
@@ -406,7 +424,7 @@ function ModelRow({
           {model.fileCount > 1 ? ` · ${model.fileCount} files` : ''}
           {model.sourceHash ? ` · ${model.sourceHash}` : ''}
         </p>
-        <UsageHint usedIn={model.usedIn} />
+        <UsageHint description={model.description} usedIn={model.usedIn} />
       </div>
       <div className="flex shrink-0 items-center gap-3">
         <span className="font-mono text-sm text-canvas-foreground">{formatGb(model.sizeBytes)}</span>
@@ -446,19 +464,35 @@ function ModelRow({
   );
 }
 
-function UsageHint({ usedIn }: { usedIn: AcademyModelEntry['usedIn'] }) {
+function UsageHint({
+  description,
+  usedIn,
+}: {
+  description: string;
+  usedIn: AcademyModelEntry['usedIn'];
+}) {
   if (!usedIn || usedIn.length === 0) {
     return (
-      <p className="mt-1 text-[11px] text-canvas-muted-foreground/70">
-        Not used in any lesson. Safe to remove
-      </p>
+      <div className="mt-1 space-y-0.5">
+        {description ? (
+          <p className="text-[11px] text-canvas-muted-foreground">{description}</p>
+        ) : null}
+        <p className="text-[11px] text-canvas-muted-foreground/70">
+          Not used in any lesson. Safe to remove
+        </p>
+      </div>
     );
   }
   const labels = usedIn.map((ref) => chapterLabel(ref.chapter));
   return (
-    <p className="mt-1 text-[11px] text-canvas-muted-foreground">
-      Used in: {joinChapters(labels)}
-    </p>
+    <div className="mt-1 space-y-0.5">
+      {description ? (
+        <p className="text-[11px] text-canvas-muted-foreground">{description}</p>
+      ) : null}
+      <p className="text-[11px] text-canvas-muted-foreground">
+        Used in: {joinChapters(labels)}
+      </p>
+    </div>
   );
 }
 
@@ -590,5 +624,262 @@ function DeviceTable({ info }: { info: AcademyDeviceInfo }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function PerDeviceRunLog() {
+  const [peers, setPeers] = useState<AcademyPeerInfo[]>([]);
+  const [audit, setAudit] = useState<AcademyPeerAuditEntry[]>([]);
+  const [now, setNow] = useState<number>(() => Date.now());
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [clearBusy, setClearBusy] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!window.academy?.peer) return;
+    const [p, au] = await Promise.all([
+      window.academy.peer.list().catch(() => []),
+      window.academy.peer.audit({ limit: 500 }).catch(() => []),
+    ]);
+    setPeers(Array.isArray(p) ? p : []);
+    setAudit(Array.isArray(au) ? au : []);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    refresh();
+    const off = window.academy?.peer?.onEvent?.((msg) => {
+      if (cancelled) return;
+      if (
+        msg.event === 'peer:audit' ||
+        msg.event === 'peer:paired' ||
+        msg.event === 'peer:dropped' ||
+        msg.event === 'peer:audit-cleared' ||
+        msg.event === 'peer:audit-cleared-for-peer'
+      ) {
+        refresh();
+      }
+    });
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    return () => {
+      cancelled = true;
+      if (typeof off === 'function') off();
+      clearInterval(tick);
+    };
+  }, [refresh]);
+
+  const onDrop = useCallback(async (discoveryKey: string) => {
+    if (!window.academy?.peer) return;
+    setActionBusy(discoveryKey);
+    try {
+      await window.academy.peer.drop(discoveryKey);
+    } catch {
+      // surfaced via audit
+    } finally {
+      setActionBusy(null);
+    }
+  }, []);
+
+  const onClear = useCallback(async (discoveryKey: string) => {
+    if (!window.academy?.peer) return;
+    setClearBusy(discoveryKey);
+    try {
+      await window.academy.peer.clearPeerAudit(discoveryKey);
+    } catch {
+      // surfaced via audit
+    } finally {
+      setClearBusy(null);
+    }
+  }, []);
+
+  if (peers.length === 0) {
+    return (
+      <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
+        No paired devices. Pair one in the form above, then come back to see run history for
+        that pair here.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {peers.map((peer) => (
+          <PairedDeviceCard
+            key={peer.discoveryKey}
+            peer={peer}
+            audit={audit}
+            now={now}
+            busy={actionBusy === peer.discoveryKey}
+            clearBusy={clearBusy === peer.discoveryKey}
+            onDrop={() => onDrop(peer.discoveryKey)}
+            onClear={() => onClear(peer.discoveryKey)}
+          />
+        ))}
+    </div>
+  );
+}
+
+function formatExecSample(entry: AcademyPeerAuditEntry): string | null {
+  if (entry.mode === 'inline') return 'inline snippet';
+  if (entry.fileName) return entry.fileName;
+  return null;
+}
+
+function useExecRows(peer: AcademyPeerInfo, audit: AcademyPeerAuditEntry[]) {
+  return useMemo(() => {
+    const events = audit
+      .filter(
+        (e) =>
+          e.discoveryKey === peer.discoveryKey &&
+          (e.type === 'peer:exec:started' ||
+            e.type === 'peer:exec:finished' ||
+            e.type === 'peer:exec:error' ||
+            e.type === 'peer:exec:remote-started' ||
+            e.type === 'peer:exec:remote-finished' ||
+            e.type === 'peer:exec:remote-error'),
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
+    const rows: Array<{
+      key: string;
+      label: string;
+      tone: 'running' | 'ok' | 'err' | 'info';
+      ts: number;
+      duration: string | null;
+    }> = [];
+    const openStartByRun = new Map<string, number>();
+    let runIndex = 0;
+    for (const e of events) {
+      const isStarted =
+        e.type === 'peer:exec:started' || e.type === 'peer:exec:remote-started';
+      const isFinished =
+        e.type === 'peer:exec:finished' || e.type === 'peer:exec:remote-finished';
+      const isError = e.type === 'peer:exec:error' || e.type === 'peer:exec:remote-error';
+      const isOk = isFinished && e.code === 0;
+      const baseTone: 'running' | 'ok' | 'err' = isStarted
+        ? 'running'
+        : isError
+          ? 'err'
+          : isOk
+            ? 'ok'
+            : 'err';
+      const sample = formatExecSample(e);
+      const sampleTail = sample ? ` · ${sample}` : '';
+      const baseLabel = isStarted
+        ? `Run started${sampleTail}`
+        : isOk
+          ? `Run finished · exit 0${sampleTail}`
+          : isError && e.code != null
+            ? `Run failed · exit ${e.code}${sampleTail}`
+            : isError && e.signal
+              ? `Run stopped · ${e.signal}${sampleTail}`
+              : isError && e.message
+                ? `Run error: ${e.message}${sampleTail}`
+                : `Run finished${sampleTail}`;
+      if (isStarted) {
+        openStartByRun.set(`run-${runIndex}`, e.timestamp);
+        rows.push({
+          key: `start-${e.timestamp}-${runIndex}`,
+          label: baseLabel,
+          tone: baseTone,
+          ts: e.timestamp,
+          duration: null,
+        });
+        runIndex += 1;
+        continue;
+      }
+      const startKey = Array.from(openStartByRun.keys()).pop();
+      const startTs = startKey ? openStartByRun.get(startKey) : undefined;
+      if (startKey && startTs != null) openStartByRun.delete(startKey);
+      const duration = startTs != null ? `${Math.max(0, Math.round((e.timestamp - startTs) / 1000))}s` : null;
+      rows.push({
+        key: `end-${e.timestamp}-${runIndex}`,
+        label: baseLabel,
+        tone: baseTone,
+        ts: e.timestamp,
+        duration,
+      });
+    }
+    return rows.reverse();
+  }, [audit, peer.discoveryKey]);
+}
+
+function PairedDeviceCard({
+  peer,
+  audit,
+  now,
+  busy,
+  clearBusy,
+  onDrop,
+  onClear,
+}: {
+  peer: AcademyPeerInfo;
+  audit: AcademyPeerAuditEntry[];
+  now: number;
+  busy: boolean;
+  clearBusy: boolean;
+  onDrop: () => void;
+  onClear: () => void;
+}) {
+  const rows = useExecRows(peer, audit);
+  return (
+    <div className="rounded-xl border border-canvas-border bg-canvas p-4">
+      <div className="flex items-center gap-2">
+        <p
+          className="min-w-0 flex-1 truncate text-sm font-medium text-canvas-foreground"
+          title={pairUserDataLabel(peer)}
+        >
+          {pairUserDataLabel(peer)}
+        </p>
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={clearBusy || rows.length === 0}
+          title="Clear this device's run history"
+          aria-label="Clear this device's run history"
+          className="inline-flex shrink-0 items-center rounded border border-canvas-border bg-canvas-muted p-1.5 text-canvas-muted-foreground transition-colors hover:border-canvas-foreground/40 hover:text-canvas-foreground disabled:opacity-50"
+        >
+          {clearBusy ? <Loader2 className="size-3 animate-spin" /> : <Eraser className="size-3" />}
+        </button>
+        <button
+          type="button"
+          onClick={onDrop}
+          disabled={busy}
+          title="Drop this pair"
+          aria-label="Drop this pair"
+          className="inline-flex shrink-0 items-center rounded border border-canvas-border bg-canvas-muted p-1.5 text-canvas-muted-foreground transition-colors hover:border-red-500/40 hover:text-red-400 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+        </button>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <RoleBadgeLite role={peer.role} />
+        <span
+          className="truncate font-mono text-[11px] text-canvas-muted-foreground"
+          title={peer.discoveryKey}
+        >
+          {shortHex(peer.discoveryKey, 10, 6)} · paired {formatRelativeTime(peer.pairedAt, now)}
+        </span>
+      </div>
+      <div className="mt-3">
+        <ExecRunList
+          rows={rows}
+          emptyHint="No code runs on this pair yet. Open a lesson, switch run mode to Paired device, and pick this one."
+        />
+      </div>
+    </div>
+  );
+}
+
+function RoleBadgeLite({ role }: { role: 'host' | 'guest' }) {
+  if (role === 'host') {
+    return (
+      <span className="inline-flex shrink-0 items-center rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400 ring-1 ring-emerald-500/30">
+        host
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400 ring-1 ring-sky-500/30">
+      guest
+    </span>
   );
 }

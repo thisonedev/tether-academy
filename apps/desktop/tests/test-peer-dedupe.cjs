@@ -1,5 +1,4 @@
-// Stress test: a single member receiving many parallel candidates should
-// only ever surface one pending request at a time.
+// Stress test: a single member receiving many parallel candidates should surface only one pending request.
 
 const os = require('node:os');
 const path = require('node:path');
@@ -42,11 +41,9 @@ async function main() {
   await host.init({ store: hostStore, bootstrap });
   console.log('[test-peer-dedupe] host pubkey:', hostStore.identity.publicKey.slice(0, 16) + '...');
 
-  // Create one invite.
   const invite = await host.createInvite();
   console.log('[test-peer-dedupe] invite code:', invite.pairingCode);
 
-  // Race 5 parallel guests at the same member.
   const guestCount = 5;
   const guests = [];
   for (let i = 0; i < guestCount; i++) {
@@ -61,7 +58,7 @@ async function main() {
     guests.push(guest);
   }
 
-  // Give onadd time to fire.
+  // Give onadd time to fire across the candidate race.
   await new Promise((r) => setTimeout(r, 1500));
 
   const pending = host.listPending();

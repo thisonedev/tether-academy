@@ -5,6 +5,8 @@ export const academyRunPayloadSchema = z.object({
   language: z.string(),
   argv: z.array(z.string()).optional(),
   peerId: z.string().optional(),
+  /** Display label for the run, used in the paired-devices history. */
+  fileName: z.string().optional(),
 });
 
 export const academyRunResultSchema = z.object({

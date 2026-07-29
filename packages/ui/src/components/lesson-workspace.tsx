@@ -6,9 +6,9 @@ import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
 import { javascript } from '@codemirror/lang-javascript';
 import { oneDark } from '@codemirror/theme-one-dark';
 import CodeMirror from '@uiw/react-codemirror';
-import { ArrowLeft, ArrowRight, Check, Copy, Pencil, Play, RotateCcw, Square, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Copy, Loader2, Pencil, Play, RotateCcw, Square, X } from 'lucide-react';
 import Link from 'next/link';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
@@ -78,6 +78,17 @@ function sourceFromArgvFrom(from: LessonArgvSlot['from']): string | null {
   return m ? m[1] : null;
 }
 
+function peerLabel(peer: { discoveryKey: string; userData: unknown }): string {
+  const data = peer.userData;
+  if (data && typeof data === 'object' && 'name' in data && typeof (data as { name: unknown }).name === 'string') {
+    return (data as { name: string }).name;
+  }
+  if (data && typeof data === 'object' && 'hostname' in data && typeof (data as { hostname: unknown }).hostname === 'string') {
+    return (data as { hostname: string }).hostname;
+  }
+  return peer.discoveryKey.slice(0, 12);
+}
+
 function argInputPlaceholder(slot: LessonArgvSlot, captured: Record<string, string>): string {
   const source = sourceFromArgvFrom(slot.from);
   if (source) {
@@ -87,6 +98,15 @@ function argInputPlaceholder(slot: LessonArgvSlot, captured: Record<string, stri
   }
   if (slot.from === 'literal' && slot.default) return slot.default;
   return 'optional';
+}
+
+// Per-run temp file label shown in the paired-devices audit log; uses the lesson title.
+function runFileName(data: LessonData): string {
+  const slug = data.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${slug || 'lesson'}.mts`;
 }
 
 declare global {
@@ -113,7 +133,15 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       try {
         const peers = await window.academy?.peer?.list?.();
         if (!cancelled && Array.isArray(peers)) {
-          setRemotePeers(peers.map((p) => ({ discoveryKey: p.discoveryKey, userData: p.userData, role: p.role })));
+          setRemotePeers(
+            peers.map((p) => ({
+              discoveryKey: p.discoveryKey,
+              userData: p.userData,
+              role: p.role,
+              pairedAt: p.pairedAt,
+              hostIdentity: p.hostIdentity ?? null,
+            })),
+          );
         }
       } catch {
         // silent; UI shows the empty state
@@ -128,19 +156,87 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [isDesktop]);
+  // Poll identity on a short interval: peer.init runs after app.whenReady, so
+  // a workspace mounted earlier in the boot may see null for a beat.
+  const [localPublicKey, setLocalPublicKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isDesktop) return;
+    let cancelled = false;
+    let pollId: ReturnType<typeof setInterval> | null = null;
+    const fetchIdentity = async () => {
+      try {
+        const id = await window.academy?.peer?.identity?.();
+        if (cancelled) return;
+        if (id?.publicKey) {
+          setLocalPublicKey(id.publicKey);
+          if (pollId) {
+            clearInterval(pollId);
+            pollId = null;
+          }
+        }
+      } catch {
+        // silent; treat as no identity until it loads
+      }
+    };
+    fetchIdentity();
+    pollId = setInterval(fetchIdentity, 500);
+    const unsubscribe = window.academy?.peer?.onEvent?.(() => {
+      fetchIdentity();
+    });
+    return () => {
+      cancelled = true;
+      if (pollId) clearInterval(pollId);
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [isDesktop]);
   const [runMode, setRunMode] = useState<RunMode>('simulated');
-  const [remotePeers, setRemotePeers] = useState<Array<{ discoveryKey: string; userData: unknown; role: string }>>([]);
+  const [remotePeers, setRemotePeers] = useState<
+    Array<{
+      discoveryKey: string;
+      userData: unknown;
+      role: string;
+      pairedAt: number;
+      hostIdentity: string | null;
+    }>
+  >([]);
+  // Two app instances sharing a userData dir pair as the same identity; the
+  // exec channel can't route between matching keys, so runs hang silently.
+  // Filter self-pairs, then keep only guest-role peers (the side that runs
+  // the code) so a host never tries to forward runs to itself-as-host.
+  const realRemotePeers = useMemo(() => {
+    const notSelf = localPublicKey
+      ? remotePeers.filter((p) => p.hostIdentity !== localPublicKey)
+      : remotePeers;
+    return notSelf.filter((p) => p.role === 'guest');
+  }, [remotePeers, localPublicKey]);
+  const selfPairCount = remotePeers.length - realRemotePeers.length;
+  const localIsOnlyHost =
+    remotePeers.length > 0 && remotePeers.every((p) => p.role === 'host');
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
+  // Auto-pick the most recently paired device when entering Paired-device mode
+  // with no current selection (initial entry, peer dropped, mode flip-back).
+  useEffect(() => {
+    if (runMode !== 'remote') return;
+    if (realRemotePeers.length === 0) return;
+    if (realRemotePeers.some((p) => p.discoveryKey === selectedPeerId)) return;
+    const latest = realRemotePeers.reduce((a, b) => (a.pairedAt >= b.pairedAt ? a : b));
+    setSelectedPeerId(latest.discoveryKey);
+  }, [runMode, realRemotePeers, selectedPeerId]);
   const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
   const [outputLines, setOutputLines] = useState<OutputLine[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [stopRequested, setStopRequested] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [hasShownModal, setHasShownModal] = useState(false);
-  // Bumped on each run and used as the key on OutputView so a re-run
-  // remounts it with the cleared state.
   const [outputKey, setOutputKey] = useState(0);
   const [argvOverrides, setArgvOverrides] = useState<Record<string, string>>({});
   const [argvCaptured, setArgvCaptured] = useState<Record<string, string>>({});
+  const [lastRemoteRun, setLastRemoteRun] = useState<
+    | { kind: 'running'; peerId: string; startedAt: number }
+    | { kind: 'ok'; peerId: string; startedAt: number; endedAt: number }
+    | { kind: 'err'; peerId: string; startedAt: number; endedAt: number; code: number | null; signal: string | null; message: string | null }
+    | null
+  >(null);
 
   useEffect(() => {
     if (data.readOnly) {
@@ -292,10 +388,40 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     }
 
     if (runMode === 'remote') {
-      if (remotePeers.length === 0) {
-        setOutputLines([
-          { stream: 'stdout', line: '[paired] No paired devices. Open Settings to pair one, then come back.' },
-        ]);
+      if (realRemotePeers.length === 0) {
+        const lines: OutputLine[] = localIsOnlyHost
+          ? [
+              {
+                stream: 'stdout',
+                line:
+                  '[paired] This device is the host in every pair. Hosts accept runs from guests; they don\'t forward them.',
+              },
+              {
+                stream: 'stdout',
+                line:
+                  'Pair a second device and have it accept the invite (or `pnpm dev:host` in another terminal), then come back.',
+              },
+            ]
+          : selfPairCount > 0
+            ? [
+                {
+                  stream: 'stdout',
+                  line:
+                    '[paired] The only paired device is this device. Two app instances sharing a userData directory end up paired as the same identity, but the exec channel can\'t route between matching keys.',
+                },
+                {
+                  stream: 'stdout',
+                  line:
+                    'Run `pnpm --filter @tether-academy/desktop dev:host` in a second terminal to launch an isolated host, then pair it from Settings > Devices.',
+                },
+              ]
+            : [
+                {
+                  stream: 'stdout',
+                  line: '[paired] No paired devices. Open Settings to pair one, then come back.',
+                },
+              ];
+        setOutputLines(lines);
         if (isLastLessonOfChapter && !data.readOnly) {
           setTab('tests');
           setTestResults(runTests(userCode, data.tests));
@@ -327,6 +453,12 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
 
     if (canRunForReal) {
       setIsAnimating(true);
+      setStopRequested(false);
+      const runStartedAt = Date.now();
+      const isRemoteRun = runMode === 'remote' && !!selectedPeerId;
+      if (isRemoteRun && selectedPeerId) {
+        setLastRemoteRun({ kind: 'running', peerId: selectedPeerId, startedAt: runStartedAt });
+      }
       // Stream chunks as they arrive so 30-60s finetune runs don't look frozen.
       // Local buffer keeps stream type so the panel can distinguish reasoning from answer text.
       const streamBuffer: OutputLine[] = [];
@@ -359,25 +491,67 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           source: userCode,
           language: 'typescript',
           argv: resolvedArgv,
-          ...(runMode === 'remote' && selectedPeerId ? { peerId: selectedPeerId } : {}),
+          fileName: runFileName(data),
+          ...(isRemoteRun && selectedPeerId ? { peerId: selectedPeerId } : {}),
         });
         if (!result) {
           producedOutput = [
             ...streamBuffer,
             { stream: 'stdout', line: '[error] no run result returned' },
           ];
+          if (isRemoteRun && selectedPeerId) {
+            setLastRemoteRun({
+              kind: 'err',
+              peerId: selectedPeerId,
+              startedAt: runStartedAt,
+              endedAt: Date.now(),
+              code: null,
+              signal: null,
+              message: 'no result returned from peer',
+            });
+          }
         } else if (result.ok) {
           producedOutput = streamBuffer;
+          if (isRemoteRun && selectedPeerId) {
+            setLastRemoteRun({
+              kind: 'ok',
+              peerId: selectedPeerId,
+              startedAt: runStartedAt,
+              endedAt: Date.now(),
+            });
+          }
         } else if (result.output && result.output.trim().length > 0) {
           producedOutput = [
             ...streamBuffer,
             { stream: 'stdout', line: result.output.trim() },
           ];
+          if (isRemoteRun && selectedPeerId) {
+            setLastRemoteRun({
+              kind: 'err',
+              peerId: selectedPeerId,
+              startedAt: runStartedAt,
+              endedAt: Date.now(),
+              code: result.remoteExit?.code ?? null,
+              signal: result.remoteExit?.signal ?? null,
+              message: result.output.trim().split('\n').pop() ?? null,
+            });
+          }
         } else {
           producedOutput = [
             ...streamBuffer,
             { stream: 'stdout', line: '[exit non-zero]' },
           ];
+          if (isRemoteRun && selectedPeerId) {
+            setLastRemoteRun({
+              kind: 'err',
+              peerId: selectedPeerId,
+              startedAt: runStartedAt,
+              endedAt: Date.now(),
+              code: result.remoteExit?.code ?? null,
+              signal: result.remoteExit?.signal ?? null,
+              message: '[exit non-zero]',
+            });
+          }
         }
         // In case a marker was split across chunk boundaries.
         scanForCaptures(result?.output ?? '');
@@ -389,9 +563,21 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             line: `[error] ${err instanceof Error ? err.message : String(err)}`,
           },
         ];
+        if (isRemoteRun && selectedPeerId) {
+          setLastRemoteRun({
+            kind: 'err',
+            peerId: selectedPeerId,
+            startedAt: runStartedAt,
+            endedAt: Date.now(),
+            code: null,
+            signal: null,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
       } finally {
         unsubscribe?.();
         setIsAnimating(false);
+        setStopRequested(false);
       }
     } else {
       // Simulated mode, or this-device on the web where the academy bridge isn't available.
@@ -437,7 +623,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     isLastLessonOfChapter,
     resolveArgv,
     isDesktop,
-    remotePeers,
+    realRemotePeers,
+    selfPairCount,
+    localIsOnlyHost,
     selectedPeerId,
   ]);
 
@@ -448,7 +636,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   }, [data.startingCode]);
 
   const stopRun = useCallback(() => {
-    if (isAnimating) void window.academy?.stop?.();
+    if (!isAnimating) return;
+    setStopRequested(true);
+    void window.academy?.stop?.();
   }, [isAnimating]);
 
   return (
@@ -511,9 +701,14 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             onArgvOverrideValue={setArgvOverrideValue}
             onArgvOverrideStart={startArgvOverride}
             onArgvOverrideClear={clearArgvOverride}
-            remotePeers={remotePeers}
+            remotePeers={realRemotePeers}
             selectedPeerId={selectedPeerId}
             setSelectedPeerId={setSelectedPeerId}
+            selfPairCount={selfPairCount}
+            localIsOnlyHost={localIsOnlyHost}
+            lastRemoteRun={lastRemoteRun}
+            clearLastRemoteRun={() => setLastRemoteRun(null)}
+            stopRequested={stopRequested}
           />
         </section>
       </div>
@@ -616,6 +811,11 @@ function Runner({
   remotePeers,
   selectedPeerId,
   setSelectedPeerId,
+  selfPairCount,
+  localIsOnlyHost,
+  lastRemoteRun,
+  clearLastRemoteRun,
+  stopRequested = false,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
@@ -643,12 +843,38 @@ function Runner({
   onArgvOverrideValue: (name: string, value: string) => void;
   onArgvOverrideStart: (name: string) => void;
   onArgvOverrideClear: (name: string) => void;
-  remotePeers: Array<{ discoveryKey: string; userData: unknown; role: string }>;
+  remotePeers: Array<{ discoveryKey: string; userData: unknown; role: string; pairedAt: number }>;
   selectedPeerId: string;
   setSelectedPeerId: (id: string) => void;
+  selfPairCount: number;
+  localIsOnlyHost: boolean;
+  lastRemoteRun:
+    | { kind: 'running'; peerId: string; startedAt: number }
+    | { kind: 'ok'; peerId: string; startedAt: number; endedAt: number }
+    | { kind: 'err'; peerId: string; startedAt: number; endedAt: number; code: number | null; signal: string | null; message: string | null }
+    | null;
+  clearLastRemoteRun: () => void;
+  stopRequested?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [capturedCopiedKey, setCapturedCopiedKey] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!lastRemoteRun) return;
+    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [lastRemoteRun]);
+  // Reference `tick` so lint sees it being read; the interval is the effect.
+  void tick;
+
+  const selectedPeer = remotePeers.find((p) => p.discoveryKey === selectedPeerId) ?? null;
+  const peerName = selectedPeer
+    ? peerLabel(selectedPeer)
+    : selectedPeerId
+      ? selectedPeerId.slice(0, 12)
+      : 'paired device';
+  const showRemoteBanner =
+    runMode === 'remote' && (isAnimating || lastRemoteRun !== null);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -742,7 +968,19 @@ function Runner({
           >
             <option value="this-device">This device</option>
             <option value="simulated">Simulated</option>
-            <option value="remote">Paired device</option>
+            <option
+              value="remote"
+              disabled={remotePeers.length === 0}
+              title={
+                localIsOnlyHost
+                  ? 'This device is the host in every pair. Hosts accept runs from guests, not the other way around.'
+                  : selfPairCount > 0
+                    ? 'Only paired device is this device. Launch an isolated host with `pnpm dev:host` to enable this mode.'
+                    : 'No paired devices. Pair one in Settings > Devices.'
+              }
+            >
+              Paired device
+            </option>
           </select>
           {runMode === 'remote' ? (
             <select
@@ -754,7 +992,9 @@ function Runner({
               className="ml-1 max-w-[10rem] truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
               title={remotePeers.length === 0 ? 'No paired devices. Pair one in Settings.' : 'Pick a paired device'}
             >
-              <option value="">{remotePeers.length === 0 ? 'No paired devices' : 'Pick a device'}</option>
+              {remotePeers.length === 0 ? (
+                <option value="">No paired devices</option>
+              ) : null}
               {remotePeers.map((p) => {
                 const name = p.userData && typeof p.userData === 'object' && 'name' in p.userData
                   ? String((p.userData as { name: unknown }).name)
@@ -789,17 +1029,33 @@ function Runner({
           <button
             type="button"
             onClick={isAnimating ? onStop : onRun}
-            disabled={readOnly || (isAnimating ? !onStop : false)}
-            className={`inline-flex items-center justify-center rounded p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            disabled={readOnly || (isAnimating ? stopRequested || !onStop : false)}
+            className={
               isAnimating
-                ? 'text-red-400 hover:bg-red-500/10 hover:text-red-300'
-                : 'text-canvas-muted-foreground hover:bg-canvas-muted hover:text-canvas-foreground'
-            }`}
-            title={isAnimating ? 'Stop run' : 'Run code (R)'}
-            aria-label={isAnimating ? 'Stop run' : 'Run code'}
+                ? stopRequested
+                  ? 'inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
+                  : runMode === 'remote'
+                    ? 'inline-flex items-center gap-1.5 rounded-md bg-red-500 px-2.5 py-1 text-xs font-semibold text-canvas transition-colors hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40'
+                    : 'inline-flex items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
+                : 'inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
+            }
+            title={stopRequested ? 'Stopping…' : isAnimating ? 'Stop run' : 'Run code (R)'}
+            aria-label={stopRequested ? 'Stopping' : isAnimating ? 'Stop run' : 'Run code'}
           >
             {isAnimating ? (
-              <Square className="size-4 fill-current" />
+              stopRequested ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <span>Stopping…</span>
+                </>
+              ) : runMode === 'remote' ? (
+                <>
+                  <Square className="size-3.5 fill-current" />
+                  <span>Stop</span>
+                </>
+              ) : (
+                <Square className="size-4 fill-current" />
+              )
             ) : (
               <Play className="size-4 fill-current" />
             )}
@@ -956,19 +1212,74 @@ function Runner({
         ))}
       </div>
 
+      {showRemoteBanner ? (
+        <RunStatusBanner
+          lastRun={lastRemoteRun}
+          peerName={peerName}
+          isAnimating={isAnimating}
+          stopRequested={stopRequested}
+          onDismiss={clearLastRemoteRun}
+        />
+      ) : null}
+
       <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted p-4 font-mono text-sm text-canvas-foreground">
         {tab === 'output' ? (
           runMode === 'remote' && remotePeers.length === 0 ? (
             <div className="flex h-full items-center justify-center font-sans text-sm text-canvas-muted-foreground">
               <div className="flex max-w-sm flex-col items-center gap-2 text-center">
-                <div className="text-canvas-foreground">No paired devices yet.</div>
-                <div>
-                  Pair another device in{' '}
-                  <Link href="/settings" className="text-emerald-400 underline-offset-2 hover:underline">
-                    Settings
-                  </Link>{' '}
-                  to run this lesson there.
-                </div>
+                {localIsOnlyHost ? (
+                  <>
+                    <div className="text-canvas-foreground">
+                      This device is the host in every pair.
+                    </div>
+                    <div>
+                      Hosts accept runs from guests; they don&apos;t forward them. Pair a
+                      second device (or run{' '}
+                      <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
+                        pnpm dev:host
+                      </code>{' '}
+                      in another terminal) and have it accept the invite, then come
+                      back.
+                    </div>
+                  </>
+                ) : selfPairCount > 0 ? (
+                  <>
+                    <div className="text-canvas-foreground">
+                      The only paired device is this device.
+                    </div>
+                    <div>
+                      Two app instances sharing a userData directory pair as the same
+                      identity, but the exec channel can&apos;t route between matching
+                      keys. Run{' '}
+                      <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
+                        pnpm dev:host
+                      </code>{' '}
+                      in a second terminal to launch an isolated host, then pair it
+                      from{' '}
+                      <Link
+                        href="/settings"
+                        className="text-emerald-400 underline-offset-2 hover:underline"
+                      >
+                        Settings
+                      </Link>
+                      .
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-canvas-foreground">No paired devices yet.</div>
+                    <div>
+                      Pair another device in{' '}
+                      <Link
+                        href="/settings"
+                        className="text-emerald-400 underline-offset-2 hover:underline"
+                      >
+                        Settings
+                      </Link>{' '}
+                      to run this lesson there.
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           ) : (
@@ -980,6 +1291,118 @@ function Runner({
       </div>
     </div>
   );
+}
+
+type RemoteRunState =
+  | { kind: 'running'; peerId: string; startedAt: number }
+  | { kind: 'ok'; peerId: string; startedAt: number; endedAt: number }
+  | { kind: 'err'; peerId: string; startedAt: number; endedAt: number; code: number | null; signal: string | null; message: string | null };
+
+function RunStatusBanner({
+  lastRun,
+  peerName,
+  isAnimating,
+  stopRequested,
+  onDismiss,
+}: {
+  lastRun: RemoteRunState | null;
+  peerName: string;
+  isAnimating: boolean;
+  stopRequested: boolean;
+  onDismiss: () => void;
+}) {
+  const now = Date.now();
+  const live = isAnimating && lastRun?.kind === 'running' ? lastRun : null;
+  const final = !isAnimating && lastRun && lastRun.kind !== 'running' ? lastRun : null;
+  const elapsedMs = live
+    ? now - live.startedAt
+    : final
+      ? final.endedAt - final.startedAt
+      : 0;
+  const elapsedStr = formatDuration(elapsedMs);
+
+  let tone: 'running' | 'ok' | 'err' | 'stopping' = 'running';
+  let headline = '';
+  let detail = '';
+  let spinning = false;
+  if (live) {
+    if (stopRequested) {
+      tone = 'stopping';
+      headline = `Stopping on ${peerName}`;
+      detail = `dropping paired device · ${elapsedStr} elapsed`;
+      spinning = true;
+    } else {
+      tone = 'running';
+      headline = `Running on ${peerName}`;
+      detail = `streaming output · ${elapsedStr} elapsed`;
+      spinning = true;
+    }
+  } else if (final?.kind === 'ok') {
+    tone = 'ok';
+    headline = `Finished on ${peerName}`;
+    detail = `exit 0 · took ${elapsedStr}`;
+  } else if (final?.kind === 'err') {
+    tone = 'err';
+    const code = final.code;
+    const signal = final.signal;
+    if (signal) {
+      headline = `Stopped on ${peerName}`;
+      detail = `${signal} · ${elapsedStr}`;
+    } else if (code != null) {
+      headline = `Failed on ${peerName}`;
+      detail = `exit ${code} · ${elapsedStr}`;
+    } else {
+      headline = `Failed on ${peerName}`;
+      detail = final.message ? `${final.message} · ${elapsedStr}` : elapsedStr;
+    }
+  }
+
+  const toneClasses =
+    tone === 'running'
+      ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
+      : tone === 'stopping'
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+        : tone === 'ok'
+          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+          : 'border-red-500/40 bg-red-500/10 text-red-300';
+
+  const Icon =
+    tone === 'ok' ? Check : tone === 'err' ? X : Loader2;
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`flex items-center gap-2 border-b border-canvas-border px-3 py-1.5 text-xs ${toneClasses}`}
+    >
+      <Icon className={`size-3.5 shrink-0 ${spinning ? 'animate-spin' : ''}`} />
+      <span className="font-semibold">{headline}</span>
+      <span className="text-canvas-muted-foreground">·</span>
+      <span className="text-canvas-muted-foreground">{detail}</span>
+      {!live ? (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss run status"
+          className="ml-auto rounded p-1 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground"
+        >
+          <X className="size-3" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 0) ms = 0;
+  const totalSec = Math.floor(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min < 60) return `${min}m ${sec}s`;
+  const hr = Math.floor(min / 60);
+  const m2 = min % 60;
+  return `${hr}h ${m2}m`;
 }
 
 function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {

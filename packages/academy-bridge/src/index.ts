@@ -34,6 +34,8 @@ export interface AcademyModelEntry {
   sourceHash: string;
   fileCount: number;
   usedIn: AcademyModelLessonRef[];
+  /** Plain-language description from apps/desktop/electron/model-descriptions.json; empty when unregistered. */
+  description: string;
 }
 
 export interface AcademyModelsRemoveResult {
@@ -127,6 +129,8 @@ export interface AcademyPeerAuditEntry {
   expected?: string;
   entered?: string;
   remoteBuildId?: string;
+  fileName?: string;
+  mode?: 'inline' | 'file';
 }
 
 export interface AcademyPeerIdentity {
@@ -156,6 +160,7 @@ export type AcademyPeerEvent =
   | { event: 'peer:rejected'; payload: { requestId: string; discoveryKey: string } }
   | { event: 'peer:audit'; payload: AcademyPeerAuditEntry }
   | { event: 'peer:audit-cleared'; payload: { at: number } }
+  | { event: 'peer:audit-cleared-for-peer'; payload: { discoveryKey: string; at: number; removed: number } }
   | { event: 'peer:deeplink'; payload: { invite: string; pairingCode: string; url: string } };
 
 export interface AcademyPeerAPI {
@@ -171,6 +176,7 @@ export interface AcademyPeerAPI {
   reject: (requestId: string) => Promise<boolean>;
   audit: (opts?: { since?: number; limit?: number }) => Promise<AcademyPeerAuditEntry[]>;
   clearAudit: () => Promise<boolean>;
+  clearPeerAudit: (discoveryKey: string) => Promise<number>;
   lockdown: () => Promise<number>;
   drop: (discoveryKey: string) => Promise<boolean>;
   onEvent: (callback: (msg: AcademyPeerEvent) => void) => () => void;
