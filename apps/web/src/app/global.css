@@ -214,18 +214,10 @@ html.dark .prose-md .shiki code span {
   transform-origin: center;
 }
 
-/* Constrain the CodeMirror editor to fill its parent and scroll internally */
-.cm-theme,
-.cm-editor,
-.cm-editor.cm-focused {
-  /* biome-ignore lint/complexity/noImportantStyles: CodeMirror default needs override */
-  height: 100% !important;
-  max-height: 100%;
-}
-.cm-scroller {
-  /* biome-ignore lint/complexity/noImportantStyles: CodeMirror default needs override */
-  overflow: auto !important;
-  max-height: 100%;
+/* Monaco defaults to rounded corners; canvas has square edges. */
+.monaco-editor,
+.monaco-editor .overflow-guard {
+  border-radius: 0;
 }
 
 /* Site header is the desktop title bar: whole header is a drag region, interactive children opt out. */

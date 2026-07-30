@@ -3,15 +3,13 @@
 import type { AcademyAPI, AcademyRunChunk } from '@academy/academy-bridge';
 import { useUserStore } from '@academy/core';
 import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
-import { javascript } from '@codemirror/lang-javascript';
-import { oneDark } from '@codemirror/theme-one-dark';
-import CodeMirror from '@uiw/react-codemirror';
 import { ArrowLeft, ArrowRight, Check, Copy, Loader2, Pencil, Play, RotateCcw, Square, X } from 'lucide-react';
 import Link from 'next/link';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
+import { MonacoLessonEditor } from './monaco-lesson-editor.js';
 
 export interface LessonTest {
   id: string;
@@ -1173,22 +1171,10 @@ function Runner({
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <CodeMirror
+        <MonacoLessonEditor
           value={userCode}
-          height="100%"
-          theme={oneDark}
-          extensions={[javascript({ jsx: false, typescript: true })]}
-          onChange={(value) => setUserCode(value)}
-          editable={!readOnly}
           readOnly={readOnly}
-          basicSetup={{
-            lineNumbers: !readOnly,
-            foldGutter: false,
-            highlightActiveLine: !readOnly,
-            highlightSelectionMatches: false,
-            autocompletion: false,
-            indentOnInput: !readOnly,
-          }}
+          onChange={(value) => setUserCode(value)}
         />
       </div>
 

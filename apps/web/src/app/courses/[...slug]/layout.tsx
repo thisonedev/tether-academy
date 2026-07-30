@@ -146,7 +146,7 @@ function findNeighbours(slug: string[]): {
   return { prevUrl: prevShipped, nextUrl: nextShipped, position };
 }
 
-/** Stays mounted across sibling-lesson navigations so CodeMirror, the runner,
+/** Stays mounted across sibling-lesson navigations so the editor, the runner,
  *  and the header do not reflash on every Next click. Only `children` swap. */
 export default async function Layout({
   children,
