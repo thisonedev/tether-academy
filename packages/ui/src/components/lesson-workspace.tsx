@@ -98,13 +98,19 @@ function argInputPlaceholder(slot: LessonArgvSlot, captured: Record<string, stri
   return 'optional';
 }
 
-// Per-run temp file label shown in the paired-devices audit log; uses the lesson title.
 function runFileName(data: LessonData): string {
   const slug = data.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return `${slug || 'lesson'}.mts`;
+}
+
+function runLabel(data: LessonData): string {
+  const chapter = data.currentChapter?.slug;
+  const lesson = data.currentLesson?.slug;
+  if (chapter && lesson) return `${chapter}/${lesson}`;
+  return data.title;
 }
 
 declare global {
@@ -490,6 +496,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           language: 'typescript',
           argv: resolvedArgv,
           fileName: runFileName(data),
+          label: runLabel(data),
           ...(isRemoteRun && selectedPeerId ? { peerId: selectedPeerId } : {}),
         });
         if (!result) {

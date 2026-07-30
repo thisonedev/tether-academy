@@ -12,7 +12,6 @@ import { Box, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, Trash2 } f
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivitySection,
   DevicesPanel,
   ExecRunList,
   formatRelativeTime,
@@ -361,10 +360,9 @@ export function SettingsPage() {
                 Activity
               </h2>
               <p className="mb-4 text-sm text-canvas-muted-foreground">
-                Live event log, pending pair requests, and run history for paired devices.
+                Pending pair requests and run history for paired devices.
               </p>
               <div className="space-y-6">
-                <ActivitySection />
                 <PendingRequestsSection />
                 <PerDeviceRunLog />
               </div>
@@ -720,7 +718,7 @@ function PerDeviceRunLog() {
 
 function formatExecSample(entry: AcademyPeerAuditEntry): string | null {
   if (entry.mode === 'inline') return 'inline snippet';
-  if (entry.fileName) return entry.fileName;
+  if (entry.label) return entry.label;
   return null;
 }
 

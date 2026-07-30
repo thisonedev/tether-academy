@@ -126,6 +126,7 @@ ipcMain.handle('academy:run', async (evt, payload) => {
         code: wrapped,
         mode: 'file',
         fileName: typeof payload.fileName === 'string' && payload.fileName ? payload.fileName : 'snippet.mts',
+        label: typeof payload.label === 'string' && payload.label ? payload.label : null,
         argv: ['--experimental-strip-types', '--no-warnings', ...(Array.isArray(payload.argv) ? payload.argv : [])],
         cwd: COURSES_DIR,
       });

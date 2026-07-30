@@ -627,7 +627,7 @@ function sendExecReply(discoveryKeyHex, payload) {
   }
 }
 
-function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [], fileName = 'snippet.mts' }) {
+function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [], fileName = 'snippet.mts', label = null }) {
   const fileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-exec-'));
   const childCwd = cwd && fs.existsSync(cwd) ? cwd : fileDir;
   let args;
@@ -644,8 +644,8 @@ function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [], fil
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   execStates.set(discoveryKeyHex, { child, startedAt: Date.now(), mode, fileName });
-  appendAudit('peer:exec:started', { discoveryKey: discoveryKeyHex, mode, fileName });
-  sendExecReply(discoveryKeyHex, { kind: 'started', mode, fileName });
+  appendAudit('peer:exec:started', { discoveryKey: discoveryKeyHex, mode, fileName, label });
+  sendExecReply(discoveryKeyHex, { kind: 'started', mode, fileName, label });
 
   child.stdout.on('data', (chunk) => {
     sendExecReply(discoveryKeyHex, { kind: 'chunk', stream: 'stdout', data: chunk.toString('utf8') });
@@ -691,7 +691,7 @@ function spawnExec(discoveryKeyHex, { code, cwd, mode = 'inline', argv = [], fil
 
 const activeGuestExec = new Map();
 
-function exec({ peerId, code, cwd = null, mode = 'inline', argv = [], fileName = 'snippet.mts' }) {
+function exec({ peerId, code, cwd = null, mode = 'inline', argv = [], fileName = 'snippet.mts', label = null }) {
   if (typeof peerId !== 'string' || !peerId) {
     throw new Error('exec: peerId is required');
   }
@@ -726,7 +726,7 @@ function exec({ peerId, code, cwd = null, mode = 'inline', argv = [], fileName =
   const emitter = new EventEmitter();
   activeGuestExec.set(peerId, { emitter });
   try {
-    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, cwd, mode, argv, fileName }), 'utf8'));
+    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, cwd, mode, argv, fileName, label }), 'utf8'));
   } catch (err) {
     activeGuestExec.delete(peerId);
     throw err;

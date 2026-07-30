@@ -5,7 +5,9 @@ export const academyRunPayloadSchema = z.object({
   language: z.string(),
   argv: z.array(z.string()).optional(),
   peerId: z.string().optional(),
-  /** Display label for the run, used in the paired-devices history. */
+  /** Human-readable run label shown in the paired-devices history. */
+  label: z.string().optional(),
+  /** Temp file name on the host. Internal; surfaced only in the raw audit log. */
   fileName: z.string().optional(),
 });
 

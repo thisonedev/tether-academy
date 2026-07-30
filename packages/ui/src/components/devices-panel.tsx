@@ -112,7 +112,7 @@ export function formatClockTime(ts: number): string {
 
 function formatExecSample(entry: AcademyPeerAuditEntry): string | null {
   if (entry.mode === 'inline') return 'inline snippet';
-  if (entry.fileName) return entry.fileName;
+  if (entry.label) return entry.label;
   return null;
 }
 
@@ -699,13 +699,11 @@ export function ActivitySection() {
       ) : (
         <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted p-3 font-mono text-[11px] text-canvas-muted-foreground">
           {audit.map((entry, idx) => (
-            <li key={`${entry.timestamp}-${idx}`} className="flex flex-wrap items-baseline gap-2">
-              <span className="shrink-0 text-canvas-muted-foreground/60">
-                {formatClockTime(entry.timestamp)}
-              </span>
-              <span className="text-canvas-foreground">
+            <li key={`${entry.timestamp}-${idx}`} className="space-y-0.5">
+              <div className="text-canvas-muted-foreground/60">{formatClockTime(entry.timestamp)}</div>
+              <div className="text-canvas-foreground">
                 {auditLabel(entry, entry.discoveryKey ? peerNames[entry.discoveryKey] : null)}
-              </span>
+              </div>
             </li>
           ))}
         </ul>
@@ -1162,12 +1160,12 @@ export function ExecRunList({
   return (
     <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted p-3 font-mono text-[11px] text-canvas-muted-foreground">
       {rows.map((row) => (
-        <li key={row.key} className="flex flex-wrap items-baseline gap-2">
-          <span className="shrink-0 text-canvas-muted-foreground/60">
+        <li key={row.key} className="space-y-0.5">
+          <div className="text-canvas-muted-foreground/60">
             {formatClockTime(row.ts)}
-            {row.duration ? ` • ${row.duration}` : ''}
-          </span>
-          <span className={execEventToneClass(row.tone)}>{row.label}</span>
+            {row.duration ? ` · ${row.duration}` : ''}
+          </div>
+          <div className={execEventToneClass(row.tone)}>{row.label}</div>
         </li>
       ))}
     </ul>

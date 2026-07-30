@@ -130,6 +130,7 @@ export interface AcademyPeerAuditEntry {
   entered?: string;
   remoteBuildId?: string;
   fileName?: string;
+  label?: string;
   mode?: 'inline' | 'file';
 }
 
