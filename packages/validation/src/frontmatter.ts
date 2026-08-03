@@ -40,4 +40,11 @@ export const lessonFrontmatter = frontmatterSchema.extend({
   platforms: z.array(z.enum(['node', 'web', 'mobile', 'desktop'])).optional(),
   // argv slots the runner resolves before executing the lesson's snippet.
   argv: z.array(lessonArgvSlot).optional(),
+  // Declaration of capabilities the lesson intends to use. The host widens
+  // its consent prompt by unioning these with what its detectors find, so
+  // an honest declaration can only make the prompt louder. Detectors stay
+  // the trust boundary; this is hint text for the lesson author.
+  // network is ordered none < localhost < all; the prompt shows the maximum.
+  network: z.enum(['none', 'localhost', 'all']).optional(),
+  device: z.array(z.string()).optional(),
 });

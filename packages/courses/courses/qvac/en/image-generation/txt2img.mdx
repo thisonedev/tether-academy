@@ -53,7 +53,7 @@ const result = diffusion({ modelId, prompt: "a cat sitting on a sofa" });
 const outputs = await result.outputs;
 const firstImage = outputs[0];
 if (!firstImage) throw new Error("No image returned from diffusion");
-fs.writeFileSync("../../apps/desktop/output/image-gen/cat.png", firstImage);
+fs.writeFileSync("output/image-gen/cat.png", firstImage);
 
 console.log(`Generated ${outputs.length} image`);
 ```

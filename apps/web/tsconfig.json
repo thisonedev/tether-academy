@@ -1,7 +1,6 @@
 {
   "extends": "../../packages/config/tsconfig.base.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "lib": ["dom", "dom.iterable", "esnext"],
     "jsx": "preserve",
     "plugins": [
@@ -16,7 +15,6 @@
       "@academy/core": ["../../packages/core/dist"],
       "@academy/courses": ["../../packages/courses/dist"],
       "@academy/validation": ["../../packages/validation/dist"],
-      "@academy/academy-bridge": ["../../packages/academy-bridge/dist"],
       "@academy/config": ["../../packages/config"]
     },
     "noEmit": true

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type MouseEvent } from 'react';
-import type { AcademyAPI, AcademyWindowAPI } from '@academy/academy-bridge';
+import type { AcademyAPI, AcademyWindowAPI } from '@academy/validation';
 
 declare global {
   interface Window {

@@ -247,3 +247,32 @@ html:not([data-platform]) .run-mode-select-desktop {
 html[data-platform="desktop"] .run-mode-select-web {
   display: none;
 }
+
+/* Desktop mirrors the web at narrow widths: tutorial first, editor below.
+   At wider widths the row stays side by side so Monaco keeps its share of the
+   window. The 960px cutoff matches the renderer min-width. */
+@media (min-width: 960px) {
+  html[data-platform="desktop"] .workspace-root {
+    height: calc(100vh - 3.5rem);
+  }
+  html[data-platform="desktop"] .workspace-row {
+    flex: 1 1 0%;
+    flex-direction: row;
+    gap: 1.5rem;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+  html[data-platform="desktop"] .workspace-sidebar {
+    max-width: 42%;
+    min-width: 360px;
+    flex-shrink: 0;
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+  }
+  html[data-platform="desktop"] .workspace-runner-section {
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 0%;
+  }
+}

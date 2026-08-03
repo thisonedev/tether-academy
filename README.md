@@ -115,9 +115,9 @@ The vendored `.answer.ts` is a pedagogical subset of upstream, not a verbatim co
 | `pnpm check:yaml` | Lesson frontmatter check (routed to `@academy/courses`) |
 | `pnpm sync:examples` / `pnpm sync:examples:check` | Lesson sync with upstream SDK (routed to `@academy/courses`) |
 
-## Contribution
+## Support
 
-You can support this work via donation:
+This is a community-owned project. You can support this work via donation (USDT/USDC/ETH):
 
 ```
 0x409072a91aa81C9759E1170993e29F8Ec83E6405

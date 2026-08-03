@@ -5,7 +5,6 @@
     "jsx": "react-jsx",
     "outDir": "./dist",
     "rootDir": "./src",
-    "baseUrl": ".",
     "paths": {
       "@academy/sandbox-types": ["../sandbox-types/dist"]
     },

@@ -6,7 +6,7 @@ import type {
   AcademyModelEntry,
   AcademyPeerAuditEntry,
   AcademyPeerInfo,
-} from '@academy/academy-bridge';
+} from '@academy/validation';
 import { useUserHydrated, useUserStore } from '@academy/core';
 import { Box, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -19,6 +19,7 @@ import {
   PendingRequestsSection,
   shortHex,
 } from './devices-panel.js';
+import { IdentityOnboarding } from './identity-onboarding.js';
 
 declare global {
   interface Window {
@@ -55,6 +56,7 @@ const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
 
 const SETTINGS_TABS = [
   { id: 'models', label: 'Models' },
+  { id: 'identity', label: 'Identity' },
   { id: 'paired', label: 'Paired devices' },
   { id: 'device', label: 'My device' },
 ] as const;
@@ -334,6 +336,17 @@ export function SettingsPage() {
               {remove.error}
             </p>
           ) : null}
+        </section>
+      ) : null}
+
+      {activeTab === 'identity' ? (
+        <section
+          role="tabpanel"
+          id="settings-panel-identity"
+          aria-labelledby="settings-tab-identity"
+          className="space-y-5 pb-8 sm:pb-12"
+        >
+          <IdentityOnboarding />
         </section>
       ) : null}
 
@@ -671,7 +684,7 @@ function PerDeviceRunLog() {
     try {
       await window.academy.peer.drop(discoveryKey);
     } catch {
-      // surfaced via audit
+      // surfaced via peer events
     } finally {
       setActionBusy(null);
     }
@@ -683,7 +696,7 @@ function PerDeviceRunLog() {
     try {
       await window.academy.peer.clearPeerAudit(discoveryKey);
     } catch {
-      // surfaced via audit
+      // surfaced via peer events
     } finally {
       setClearBusy(null);
     }
@@ -881,3 +894,4 @@ function RoleBadgeLite({ role }: { role: 'host' | 'guest' }) {
     </span>
   );
 }
+

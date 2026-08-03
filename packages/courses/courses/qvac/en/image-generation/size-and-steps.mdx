@@ -47,7 +47,7 @@ Same seed and same prompt, two calls produce byte-identical output like so:
 ```ts
 const outputs = await result.outputs;
 const first = outputs[0];
-if (first) fs.writeFileSync("../../apps/desktop/output/image-gen/cat-watercolor.png", first);
+if (first) fs.writeFileSync("output/image-gen/cat-watercolor.png", first);
 console.log(`Generated ${outputs.length} image`);
 ```
 

@@ -16,7 +16,6 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@academy/academy-bridge": "workspace:*",
     "@academy/config": "workspace:*",
     "@academy/core": "workspace:*",
     "@academy/courses": "workspace:*",

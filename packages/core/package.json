@@ -16,7 +16,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@academy/academy-bridge": "workspace:*",
     "@academy/config": "workspace:*",
     "@academy/courses": "workspace:*",
     "@academy/validation": "workspace:*",

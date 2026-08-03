@@ -1,20 +1,73 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell } = require('electron');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const PearRuntime = require('pear-runtime');
 const FramedStream = require('framed-stream');
-const QRCode = require('qrcode');
 const { isMac, isLinux, isWindows } = require('which-runtime');
 const { command, flag } = require('paparam');
-const { createServer } = require('node:http');
 const { promises: fs } = require('node:fs');
 
+// Has to run before whenReady; registration after that is silently ignored.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'academy',
+    privileges: {
+      // standard gives the renderer a stable origin; secure puts the editor's
+      // workers and any crypto API in a secure context.
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+]);
+
 const { runExample } = require('../runner.cjs');
-const { createStore } = require('./state-store.cjs');
 const { listModels, removeModel, removeAllModels } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
 const { buildLesson } = require('./runner-process.cjs');
-const peer = require('./peer.cjs');
+const { createPearEnd } = require('./pear-end/index.cjs');
+const { createAccumulator } = require('./run-accumulator.cjs');
+const IPC_CHANNELS = require('../shared/ipc-channels.cjs');
+
+// Single registry, single wrapper. A channel that is not in IPC_CHANNELS
+// throws at startup, so a 44th handler cannot inherit nothing. The dynamic
+// `pear:worker:writeIPC:*` channel falls back to a longest-prefix match in
+// the same table.
+function handle(channel, fn) {
+  const exact = Object.hasOwn(IPC_CHANNELS, channel) ? IPC_CHANNELS[channel] : undefined;
+  const schemaName =
+    exact !== undefined
+      ? exact
+      : channel.startsWith(IPC_CHANNELS.PEAR_WORKER_PREFIX)
+        ? IPC_CHANNELS[IPC_CHANNELS.PEAR_WORKER_PREFIX]
+        : undefined;
+  if (schemaName === undefined) {
+    throw new Error(`unregistered IPC channel: ${channel}`);
+  }
+  ipcMain.handle(channel, async (evt, payload) => {
+    const args =
+      schemaName === null ? undefined : await parseIpc(schemaName, payload, channel);
+    return fn(args, evt);
+  });
+}
+
+// Shared Zod schemas from @academy/validation (ESM). Loaded once on first use.
+let _ipcValidation = null;
+async function loadIpcValidation() {
+  if (!_ipcValidation) {
+    _ipcValidation = await import('@academy/validation');
+  }
+  return _ipcValidation;
+}
+
+async function parseIpc(schemaName, value, label) {
+  const v = await loadIpcValidation();
+  const schema = v[schemaName];
+  if (!schema) throw new Error(`unknown IPC schema: ${schemaName}`);
+  return v.parseIpc(schema, value, label);
+}
 
 const pkg = require('../package.json');
 const { name, productName, version, upgrade } = pkg;
@@ -95,12 +148,14 @@ function getWorker(specifier) {
     sendToAll(`pear:worker:exit:${specifier}`, code);
     workers.delete(specifier);
   });
-  ipcMain.handle(`pear:worker:writeIPC:${specifier}`, (_e, data) => pipe.write(data));
+  handle(`pear:worker:writeIPC:${specifier}`, async (data) => {
+    pipe.write(data);
+  });
   workers.set(specifier, pipe);
   return pipe;
 }
 
-ipcMain.handle('pear:startWorker', (_e, filename) => {
+handle('pear:startWorker', async (filename) => {
   if (filename === mainWorkerSpecifier) getWorker(filename);
   return true;
 });
@@ -110,56 +165,100 @@ let currentRun = null;
 
 const COURSES_DIR = path.join(app.getAppPath(), '..', '..', 'packages', 'courses');
 
+// How long a peer run may go without saying anything before the guest gives up.
+const PEER_EXEC_IDLE_MS = 5 * 60_000;
+
+// The renderer invokes this channel with a payload that the handler parses locally so it can return a formatted error.
 ipcMain.handle('academy:run', async (evt, payload) => {
+  let parsed;
+  try {
+    parsed = await parseIpc('academyRunPayloadSchema', payload, 'academy:run');
+  } catch (err) {
+    return { ok: false, output: `[run] ${err.message}` };
+  }
+  return runAcademy(parsed, evt);
+});
+
+async function runAcademy(parsed, evt) {
   await ensureQVACSeed();
   const sender = evt.sender;
   const sendChunk = (chunk) => {
+    // Chunks are always plain text; UI must never interpret them as HTML.
     if (!sender.isDestroyed()) sender.send('academy:run:chunk', chunk);
   };
 
-  if (payload.peerId) {
-    const wrapped = buildLesson({ source: payload.source, cwd: COURSES_DIR });
+  if (parsed.peerId) {
+    // The host picks its interpreter from the same source, so the build has to
+    // match: a Bare build rewrites node: imports to Bare packages, which a Node
+    // child cannot load, and vice versa.
+    const { nodeOnlyImports } = await loadIpcValidation();
+    const runtime = nodeOnlyImports(parsed.source).length > 0 ? 'node' : 'bare';
+    const wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime });
     let emitter;
     try {
-      emitter = peer.exec({
-        peerId: payload.peerId,
+      emitter = pearEnd.peer.exec({
+        peerId: parsed.peerId,
         code: wrapped,
         mode: 'file',
-        fileName: typeof payload.fileName === 'string' && payload.fileName ? payload.fileName : 'snippet.mts',
-        label: typeof payload.label === 'string' && payload.label ? payload.label : null,
-        argv: ['--experimental-strip-types', '--no-warnings', ...(Array.isArray(payload.argv) ? payload.argv : [])],
+        fileName: parsed.fileName || 'snippet.mts',
+        label: parsed.label || null,
+        argv: parsed.argv ?? [],
         cwd: COURSES_DIR,
       });
     } catch (err) {
       return { ok: false, output: `[peer-exec] ${err.message}` };
     }
-    const collected = { stdout: '', stderr: '' };
+    // Capped so a run that prints in a loop cannot grow main-process memory
+    // without bound. The renderer has already seen every chunk through sendChunk;
+    // this only feeds the final { ok, output } the IPC handler returns.
+    const collected = createAccumulator();
+    // Measured from the last output, since a first run downloads the model and
+    // streams progress for as long as that takes. The old deadline counted from
+    // the start and cut off runs that were plainly alive.
+    let noteActivity = () => {};
     emitter.on('stdout', (data) => {
-      collected.stdout += data;
+      collected.append('stdout', data);
+      noteActivity();
       sendChunk({ stream: 'stdout', data });
     });
     emitter.on('stderr', (data) => {
-      collected.stderr += data;
+      collected.append('stderr', data);
+      noteActivity();
       sendChunk({ stream: 'stderr', data });
     });
     const run = {
       promise: new Promise((resolve) => {
+        let idleTimer = null;
+        const settle = (value) => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = null;
+          resolve(value);
+        };
+        noteActivity = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            // Giving up here leaves the run going on the host, holding the
+            // registry lock every other model load on that machine needs.
+            pearEnd.peer.cancelExec(parsed.peerId).catch(() => {});
+            settle({
+              ok: false,
+              output: `${collected.result('stdout')}${collected.result('stderr')}\n[peer-exec] no output from peer for ${PEER_EXEC_IDLE_MS / 60_000}m; cancelled the run`,
+            });
+          }, PEER_EXEC_IDLE_MS);
+        };
         emitter.on('exit', (info) => {
-          resolve({
+          settle({
             ok: info.code === 0,
-            output: collected.stdout,
+            output: collected.result('stdout'),
             remoteExit: { code: info.code, signal: info.signal },
           });
         });
         emitter.on('error', (err) => {
-          resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] ${err.message}` });
+          settle({ ok: false, output: `${collected.result('stdout')}${collected.result('stderr')}\n[peer-exec] ${err.message}` });
         });
-        // 5 minutes: model downloads on first run can easily exceed a minute.
-        setTimeout(() => {
-          resolve({ ok: false, output: `${collected.stdout}${collected.stderr}\n[peer-exec] no response from peer after 5m` });
-        }, 5 * 60_000);
+        noteActivity();
       }),
-      abort: () => peer.cancelExec(payload.peerId),
+      abort: () => pearEnd.peer.cancelExec(parsed.peerId),
     };
     currentRun = run;
     return run.promise.finally(() => {
@@ -168,156 +267,345 @@ ipcMain.handle('academy:run', async (evt, payload) => {
   }
 
   const run = runExample({
-    ...payload,
+    ...parsed,
     onChunk: sendChunk,
   });
   currentRun = run;
   return run.promise.finally(() => {
     if (currentRun === run) currentRun = null;
   });
+}
+
+// Confined to the lesson folder: the renderer must not point Finder anywhere.
+handle('academy:reveal', async (filePath) => {
+  const { lessonHomeDir } = require('../shared/lesson-output.cjs');
+  const root = path.resolve(lessonHomeDir());
+  const abs = path.resolve(filePath);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return false;
+  if (!require('node:fs').existsSync(abs)) return false;
+  shell.showItemInFolder(abs);
+  return true;
 });
 
-ipcMain.handle('academy:stop', () => {
+handle('academy:stop', () => {
   if (!currentRun) return false;
   return currentRun.abort();
 });
 
-// Persistent state: a Corestore under userData/corestore (see state-store.cjs).
-let stateStorePromise = null;
-function getStateStore() {
-  if (!stateStorePromise) {
-    stateStorePromise = createStore(app.getPath('userData')).then((store) => {
-      console.log(
-        `[tether-academy-desktop] identity pubkey: ${store.identity.publicKey.slice(0, 16)}...`,
-      );
-      return store;
-    });
+function getSafeStorage() {
+  try {
+    const { safeStorage } = require('electron');
+    if (safeStorage?.isEncryptionAvailable?.()) return safeStorage;
+  } catch {
+    // not Electron
   }
-  return stateStorePromise;
+  return null;
 }
 
+// Pear-end: identity, state (Corestore under userData/corestore), and
+// peer/mesh. See pear-end/index.cjs.
+const pearEnd = createPearEnd(app.getPath('userData'), { getSafeStorage });
+
+// Derived from the device identity, which is the only identity this app has.
+// It used to come from a second ed25519 keypair in its own Corestore core,
+// kept alive by this function alone.
+//
+// A device with no identity yet leaves the variable unset and the SDK decides
+// what to do about that. Minting a key here to avoid the question is how the
+// second implementation grew in the first place.
 async function ensureQVACSeed() {
-  const store = await getStateStore();
-  if (process.env.QVAC_HYPERSWARM_SEED !== store.identity.publicKey) {
-    process.env.QVAC_HYPERSWARM_SEED = store.identity.publicKey;
+  const device = pearEnd.identity().getDeviceIdentity();
+  if (!device?.privateKey) return;
+  // Private-material HKDF with a QVAC domain, distinct from the mesh swarm seed.
+  const { deriveSwarmSeedHex, QVAC_SWARM_INFO } = require('../workers/peer/swarm-seed.cjs');
+  const seedHex = deriveSwarmSeedHex(device.privateKey, QVAC_SWARM_INFO);
+  if (process.env.QVAC_HYPERSWARM_SEED !== seedHex) {
+    process.env.QVAC_HYPERSWARM_SEED = seedHex;
   }
 }
 
-ipcMain.handle('academy:state:get', async (_e, key) => {
-  const store = await getStateStore();
+handle('academy:state:get', async (key) => {
+  const store = await pearEnd.store();
   return store.get(key);
 });
 
-ipcMain.handle('academy:state:set', async (_e, key, value) => {
-  const store = await getStateStore();
+handle('academy:state:set', async ({ key, value }) => {
+  const store = await pearEnd.store();
   return store.set(key, value);
 });
 
-ipcMain.handle('academy:state:remove', async (_e, key) => {
-  const store = await getStateStore();
+handle('academy:state:remove', async (key) => {
+  const store = await pearEnd.store();
   return store.remove(key);
 });
 
-ipcMain.handle('academy:state:list', async () => {
-  const store = await getStateStore();
+handle('academy:state:list', async () => {
+  const store = await pearEnd.store();
   return store.list();
 });
 
-ipcMain.handle('academy:window:minimize', (evt) => {
+handle('academy:window:minimize', (_args, evt) => {
   BrowserWindow.fromWebContents(evt.sender)?.minimize();
 });
 
-ipcMain.handle('academy:window:maximize', (evt) => {
+handle('academy:window:maximize', (_args, evt) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   if (!win) return;
   if (win.isMaximized()) win.unmaximize();
   else win.maximize();
 });
 
-ipcMain.handle('academy:window:close', (evt) => {
+handle('academy:window:close', (_args, evt) => {
   BrowserWindow.fromWebContents(evt.sender)?.close();
 });
 
-ipcMain.handle('academy:models:list', async () => {
-  return listModels();
-});
-
-ipcMain.handle('academy:models:remove', async (_e, id) => {
-  return removeModel(id);
-});
-
-ipcMain.handle('academy:models:removeAll', async () => {
-  return removeAllModels();
-});
-
-ipcMain.handle('academy:device:info', async () => {
-  return getDeviceInfo();
-});
-
-ipcMain.handle('academy:qr', async (_e, text) => {
-  if (typeof text !== 'string' || text.length === 0) {
-    throw new Error('academy:qr: text must be a non-empty string');
+// The pairing code is the shared secret that gates pairing, and a clipboard
+// outlives the panel that filled it. Keeping the timer in the main process is
+// what makes closing the window stop cancelling the scrub.
+//
+// Only clears when the clipboard still holds what we put there, so an earlier
+// scrub cannot take whatever the user has copied since.
+handle('academy:clipboard:copy', async ({ text, scrubAfterMs }) => {
+  clipboard.writeText(text);
+  if (scrubAfterMs > 0) {
+    const timer = setTimeout(() => {
+      if (clipboard.readText() === text) clipboard.clear();
+    }, scrubAfterMs);
+    // A pending scrub is not a reason to keep the app alive.
+    if (typeof timer.unref === 'function') timer.unref();
   }
-  return QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 1, width: 360 });
+  return true;
 });
 
-ipcMain.handle('academy:peer:identity', () => {
-  return peer.getIdentity();
+handle('academy:models:list', async () => listModels());
+
+handle('academy:models:remove', async (id) => removeModel(id));
+
+handle('academy:models:removeAll', async () => removeAllModels());
+
+// Full re-hash of the cache. Reads every cached byte, so a user asks for it.
+handle('academy:models:verify', async () => {
+  const { verifyAllAsync } = require('../shared/model-integrity.cjs');
+  const { verified, mismatched, recorded } = await verifyAllAsync();
+  return { verified: verified.length, mismatched, recorded: recorded.length };
 });
 
-ipcMain.handle('academy:peer:invite', async (_e, opts) => {
-  return peer.createInvite(opts ?? {});
+handle('academy:device:info', async () => getDeviceInfo());
+
+handle('academy:peer:identity', async () => {
+  const idm = pearEnd.identity();
+  const view = idm.publicView();
+  if (view.ready) {
+    // Prefer root identity for display; fall back to mesh device key.
+    return {
+      publicKey: view.devicePublicKey,
+      identityPublicKey: view.identityPublicKey,
+      source: view.source,
+      createdAt: view.createdAt,
+      status: view.status,
+      ready: true,
+      holdsRoot: view.holdsRoot,
+      devices: view.devices,
+    };
+  }
+  return {
+    publicKey: null,
+    identityPublicKey: null,
+    source: null,
+    createdAt: null,
+    status: view.status,
+    ready: false,
+    holdsRoot: false,
+    devices: [],
+  };
 });
 
-ipcMain.handle('academy:peer:approve', async (_e, requestId) => {
-  return peer.approve(requestId);
+// --- Identity onboarding / multi-device (never returns private material) ---
+handle('academy:identity:status', () => pearEnd.identity().publicView());
+
+handle('academy:identity:create', async () => {
+  const result = await pearEnd.identity().createNew();
+  // mnemonic returned once for backup UI — not logged.
+  return result;
 });
 
-ipcMain.handle('academy:peer:reject', async (_e, requestId) => {
-  return peer.reject(requestId);
+handle('academy:identity:confirm-backup', async () => {
+  const view = pearEnd.identity().confirmBackup();
+  await pearEnd.ensureReady();
+  return view;
 });
 
-ipcMain.handle('academy:peer:pending', () => {
-  return peer.listPending();
+handle('academy:identity:recover', async (mnemonic) => {
+  const view = await pearEnd.identity().recoverFromMnemonic(mnemonic);
+  await pearEnd.ensureReady();
+  return view;
 });
 
-ipcMain.handle('academy:peer:audit', (_e, opts) => {
-  return peer.getAudit(opts ?? {});
+// No begin-link / complete-link handlers. The device-link flow was removed
+// along with the manager code behind it, because the proof it accepted was
+// never bound to the challenge it handed out. It comes back with that binding.
+
+handle('academy:identity:begin-attest', async (payload) => {
+  return pearEnd.identity().beginAttestSession(payload.devicePublicKey, { label: payload.label ?? null });
 });
 
-ipcMain.handle('academy:peer:clear-audit', () => {
-  return peer.clearAudit();
+handle('academy:identity:finish-attest', async (payload) => {
+  return pearEnd.identity().finishAttest(payload.sessionId, { confirm: true });
 });
 
-ipcMain.handle('academy:peer:clear-peer-audit', (_e, discoveryKey) => {
-  return peer.clearPeerAudit(discoveryKey);
+handle('academy:identity:cancel-attest', async (sessionId) => {
+  return pearEnd.identity().cancelAttest(sessionId);
 });
 
-ipcMain.handle('academy:peer:lockdown', async () => {
-  return peer.lockdown();
+handle('academy:identity:revoke-device', async (devicePublicKey) => {
+  const view = pearEnd.identity().revokeDevice(devicePublicKey);
+  await pearEnd.syncRevocations();
+  return view;
 });
 
-ipcMain.handle('academy:peer:accept', async (_e, inviteB64, opts) => {
-  return peer.acceptInvite(inviteB64, opts ?? {});
+handle('academy:identity:list-devices', () => pearEnd.identity().publicView().devices);
+
+// Destructive: wipe sealed identity from this device (seed not deleted if user still has backup).
+handle('academy:identity:reset', async () => {
+  const idm = pearEnd.identity();
+  idm.resetLocal();
+  try {
+    await pearEnd.closeMesh();
+  } catch {
+    // peer may not have been inited
+  }
+  return idm.publicView();
 });
 
-ipcMain.handle('academy:peer:list', () => {
-  return peer.listPeers();
+handle('academy:peer:take-deeplink', () => {
+  const payload = pendingDeeplink;
+  pendingDeeplink = null;
+  return payload;
 });
 
-ipcMain.handle('academy:peer:drop', async (_e, discoveryKey) => {
-  return peer.dropPeer(discoveryKey);
+// Invite from the renderer: only userData. autoApprove/code are not forwarded;
+// tests require peer.cjs directly when they need those options.
+handle('academy:peer:invite', async (opts) => {
+  if (!(await pearEnd.ensureReady())) {
+    throw new Error('Complete identity onboarding before pairing devices');
+  }
+  return pearEnd.peer.createInvite({ userData: opts?.userData ?? null });
 });
 
-peer.on((event, payload) => {
+handle('academy:peer:approve', async (requestId) => pearEnd.peer.approve(requestId));
+
+handle('academy:peer:reject', async (requestId) => pearEnd.peer.reject(requestId));
+
+handle('academy:peer:pending', async () => {
+  if (!(await pearEnd.ensureReady())) return [];
+  return pearEnd.peer.listPending();
+});
+
+// The renderer relays the answer only. spawnExec picks which devices.
+handle('academy:peer:device-consent', async ({ requestId, approved }) => {
+  return pearEnd.peer.resolveDeviceRequest(requestId, approved);
+});
+
+handle('academy:peer:device-requests', async () => {
+  if (!(await pearEnd.ensureReady())) return [];
+  return pearEnd.peer.listDeviceRequests();
+});
+
+handle('academy:peer:audit', async (opts) => {
+  if (!(await pearEnd.ensureReady())) return [];
+  return pearEnd.peer.getAudit(opts);
+});
+
+handle('academy:peer:clear-audit', () => pearEnd.peer.clearAudit());
+
+handle('academy:peer:clear-peer-audit', async (discoveryKey) =>
+  pearEnd.peer.clearPeerAudit(discoveryKey),
+);
+
+handle('academy:peer:lockdown', async () => pearEnd.peer.lockdown());
+
+handle('academy:peer:accept', async ({ inviteB64, opts }) => {
+  if (!(await pearEnd.ensureReady())) {
+    throw new Error('Complete identity onboarding before pairing devices');
+  }
+  return pearEnd.peer.acceptInvite(inviteB64, {
+    userData: opts?.userData ?? null,
+    code: opts?.code ?? null,
+    hostIdentity: opts?.hostIdentity ?? null,
+  });
+});
+
+handle('academy:peer:list', async () => {
+  if (!(await pearEnd.ensureReady())) return [];
+  return pearEnd.peer.listPeers();
+});
+
+handle('academy:peer:drop', async (discoveryKey) => pearEnd.peer.dropPeer(discoveryKey));
+
+pearEnd.peer.on((event, payload) => {
   sendToAll('academy:peer:event', { event, payload });
 });
+
+function installNavigationHardening(win, allowedOrigins) {
+  // Keep the main window on app-owned origins; open anything else externally.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(url).catch((err) => {
+          console.warn('[tether-academy-desktop] openExternal failed:', err?.message ?? err);
+        });
+      }
+    } catch {
+      // ignore malformed URLs
+    }
+    return { action: 'deny' };
+  });
+
+  // Compare scheme and host for academy://: Node's URL serialises every
+  // non-special scheme to origin 'null', so an origin comparison would let
+  // academy://evil/ pass alongside academy://app/. http(s) keeps origin
+  // equality. The academy:protocol.cjs unit test pins the trap.
+  win.webContents.on('will-navigate', (event, url) => {
+    let allowed = false;
+    try {
+      const parsed = new URL(url);
+      allowed = allowedOrigins.some((origin) => {
+        try {
+          const allow = new URL(origin);
+          if (allow.protocol === 'academy:') {
+            return parsed.protocol === 'academy:' && parsed.host === allow.host;
+          }
+          return parsed.origin === allow.origin;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      event.preventDefault();
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          shell.openExternal(url).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+    }
+  });
+}
 
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
-    minWidth: 960,
+    // 720 so two windows fit side by side on a 1512pt laptop screen, which is
+    // how a paired run gets watched from both ends. The lesson layout stacks
+    // below 1024, so a narrow window reads top-to-bottom instead of splitting.
+    minWidth: 720,
     minHeight: 600,
     backgroundColor: '#0a0a0a',
     title: 'Tether Academy',
@@ -328,7 +616,7 @@ async function createWindow() {
     frame: !isMac,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -349,20 +637,23 @@ async function createWindow() {
   const outIndex = path.resolve(__dirname, '..', '..', 'web', 'out', 'index.html');
   const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
   const staticExists = fsSync().existsSync(outIndex);
+  const academyOrigin = 'academy://app/';
   if (process.env.PEAR_DEV_URL) {
-    console.log('[tether-academy-desktop] loading', process.env.PEAR_DEV_URL);
-    await win.loadURL(process.env.PEAR_DEV_URL);
+    const devUrl = process.env.PEAR_DEV_URL;
+    console.log('[tether-academy-desktop] loading', devUrl);
+    installNavigationHardening(win, [devUrl]);
+    await win.loadURL(devUrl);
   } else if (staticExists) {
-    const port = await startStaticServer(staticDir);
-    const url = `http://localhost:${port}/`;
-    console.log('[tether-academy-desktop] serving', staticDir, 'on', url);
-    await win.loadURL(url);
+    console.log('[tether-academy-desktop] serving', staticDir, 'on', academyOrigin);
+    installNavigationHardening(win, [academyOrigin]);
+    await win.loadURL(academyOrigin);
   } else {
     const devUrl = 'http://localhost:4712';
     console.log('[tether-academy-desktop] no static build found, trying', devUrl);
     console.log(
       '[tether-academy-desktop] (run `npm run build` in the repo root, or set PEAR_DEV_URL to a running web server)',
     );
+    installNavigationHardening(win, [devUrl]);
     await win.loadURL(devUrl);
   }
 }
@@ -370,6 +661,40 @@ async function createWindow() {
 function fsSync() {
   return require('node:fs');
 }
+
+// Monaco is pulled from jsdelivr by @monaco-editor/react's AMD loader, which
+// evaluates what it fetches, so script-src has to name both the origin and
+// 'unsafe-eval'. A static export has no server to mint nonces, so the inline
+// bootstrap Next emits needs 'unsafe-inline' too.
+//
+// What is left still does work those two allowances do not undo. No resource
+// loads from an origin absent from this list, connect-src stops a script
+// posting anywhere else, object-src blocks plugin embedding, base-uri stops an
+// injected <base> repointing every relative URL, and form-action stops a
+// planted form submitting off-origin.
+const CSP_DIRECTIVES = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
+  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data: https://cdn.jsdelivr.net",
+  "worker-src 'self' blob:",
+  "connect-src 'self' https://cdn.jsdelivr.net",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+];
+
+// frame-ancestors is only honoured on a real header, so it lives here and not
+// in the <meta> the web export carries.
+const CONTENT_SECURITY_POLICY = [...CSP_DIRECTIVES, "frame-ancestors 'none'"].join('; ');
+
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+};
 
 function mimeFor(p) {
   if (p.endsWith('.html')) return 'text/html; charset=utf-8';
@@ -382,98 +707,49 @@ function mimeFor(p) {
   return 'application/octet-stream';
 }
 
-// Pin the port: Chromium partitions localStorage by origin, so a random
-// port per launch would put the renderer's persistence on a fresh partition.
-function loadSavedPort() {
-  const file = path.join(app.getPath('userData'), 'static-server.port');
-  try {
-    const n = parseInt(fsSync().readFileSync(file, 'utf-8'), 10);
-    return Number.isFinite(n) && n > 0 && n < 65536 ? n : null;
-  } catch {
-    return null;
+function resolveStaticPath(pathname, root) {
+  // trailingSlash: true, so a directory request and an extensionless request
+  // both have to land on index.html.
+  let p = decodeURIComponent(pathname || '/');
+  const basePrefix = '/tether-academy';
+  if (p === basePrefix || p.startsWith(`${basePrefix}/`)) {
+    p = p.slice(basePrefix.length) || '/';
   }
+  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+  const abs = path.resolve(root, '.' + p);
+  if (abs !== root && !abs.startsWith(rootWithSep)) return null;
+  return abs;
 }
 
-function savePort(port) {
-  const file = path.join(app.getPath('userData'), 'static-server.port');
-  try {
-    fsSync().writeFileSync(file, String(port), 'utf-8');
-  } catch (err) {
-    console.warn('[tether-academy-desktop] could not save static server port:', err.message);
-  }
-}
-
-function listenOnce(server, port) {
-  return new Promise((resolve, reject) => {
-    const onError = (err) => {
-      server.removeListener('listening', onListening);
-      reject(err);
-    };
-    const onListening = () => {
-      server.removeListener('error', onError);
-      resolve(server.address().port);
-    };
-    server.once('error', onError);
-    server.once('listening', onListening);
-    server.listen(port ?? 0, '127.0.0.1');
-  });
-}
-
-async function startStaticServer(root) {
-  const server = createServer(async (req, res) => {
+function registerAcademyProtocol(staticDir) {
+  protocol.handle('academy', async (request) => {
+    const url = new URL(request.url);
+    const resolved = resolveStaticPath(url.pathname, staticDir);
+    if (!resolved) {
+      return new Response('not found', { status: 404, headers: SECURITY_HEADERS });
+    }
+    let finalPath = resolved;
     try {
-      const u = new URL(req.url, 'http://x');
-      let p = decodeURIComponent(u.pathname);
-      const basePrefix = '/tether-academy';
-      if (p === basePrefix || p.startsWith(`${basePrefix}/`)) {
-        p = p.slice(basePrefix.length) || '/';
-      }
-      const abs = path.join(root, p);
-      if (!abs.startsWith(root)) {
-        res.writeHead(403);
-        res.end();
-        return;
-      }
-      let resolved = abs;
-      try {
-        const stat = await fs.stat(abs);
-        if (stat.isDirectory()) {
-          resolved = path.join(abs, 'index.html');
-        }
-      } catch {
-        if (!path.extname(abs)) {
-          resolved = path.join(`${abs}/`, 'index.html');
-        } else {
-          res.writeHead(404);
-          res.end('not found');
-          return;
-        }
-      }
-      const data = await fs.readFile(resolved);
-      res.writeHead(200, { 'Content-Type': mimeFor(resolved), 'Cache-Control': 'no-store' });
-      res.end(data);
+      const stat = await fs.stat(resolved);
+      if (stat.isDirectory()) finalPath = path.join(resolved, 'index.html');
     } catch {
-      res.writeHead(404);
-      res.end('not found');
+      if (!path.extname(resolved)) finalPath = path.join(`${resolved}/`, 'index.html');
+      else {
+        return new Response('not found', { status: 404, headers: SECURITY_HEADERS });
+      }
     }
+    // net.fetch streams, so model files and bundles the editor pulls come
+    // through without buffering. pathToFileURL handles spaces and # in paths.
+    const res = await net.fetch(pathToFileURL(finalPath).toString());
+    return new Response(res.body, {
+      status: res.status,
+      headers: {
+        'Content-Type': mimeFor(finalPath),
+        'Cache-Control': 'no-store',
+        ...SECURITY_HEADERS,
+      },
+    });
   });
-
-  const saved = loadSavedPort();
-  try {
-    const port = await listenOnce(server, saved);
-    if (port !== saved) savePort(port);
-    return port;
-  } catch (err) {
-    if (saved && err.code === 'EADDRINUSE') {
-      console.warn(
-        `[tether-academy-desktop] saved port ${saved} in use, picking a new one`,
-      );
-      const port = await listenOnce(server, null);
-      savePort(port);
-      return port;
-    }
-    throw err;
-  }
 }
 
 
@@ -492,29 +768,24 @@ function parsePairUrl(url) {
     return null;
   }
   const invite = parsed.searchParams.get('i');
-  const code = parsed.searchParams.get('c');
   const hostIdentity = parsed.searchParams.get('h');
   if (!invite) return null;
-  return { invite, code: code ?? null, hostIdentity: hostIdentity ?? null, url };
+  return { invite, hostIdentity: hostIdentity ?? null, url };
 }
 
-async function handlePairDeepLink(url) {
+let pendingDeeplink = null;
+
+function handlePairDeepLink(url) {
   const parsed = parsePairUrl(url);
   if (!parsed) return;
-  try {
-    if (!peer.getIdentity()) {
-      const store = await getStateStore();
-      await peer.init({ store });
-    }
-    await peer.acceptInvite(parsed.invite, {
-      userData: { name: 'deep-link', source: 'tether-academy://pair' },
-      code: parsed.code,
-      hostIdentity: parsed.hostIdentity,
-    });
-    sendToAll('academy:peer:event', { event: 'peer:deeplink', payload: parsed });
-  } catch (err) {
-    console.warn('[tether-academy-desktop] deeplink accept failed:', err.message);
-  }
+  // Queue for the UI; pairing still needs the out-of-band code.
+  const payload = {
+    invite: parsed.invite,
+    hostIdentity: parsed.hostIdentity,
+    url: parsed.url,
+  };
+  pendingDeeplink = payload;
+  sendToAll('academy:peer:event', { event: 'peer:deeplink', payload });
 }
 
 app.on('open-url', (evt, url) => {
@@ -530,30 +801,72 @@ if (!lock) {
     const url = args.find((a) => a.startsWith(`${deeplinkProtocol}://`));
     if (url) handlePairDeepLink(url);
   });
+  let shuttingDown = false;
+  app.on('before-quit', (evt) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    evt.preventDefault();
+    pearEnd
+      .shutdown()
+      .catch((err) => console.warn('[tether-academy-desktop] shutdown error:', err?.message ?? err))
+      .finally(() => app.quit());
+  });
   app.whenReady().then(async () => {
-    const coldUrl = process.argv.find((a) => a.startsWith(`${deeplinkProtocol}://`));
-    if (coldUrl) {
-      try {
-        const store = await getStateStore();
-        await peer.init({ store });
-        await handlePairDeepLink(coldUrl);
-      } catch (err) {
-        console.warn('[tether-academy-desktop] cold deeplink failed:', err.message);
-      }
-    } else {
-      try {
-        const store = await getStateStore();
-        await peer.init({ store });
-      } catch (err) {
-        console.warn('[tether-academy-desktop] peer init failed:', err.message);
-      }
+    // academy:// serves the packaged renderer. SECURITY_HEADERS travel on the
+    // protocol response now that no HTTP server exists. PEAR_DEV_URL still
+    // loads over HTTP with devtools open, which keeps its own headers.
+    const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
+    if (fsSync().existsSync(path.join(staticDir, 'index.html'))) {
+      registerAcademyProtocol(staticDir);
     }
+
+    // Warm the model manifest in the background so a peer-exec usually lands
+    // with hashes already on file. Main is off the DHT path; a long sync
+    // read here starves nothing.
+    const { scheduleVerifyAll } = require('../shared/model-integrity.cjs');
+    setImmediate(() => scheduleVerifyAll());
+
+    // Show the window first. Peer/DHT bootstrap can take several seconds (or
+    // hang offline) and must not block the dock icon from opening a window.
     createWindow().catch((err) => {
       console.error(err);
       app.quit();
     });
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow().catch(console.error);
+    });
+
+    // Background: identity + mesh. Safe to fail; pairing retries via pearEnd.ensureReady.
+    setImmediate(() => {
+      (async () => {
+        try {
+          pearEnd.identity();
+          await pearEnd.store();
+          const ready = await pearEnd.ensureReady();
+          if (!ready) {
+            console.log(
+              '[tether-academy-desktop] identity not ready; complete onboarding before mesh pairing',
+            );
+          }
+        } catch (err) {
+          console.warn(
+            '[tether-academy-desktop] background identity/peer init:',
+            err?.message ?? err,
+          );
+        }
+        const coldUrl = process.argv.find((a) => a.startsWith(`${deeplinkProtocol}://`));
+        if (coldUrl) {
+          try {
+            await pearEnd.ensureReady();
+            await handlePairDeepLink(coldUrl);
+          } catch (err) {
+            console.warn(
+              '[tether-academy-desktop] cold deeplink failed:',
+              err?.message ?? err,
+            );
+          }
+        }
+      })();
     });
   });
   app.on('window-all-closed', () => {

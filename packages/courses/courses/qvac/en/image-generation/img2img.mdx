@@ -54,7 +54,7 @@ Once `await result.outputs` resolves, write `outputs[0]` and log the count:
 const outputs = await result.outputs;
 const first = outputs[0];
 if (!first) throw new Error("No image returned from diffusion");
-fs.writeFileSync("../../apps/desktop/output/image-gen/fox-painting.png", first);
+fs.writeFileSync("output/image-gen/fox-painting.png", first);
 console.log(`Generated ${outputs.length} image`);
 ```
 

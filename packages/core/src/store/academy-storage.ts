@@ -1,4 +1,4 @@
-import type { AcademyStateAPI } from '@academy/academy-bridge';
+import type { AcademyStateAPI } from '@academy/validation';
 
 function getAcademyState(): AcademyStateAPI | null {
   if (typeof window === 'undefined') return null;

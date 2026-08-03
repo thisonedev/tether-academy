@@ -1,0 +1,20 @@
+{
+  "$comment": "Manual allowlist for QVAC course samples under the kernel sandbox. Merged into the static qvac capability at wrap time. Put absolute paths or bare command names (resolved via PATH on the host). User overrides: Application Support/Tether Academy/policy/sandbox-allowlist.json (mac) / policy/sandbox-allowlist.json under XDG or AppData. Both files must be owner-writable only, and neither is reachable from a sandboxed child. mcpPackages are pre-installed host-side so the sandboxed child can exec them from a read-only cache; a lesson naming anything else is refused rather than installed.",
+  "fs": {
+    "read": [],
+    "write": []
+  },
+  "exec": [
+    "node",
+    "npm",
+    "npx"
+  ],
+  "env": {
+    "passThrough": [],
+    "block": [],
+    "force": {}
+  },
+  "mcpPackages": [
+    "@oevortex/ddg_search"
+  ]
+}

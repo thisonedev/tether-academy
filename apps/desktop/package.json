@@ -6,16 +6,60 @@
   "private": true,
   "main": "electron/main.js",
   "upgrade": "pear://<YOUR_KEY_HERE>",
+  "imports": {
+    "crypto": {
+      "bare": "bare-crypto",
+      "default": "crypto"
+    },
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
+    "path": {
+      "bare": "bare-path",
+      "default": "path"
+    },
+    "os": {
+      "bare": "bare-os",
+      "default": "os"
+    },
+    "child_process": {
+      "bare": "bare-subprocess",
+      "default": "child_process"
+    },
+    "events": {
+      "bare": "bare-events",
+      "default": "events"
+    },
+    "process": {
+      "bare": "bare-process",
+      "default": "process"
+    }
+  },
   "scripts": {
     "start": "electron .",
     "dev": "electron . --no-sandbox",
     "dev:host": "electron . --no-sandbox --storage .dev-host",
-    "capture": "electron . --capture --no-sandbox"
+    "capture": "electron . --capture --no-sandbox",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "pnpm typecheck && node scripts/run-tests.mjs tests/unit",
+    "test:integration": "node scripts/run-tests.mjs tests/integration",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.bridge.json"
   },
   "dependencies": {
+    "@academy/validation": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@qvac/sdk": "^0.15.0",
     "@sqliteai/sqlite-wasm": "^3.50.4-sync.0.8.30-vector.0.9.23",
+    "b4a": "^1.8.1",
+    "bare-crypto": "^1.15.3",
+    "bare-events": "^2.9.1",
+    "bare-fs": "^4.7.4",
+    "bare-os": "^3.9.3",
+    "bare-path": "^3.1.1",
+    "bare-process": "^4.5.1",
+    "bare-rpc": "^1.3.8",
+    "bare-subprocess": "^6.1.0",
     "blind-pairing": "^2.3.1",
     "compact-encoding": "^3.3.0",
     "corestore": "^7.11.1",
@@ -24,14 +68,19 @@
     "hypercore": "^11.35.0",
     "hypercore-crypto": "^3.7.0",
     "hyperswarm": "^4.14.0",
+    "keet-identity-key": "^3.2.0",
     "paparam": "^1.10.0",
     "pear-runtime": "^1.1.4",
     "protomux": "^3.0.0",
-    "qrcode": "^1.5.0",
     "which-runtime": "^1.3.2"
   },
   "devDependencies": {
+    "@academy/sandbox-types": "workspace:^",
+    "@types/node": "^22",
+    "bare-tcp": "^2.5.3",
+    "brittle": "^4.1.0",
     "electron": "^40.2.1",
-    "hyperdht": "^6.0.0"
+    "hyperdht": "^6.0.0",
+    "typescript": "^5.7.0"
   }
 }

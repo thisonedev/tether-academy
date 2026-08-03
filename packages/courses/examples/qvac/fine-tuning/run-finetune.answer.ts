@@ -15,7 +15,7 @@ async function main() {
       learningRate: 1e-4,
       loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
       assistantLossOnly: true,
-      outputParametersDir: "../../apps/desktop/output/finetune/",
+      outputParametersDir: "output/finetune/",
     },
   });
 

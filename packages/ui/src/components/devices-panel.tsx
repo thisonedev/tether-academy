@@ -7,8 +7,8 @@ import type {
   AcademyPeerInfo,
   AcademyPeerInvite,
   AcademyPeerPending,
-} from '@academy/academy-bridge';
-import { Check, Copy, Eraser, Loader2, Lock, QrCode, ShieldAlert, ShieldCheck, Wifi, X } from 'lucide-react';
+} from '@academy/validation';
+import { Check, Copy, Eraser, Link2, Loader2, Lock, ShieldAlert, ShieldCheck, Wifi, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 declare global {
@@ -20,6 +20,36 @@ declare global {
 export function shortHex(hex: string, head = 8, tail = 6): string {
   if (hex.length <= head + tail + 1) return hex;
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
+}
+
+/** How long a pairing code or invite link may sit on the clipboard. */
+const CLIPBOARD_SCRUB_MS = 90_000;
+
+/**
+ * Copy, then take it back. A clipboard holds what it was given until something
+ * else is copied, which may be never.
+ *
+ * The desktop bridge is preferred because its timer lives in the main process
+ * and survives the window closing. The web build has no such place, so its
+ * scrub is best effort and dies with the tab.
+ */
+function copyEphemeral(text: string): Promise<unknown> {
+  const bridge = typeof window !== 'undefined' ? window.academy?.clipboard : undefined;
+  if (bridge) return bridge.copy(text, CLIPBOARD_SCRUB_MS);
+
+  return copyToClipboard(text).then(() => {
+    setTimeout(() => {
+      if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) return;
+      // Only clear what is still ours, so a scrub cannot take whatever the
+      // user copied in the meantime.
+      navigator.clipboard
+        .readText()
+        .then((current) => {
+          if (current === text) return navigator.clipboard.writeText('');
+        })
+        .catch(() => {});
+    }, CLIPBOARD_SCRUB_MS);
+  });
 }
 
 function copyToClipboard(text: string): Promise<void> {
@@ -43,7 +73,6 @@ function copyToClipboard(text: string): Promise<void> {
 
 function parsePairInput(input: string): {
   invite: string;
-  code: string | null;
   hostIdentity: string | null;
 } | null {
   const trimmed = input.trim();
@@ -53,7 +82,7 @@ function parsePairInput(input: string): {
       const url = new URL(trimmed);
       const invite = url.searchParams.get('i');
       if (!invite) return null;
-      return { invite, code: url.searchParams.get('c'), hostIdentity: url.searchParams.get('h') };
+      return { invite, hostIdentity: url.searchParams.get('h') };
     } catch {
       return null;
     }
@@ -61,19 +90,18 @@ function parsePairInput(input: string): {
   if (trimmed.includes('?i=')) {
     const invite = trimmed.split('?i=')[1]?.split('&')[0];
     if (!invite) return null;
-    const code = trimmed.includes('&c=') ? trimmed.split('&c=')[1]?.split('&')[0] ?? null : null;
     const hostIdentity = trimmed.includes('&h=') ? trimmed.split('&h=')[1]?.split('&')[0] ?? null : null;
     return {
       invite: decodeURIComponent(invite),
-      code: code ? decodeURIComponent(code) : null,
       hostIdentity: hostIdentity ? decodeURIComponent(hostIdentity) : null,
     };
   }
-  return { invite: trimmed, code: null, hostIdentity: null };
+  return { invite: trimmed, hostIdentity: null };
 }
 
-function pairUrl(invite: string, code: string, hostIdentity: string | null): string {
-  const base = `tether-academy://pair?i=${encodeURIComponent(invite)}&c=${encodeURIComponent(code)}`;
+/** Invite link only — pairing code is shared separately, never in this URL. */
+function pairUrl(invite: string, hostIdentity: string | null): string {
+  const base = `tether-academy://pair?i=${encodeURIComponent(invite)}`;
   return hostIdentity ? `${base}&h=${encodeURIComponent(hostIdentity)}` : base;
 }
 
@@ -126,12 +154,25 @@ function auditLabel(entry: AcademyPeerAuditEntry, peerName?: string | null): str
       return 'Pair request approved';
     case 'peer:rejected':
       if (entry.reason === 'pairing-code-mismatch') {
-        return 'Unverified build attempt';
+        return 'Pairing code rejected';
+      }
+      if (entry.reason === 'pairing-code-lockout') {
+        return 'Pairing locked after too many wrong codes';
+      }
+      if (entry.reason === 'device-revoked') {
+        return 'Rejected: this device was revoked';
+      }
+      if (entry.reason === 'host-identity-mismatch') {
+        return 'Rejected: the host is not the identity the invite claimed';
       }
       if (entry.reason === 'unverified-build') {
-        return 'Unverified build attempt';
+        return 'Pair request rejected';
       }
       return 'Pair request rejected';
+    case 'peer:identity-verified':
+      return entry.identityVerified
+        ? `Identity verified${entry.identityPublicKey ? ` · ${shortHex(entry.identityPublicKey, 8, 6)}` : ''}`
+        : 'Peer holds its device key but announced no verified identity';
     case 'peer:dropped':
       return 'Pair dropped';
     case 'peer:lockdown':
@@ -200,12 +241,11 @@ function PairingCodeDisplay({ code, label }: { code: string; label: string }) {
 export function DevicesPanel() {
   const [identity, setIdentity] = useState<AcademyPeerIdentity | null | 'loading'>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [deeplinkToast, setDeeplinkToast] = useState<{ invite: string; code: string | null } | null>(null);
+  const [deeplinkToast, setDeeplinkToast] = useState(false);
 
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteModal, setInviteModal] = useState<{
     invite: AcademyPeerInvite;
-    qrDataUrl: string;
     hostIdentity: string | null;
   } | null>(null);
   const [acceptBusy, setAcceptBusy] = useState(false);
@@ -233,6 +273,12 @@ export function DevicesPanel() {
     }
   }, []);
 
+  const applyDeeplink = useCallback((payload: { invite: string; hostIdentity: string | null }) => {
+    setAcceptText(pairUrl(payload.invite, payload.hostIdentity ?? null));
+    setDeeplinkToast(true);
+    setTimeout(() => setDeeplinkToast(false), 8000);
+  }, []);
+
   useEffect(() => {
     if (!window.academy?.peer) {
       setError('Peer layer unavailable in this build.');
@@ -240,22 +286,17 @@ export function DevicesPanel() {
     }
     refresh();
     refreshPeers();
+    void window.academy.peer.takeDeeplink?.().then((payload) => {
+      if (payload?.invite) applyDeeplink(payload);
+    });
     const off = window.academy.peer.onEvent((msg) => {
       if (msg.event === 'peer:deeplink') {
         const payload = msg.payload as unknown as {
           invite: string;
-          pairingCode: string | null;
           hostIdentity: string | null;
         };
-        setDeeplinkToast({ invite: payload.invite, code: payload.pairingCode });
-        const url = pairUrl(
-          payload.invite,
-          payload.pairingCode ?? '',
-          payload.hostIdentity ?? null,
-        );
-        setAcceptText(url);
-        if (payload.pairingCode) setAcceptCode(payload.pairingCode);
-        setTimeout(() => setDeeplinkToast(null), 8000);
+        applyDeeplink(payload);
+        void window.academy?.peer?.takeDeeplink?.();
       }
       if (msg.event === 'peer:paired') {
         setInviteModal(null);
@@ -271,22 +312,17 @@ export function DevicesPanel() {
     return () => {
       off();
     };
-  }, [refresh, refreshPeers]);
+  }, [refresh, refreshPeers, applyDeeplink]);
 
   const onCreateInvite = useCallback(async () => {
     if (!window.academy?.peer) return;
     setInviteBusy(true);
     setError(null);
     try {
-      const [invite, identityInfo] = await Promise.all([
-        window.academy.peer.invite(),
-        window.academy.peer.identity(),
-      ]);
-      const hostIdentity = identityInfo?.publicKey ?? null;
-      const qrDataUrl = await window.academy.qr(
-        pairUrl(invite.invite, invite.pairingCode, hostIdentity),
-      );
-      setInviteModal({ invite, qrDataUrl, hostIdentity });
+      const invite = await window.academy.peer.invite();
+      // Straight from the invite: the guest checks this against what the host
+      // proves during pairing, so the two have to be the same key.
+      setInviteModal({ invite, hostIdentity: invite.hostIdentity ?? null });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create invite');
     } finally {
@@ -304,9 +340,14 @@ export function DevicesPanel() {
         setError('Could not parse the invite. Paste a tether-academy:// link or a raw invite.');
         return;
       }
+      const code = acceptCode.trim();
+      if (!code) {
+        setError('Pairing code is required. Enter the code from the host separately.');
+        return;
+      }
       await window.academy.peer.accept(parsed.invite, {
         userData: { source: 'settings-panel' },
-        code: acceptCode.trim() || parsed.code || undefined,
+        code,
         hostIdentity: parsed.hostIdentity || undefined,
       });
       setAcceptText('');
@@ -331,8 +372,11 @@ export function DevicesPanel() {
     }
   }, []);
 
-  const onCopy = useCallback(async (text: string, key: string) => {
-    await copyToClipboard(text);
+  // `ephemeral` for the pairing code, which is the secret that gates pairing,
+  // and for the invite link, which is lower stakes but has as short a useful
+  // life. The identity key is public and stays put.
+  const onCopy = useCallback(async (text: string, key: string, ephemeral = false) => {
+    await (ephemeral ? copyEphemeral(text) : copyToClipboard(text));
     setCopied(key);
     setTimeout(() => setCopied((prev) => (prev === key ? null : prev)), 1500);
   }, []);
@@ -355,7 +399,7 @@ export function DevicesPanel() {
 
       {deeplinkToast ? (
         <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-400">
-          Pair link opened. Tell the host the code and wait for their approval.
+          Invite link opened. Enter the pairing code from the host, then click Pair.
         </div>
       ) : null}
 
@@ -367,22 +411,35 @@ export function DevicesPanel() {
             </p>
             {identity === 'loading' ? (
               <p className="mt-1 text-sm text-canvas-muted-foreground">Loading…</p>
-            ) : identity === null ? (
-              <p className="mt-1 text-sm text-canvas-muted-foreground">No identity yet.</p>
-            ) : (
-              <p
-                className="mt-1 font-mono text-sm text-canvas-foreground"
-                title={identity.publicKey}
-              >
-                {shortHex(identity.publicKey, 12, 8)}
+            ) : identity === null || !identity.publicKey ? (
+              <p className="mt-1 text-sm text-canvas-muted-foreground">
+                No identity yet — set one up under Settings → Identity.
               </p>
+            ) : (
+              <div className="mt-1 space-y-0.5">
+                <p
+                  className="font-mono text-sm text-canvas-foreground"
+                  title={identity.identityPublicKey ?? identity.publicKey}
+                >
+                  root {shortHex(identity.identityPublicKey ?? identity.publicKey, 12, 8)}
+                </p>
+                {identity.identityPublicKey ? (
+                  <p
+                    className="font-mono text-[11px] text-canvas-muted-foreground"
+                    title={identity.publicKey}
+                  >
+                    device {shortHex(identity.publicKey, 12, 8)}
+                    {identity.source ? ` · ${identity.source}` : ''}
+                  </p>
+                ) : null}
+              </div>
             )}
             <ThisDeviceRoleSummary peers={pairedPeers} loaded={pairedPeersLoaded} />
           </div>
-          {identity && identity !== 'loading' ? (
+          {identity && identity !== 'loading' && identity.publicKey ? (
             <button
               type="button"
-              onClick={() => onCopy(identity.publicKey, 'identity')}
+              onClick={() => onCopy(identity.identityPublicKey ?? identity.publicKey!, 'identity')}
               className="inline-flex shrink-0 items-center gap-1 rounded-md border border-canvas-border bg-canvas-muted px-2.5 py-1 text-xs text-canvas-muted-foreground transition-colors hover:border-emerald-500/40 hover:text-canvas-foreground"
             >
               {copied === 'identity' ? (
@@ -404,8 +461,9 @@ export function DevicesPanel() {
           Pair a new device
         </p>
         <p className="mt-1 text-sm text-canvas-muted-foreground">
-          Create a one-time invite. Share the link and the 6-character code out-of-band. Both
-          must be known to the other side for the pair to succeed.
+          Create a one-time invite. Share the link over chat or email, and the 6-character
+          code separately. Approving a device lets it run code on this machine, confined by
+          the OS. macOS and Linux only; peer exec is not available on Windows yet.
         </p>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -415,7 +473,7 @@ export function DevicesPanel() {
             disabled={inviteBusy}
             className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
           >
-            {inviteBusy ? <Loader2 className="size-3.5 animate-spin" /> : <QrCode className="size-3.5" />}
+            {inviteBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
             Create invite
           </button>
         </div>
@@ -432,11 +490,7 @@ export function DevicesPanel() {
               id="peer-accept-input"
               type="text"
               value={acceptText}
-              onChange={(e) => {
-                setAcceptText(e.target.value);
-                const parsed = parsePairInput(e.target.value);
-                if (parsed?.code) setAcceptCode(parsed.code);
-              }}
+              onChange={(e) => setAcceptText(e.target.value)}
               placeholder="tether-academy://pair?i=…"
               spellCheck={false}
               autoComplete="off"
@@ -473,7 +527,7 @@ export function DevicesPanel() {
           <p className="mt-2 text-[11px] text-canvas-muted-foreground/80">
             {acceptBusy
               ? 'Waiting for the other device to approve. Open Settings > Devices on the other side, then click Approve.'
-              : 'Code is required. Get it from the host via voice call or another channel. The link alone is not enough.'}
+              : 'Enter the code the host shows or reads to you. The invite link alone is not enough.'}
           </p>
         </div>
       </div>
@@ -532,7 +586,6 @@ export function DevicesPanel() {
       {inviteModal ? (
         <InviteModal
           invite={inviteModal.invite}
-          qrDataUrl={inviteModal.qrDataUrl}
           hostIdentity={inviteModal.hostIdentity}
           copied={copied}
           onCopy={onCopy}
@@ -545,20 +598,18 @@ export function DevicesPanel() {
 
 function InviteModal({
   invite,
-  qrDataUrl,
   hostIdentity,
   copied,
   onCopy,
   onClose,
 }: {
   invite: AcademyPeerInvite;
-  qrDataUrl: string;
   hostIdentity: string | null;
   copied: string | null;
-  onCopy: (text: string, key: string) => void;
+  onCopy: (text: string, key: string, ephemeral?: boolean) => void;
   onClose: () => void;
 }) {
-  const url = pairUrl(invite.invite, invite.pairingCode, hostIdentity);
+  const url = pairUrl(invite.invite, hostIdentity);
   return (
     <div
       role="dialog"
@@ -575,7 +626,9 @@ function InviteModal({
             <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">
               Pair a device
             </p>
-            <h2 className="mt-1 text-lg font-semibold text-canvas-foreground">Share these with the other person</h2>
+            <h2 className="mt-1 text-lg font-semibold text-canvas-foreground">
+              Share the link and the code separately
+            </h2>
           </div>
           <button
             type="button"
@@ -586,19 +639,20 @@ function InviteModal({
             <X className="size-4" />
           </button>
         </div>
-        <div className="flex justify-center rounded-lg border border-canvas-border bg-canvas-muted p-4">
-          <img src={qrDataUrl} alt="Pair invite QR code" className="h-56 w-56" />
-        </div>
-        <div className="mt-4 space-y-4">
-          <PairingCodeDisplay code={invite.pairingCode} label="Pairing code (read aloud or share separately)" />
+        <div className="space-y-4">
+          <PairingCodeDisplay
+            code={invite.pairingCode}
+            label="Pairing code (read aloud or share separately)"
+          />
           <p className="text-[11px] text-canvas-muted-foreground/80">
-            Both the link and the code are required. Anyone with just the link cannot pair.
+            Send the invite link over chat or email. Give the code out of band — the link does
+            not include it.
           </p>
         </div>
         <div className="mt-4 flex flex-col gap-2">
           <button
             type="button"
-            onClick={() => onCopy(url, 'url')}
+            onClick={() => onCopy(url, 'url', true)}
             className="inline-flex items-center justify-center gap-1.5 rounded-md border border-canvas-border bg-canvas-muted px-3 py-2 text-xs text-canvas-foreground transition-colors hover:border-emerald-500/40"
           >
             {copied === 'url' ? (
@@ -613,7 +667,7 @@ function InviteModal({
           </button>
           <button
             type="button"
-            onClick={() => onCopy(invite.pairingCode, 'code')}
+            onClick={() => onCopy(invite.pairingCode, 'code', true)}
             className="inline-flex items-center justify-center gap-1.5 rounded-md border border-canvas-border bg-canvas-muted px-3 py-2 text-xs text-canvas-foreground transition-colors hover:border-emerald-500/40"
           >
             {copied === 'code' ? (
@@ -750,7 +804,7 @@ export function PendingRequestsSection() {
           await refresh();
         }
       } catch {
-        // approval errors are surfaced via audit; nothing to do here
+        // approval errors are surfaced via peer events
       } finally {
         setActionBusy(null);
       }
@@ -764,7 +818,7 @@ export function PendingRequestsSection() {
     try {
       await window.academy.peer.reject(requestId);
     } catch {
-      // surface via audit
+      // surface via peer events
     } finally {
       setActionBusy(null);
     }
@@ -778,6 +832,10 @@ export function PendingRequestsSection() {
         </p>
         <span className="text-xs text-canvas-muted-foreground">{pending.length}</span>
       </div>
+      <p className="mt-1 text-xs text-canvas-muted-foreground">
+        Approve only devices you trust. They can run code on this machine, confined by the
+        OS but able to read much of what your account can.
+      </p>
       {pending.length === 0 ? (
         <p className="mt-3 text-sm text-canvas-muted-foreground">No pending requests.</p>
       ) : (
@@ -888,7 +946,7 @@ export function PairedDevicesSection() {
         await window.academy.peer.drop(discoveryKey);
         await refresh();
       } catch {
-        // surfaced via audit
+        // surfaced via peer events
       } finally {
         setActionBusy(null);
       }
@@ -921,12 +979,16 @@ export function PairedDevicesSection() {
                     {pairUserDataLabel(p)}
                   </p>
                   <RoleBadge role={p.role} />
+                  <IdentityBadge peer={p} />
                 </div>
                 <p
                   className="mt-0.5 truncate font-mono text-[11px] text-canvas-muted-foreground"
-                  title={p.discoveryKey}
+                  title={p.verifiedIdentityPublicKey ?? p.discoveryKey}
                 >
-                  {shortHex(p.discoveryKey, 10, 6)} · paired {formatRelativeTime(p.pairedAt, now)}
+                  {p.verifiedIdentityPublicKey
+                    ? `identity ${shortHex(p.verifiedIdentityPublicKey, 10, 6)}`
+                    : shortHex(p.discoveryKey, 10, 6)}{' '}
+                  · paired {formatRelativeTime(p.pairedAt, now)}
                 </p>
               </div>
               <button
@@ -946,6 +1008,32 @@ export function PairedDevicesSection() {
         </ul>
       )}
     </div>
+  );
+}
+
+/** Verified means the peer proved it holds a device key attested to the root
+ *  identity it announced. Unverified pairs still work (the pairing code and the
+ *  approval gated them), but nothing vouches for whose device it is. */
+function IdentityBadge({ peer }: { peer: AcademyPeerInfo }) {
+  if (peer.identityVerified) {
+    return (
+      <span
+        title={peer.verifiedIdentityPublicKey ?? undefined}
+        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400 ring-1 ring-emerald-500/30"
+      >
+        <ShieldCheck className="size-2.5" />
+        verified
+      </span>
+    );
+  }
+  return (
+    <span
+      title="This peer has not proven an identity. Its name and key are self-reported."
+      className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400 ring-1 ring-amber-500/30"
+    >
+      <ShieldAlert className="size-2.5" />
+      unverified
+    </span>
   );
 }
 
