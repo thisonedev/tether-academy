@@ -7,7 +7,13 @@
 
 const LIMITS = Object.freeze({
   'exec:request':    { max: 10,  windowMs: 60_000 },  // per discovery key
-  'pairing:attempt': { max: 20,  windowMs: 60_000 },  // global
+  // Global ceiling across all invites. One attacker cannot multiply this
+  // by opening N invites: the per-invite code gate stops floods of one
+  // invite at the cheaper cost, and the global row only sees attempts
+  // that got past it. A generous value here: 20 per minute was tight
+  // when it was the first gate; as a backstop, 60 is still tight enough
+  // to pin a runaway loop and loose enough for legitimate hosts.
+  'pairing:attempt': { max: 60,  windowMs: 60_000 },  // global
   'identity:frame':  { max: 60,  windowMs: 60_000 },  // per discovery key
   'rpc:command':     { max: 600, windowMs: 60_000 },  // global, human-driven
 });
@@ -50,6 +56,23 @@ function isAllowed(op, key, now = Date.now()) {
   return true;
 }
 
+// Drop per-key window entries the moment they empty. The global key
+// stays because its window is the cross-invite budget; the per-peer
+// tables should not retain an empty list for a key that went away.
+function prune(op, key, now = Date.now()) {
+  const byKey = windows.get(op);
+  if (!byKey) return;
+  const list = byKey.get(key);
+  if (!list) return;
+  const limit = LIMITS[op];
+  if (!limit) return;
+  const cutoff = now - limit.windowMs;
+  let drop = 0;
+  while (drop < list.length && list[drop] <= cutoff) drop += 1;
+  if (drop > 0) list.splice(0, drop);
+  if (list.length === 0 && key !== GLOBAL_KEY) byKey.delete(key);
+}
+
 // Drop the window for one key (per-peer teardown or test reset).
 function reset(key) {
   for (const byKey of windows.values()) {
@@ -65,6 +88,7 @@ function _resetAllForTests() {
 
 module.exports = {
   isAllowed,
+  prune,
   reset,
   _resetAllForTests,
   LIMITS,

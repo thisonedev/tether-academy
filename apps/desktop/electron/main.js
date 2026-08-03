@@ -168,14 +168,7 @@ const COURSES_DIR = path.join(app.getAppPath(), '..', '..', 'packages', 'courses
 // How long a peer run may go without saying anything before the guest gives up.
 const PEER_EXEC_IDLE_MS = 5 * 60_000;
 
-// The renderer invokes this channel with a payload that the handler parses locally so it can return a formatted error.
-ipcMain.handle('academy:run', async (evt, payload) => {
-  let parsed;
-  try {
-    parsed = await parseIpc('academyRunPayloadSchema', payload, 'academy:run');
-  } catch (err) {
-    return { ok: false, output: `[run] ${err.message}` };
-  }
+handle('academy:run', async (parsed, evt) => {
   return runAcademy(parsed, evt);
 });
 
@@ -662,39 +655,17 @@ function fsSync() {
   return require('node:fs');
 }
 
-// Monaco is pulled from jsdelivr by @monaco-editor/react's AMD loader, which
-// evaluates what it fetches, so script-src has to name both the origin and
-// 'unsafe-eval'. A static export has no server to mint nonces, so the inline
-// bootstrap Next emits needs 'unsafe-inline' too.
+// Monaco is served from /monaco/vs by the app itself, copied at build time.
+// No remote origin in script-src: a CDN compromise, a TLS intercept, or a
+// pinned-range mistake cannot run code in the same origin that holds the IPC
+// bridge. 'unsafe-eval' is still required by the AMD loader's language workers
+// and is the smaller half of this item (item 15). 'unsafe-inline' is here
+// because the static export has no server to mint nonces for the inline
+// bootstrap Next emits.
 //
-// What is left still does work those two allowances do not undo. No resource
-// loads from an origin absent from this list, connect-src stops a script
-// posting anywhere else, object-src blocks plugin embedding, base-uri stops an
-// injected <base> repointing every relative URL, and form-action stops a
-// planted form submitting off-origin.
-const CSP_DIRECTIVES = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
-  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data: https://cdn.jsdelivr.net",
-  "worker-src 'self' blob:",
-  "connect-src 'self' https://cdn.jsdelivr.net",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-];
-
-// frame-ancestors is only honoured on a real header, so it lives here and not
-// in the <meta> the web export carries.
-const CONTENT_SECURITY_POLICY = [...CSP_DIRECTIVES, "frame-ancestors 'none'"].join('; ');
-
-const SECURITY_HEADERS = {
-  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer',
-};
+// The full policy lives in security-headers.cjs so the web export's <meta>
+// and the Electron main-process header cannot drift apart.
+const { SECURITY_HEADERS } = require('./security-headers.cjs');
 
 function mimeFor(p) {
   if (p.endsWith('.html')) return 'text/html; charset=utf-8';
@@ -761,12 +732,22 @@ app.setAsDefaultProtocolClient(deeplinkProtocol);
 function parsePairUrl(url) {
   if (typeof url !== 'string') return null;
   if (!url.startsWith(`${deeplinkProtocol}://pair`)) return null;
+  // Bound the URL at parse time. The renderer reads these fields with
+  // textContent today, so a control character or HTML in the query is
+  // not a live attack; rejecting here means the defense does not depend
+  // on the renderer. Raw (`%01`) and decoded (`\x01`) forms both trip.
+  // Bound the URL at parse time. The renderer reads these fields with
+  // textContent today, so a control character or HTML in the query is
+  // not a live attack; rejecting here means the defense does not depend
+  // on the renderer. Raw (`%01`) and decoded (`\x01`) forms both trip.
+  if (url.length > 4096) return null;
   let parsed;
   try {
     parsed = new URL(url);
   } catch {
     return null;
   }
+  if (/[\x00-\x1f\x7f]/.test(parsed.search) || /%0[0-9a-f]/i.test(parsed.search)) return null;
   const invite = parsed.searchParams.get('i');
   const hostIdentity = parsed.searchParams.get('h');
   if (!invite) return null;

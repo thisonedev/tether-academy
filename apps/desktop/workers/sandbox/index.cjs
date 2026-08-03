@@ -408,7 +408,15 @@ function wrapSpawn(command, args, options, capabilities) {
   // snippet there and delete the lot afterwards.
   const runDir = options.runDir || makeRunDir();
   assertSocketRoom(runDir);
-  const templateVars = defaultTemplateVars({ execPath: command, runDir });
+  const templateVars = defaultTemplateVars({
+    execPath: command,
+    runDir,
+    // The host resolved userData from app.getPath('userData'); that is the
+    // real state directory, not the home-default that the capability would
+    // otherwise name. The profile denies this path; without it, the
+    // capability's default could disagree with where the data lives.
+    userData: options.userData,
+  });
   const cacheDir = npmCacheDir();
   // Where npx extracts package bins: the one part of the cache the child may
   // execute from, and so the one part it may not write.
@@ -542,7 +550,9 @@ function wrapSpawn(command, args, options, capabilities) {
       '(deny default)',
       ...mac._allowRules(expanded, { warnings, command, runtime }),
     ].join('\n') + '\n';
-    const profilePath = mac.writeProfile(profileBody);
+    // Run dir is 0700 and torn down by finishRun; this keeps the profile
+    // off the shared tmp container and ties its lifetime to its consumer.
+    const profilePath = mac.writeProfile(profileBody, { tmpdir: runDir });
     const wrap = mac.buildWrap(profilePath, command, args);
     return {
       command: wrap.command,

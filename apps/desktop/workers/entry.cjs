@@ -16,7 +16,7 @@ function fromJson(data) {
 function errBody(err) {
   return { message: err && err.message ? err.message : String(err) };
 }
-
+// @ts-ignore - bare-rpc's .d.ts omits CommandRouter; the runtime exports it.
 const router = new RPC.CommandRouter();
 let rpc = null;
 
@@ -192,4 +192,6 @@ respond(CMD.CLOSE, async () => {
   return toJson({ ok: true, result });
 });
 
+// @ts-ignore - bare-rpc's .d.ts uses `export =` and the upstream class has no
+// construct signature in the type stub; the runtime accepts the same shape.
 rpc = new RPC(Bare.IPC, router);

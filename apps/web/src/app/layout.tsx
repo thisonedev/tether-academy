@@ -17,12 +17,15 @@ const tagPlatformScript = `try{if(window.academy){document.documentElement.setAt
 
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
-  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+  // Monaco's AMD loader is served from /monaco/vs, copied at build time.
+  // No remote origin, so a CDN compromise, a TLS intercept, or a pinned-range
+  // mistake cannot run code in the same origin that holds window.academy.
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
-  "font-src 'self' data: https://cdn.jsdelivr.net",
+  "font-src 'self' data:",
   "worker-src 'self' blob:",
-  "connect-src 'self' https://cdn.jsdelivr.net",
+  "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",

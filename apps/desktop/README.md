@@ -8,7 +8,7 @@ Electron + Pear Runtime shell that loads the Tether Academy web app.
 
 - Node.js 20.18+
 - pnpm 9.15.9 (matches the workspace `packageManager` field)
-- A built web export at `apps/web/out/`, or a running Next dev server on `:4712`
+- A built web export at `apps/web/out/`, or a running Next dev server on `:3000` (see Development below)
 
 ### Run the built app
 
@@ -22,7 +22,7 @@ or from `apps/desktop`:
 pnpm start
 ```
 
-The app serves `apps/web/out/` over an inline HTTP server (because Next's `/_next/...` asset paths don't load over `file://`). If the build is missing, it falls back to `http://localhost:4712`, then to `PEAR_DEV_URL` if set.
+The app serves `apps/web/out/` over an inline HTTP server (because Next's `/_next/...` asset paths don't load over `file://`). `PEAR_DEV_URL` always wins if set; otherwise it serves the static build; if neither is available, it falls back to `http://localhost:4712` as a last resort.
 
 ### Development
 
@@ -31,7 +31,7 @@ The app serves `apps/web/out/` over an inline HTTP server (because Next's `/_nex
 pnpm dev                          # Next dev server with HMR
 
 # terminal 2
-PEAR_DEV_URL=http://localhost:4712 pnpm start:desktop
+PEAR_DEV_URL=http://localhost:3000 pnpm start:desktop
 ```
 
 `PEAR_DEV_URL` always wins over the static build, so changes to the web app hot-reload into the desktop window.
@@ -70,20 +70,19 @@ The runner is [brittle](https://github.com/holepunchto/brittle), which also runs
 
 `peer.cjs` (pairing + mesh + peer-exec) runs inside a real Bare worker process, spawned by `pear-end/worker-client.cjs` and communicating over a `bare-rpc` command channel (one command per action — no generic `invoke(method, args)` dispatcher). `main.js` only ever talks to `pear-end/index.cjs`'s facade; it never requires `peer.cjs` directly. Identity (`identity/manager.cjs`) and the KV store stay in the Electron main process — the worker receives only an already-decrypted device identity at init.
 
-Peer-exec always fails closed if the OS sandbox isn't available; see `references/audit.md` and `references/plan.md` for the full security audit and phased hardening history.
-
 ### What macOS read confinement does not cover
 
-Writes are allowlisted by subpath. Reads cannot be, because dyld and the runtime need broad filesystem visibility to start: a pure read allowlist kills the `bare` binary with SIGABRT, and a synthetic `HOME` makes every cached model look missing, since the SDK resolves its cache from it. So the profile allows `file-read*` and then denies back. `sandbox-mac.cjs` generates that deny set per spawn by listing `$HOME`, its parent, and the shared temp root, and denying every entry no needed path touches, on top of a named list of credential stores elsewhere.
+Writes are allowlisted by subpath. Reads cannot be, because dyld and the runtime need broad filesystem visibility to start: a pure read allowlist kills the `bare` binary with SIGABRT, and a synthetic `HOME` makes every cached model look missing, since the SDK resolves its cache from it. So the profile allows `file-read*` and then denies back. `sandbox-mac.cjs` generates that deny set per spawn by listing `$HOME`, its parent, and `/tmp`, and denying every entry no needed path touches, on top of a named list of credential stores elsewhere.
 
 Denying back leaves residue. Each of the following is a limit of the mechanism, and closing it needs something seatbelt does not offer:
 
 - A file or directory created after the profile is generated is not in the deny set. The profile is rebuilt for every spawn, so this window is the length of one run.
 - A directory the walk has to descend into, but cannot list, keeps its contents readable. Lesson output lives in `~/Documents/Tether Academy`, so the walk must enter `~/Documents` to deny the siblings of that one folder. TCC blocks reading `~/Documents` until the user grants access, and without the listing there are no sibling names to deny. The profile emits a warning naming each directory it could not read.
 - `~/Library` stays readable apart from the named denies, because the dyld, font, and preference caches the runtime starts from live there.
-- Paths outside `$HOME`, `/Users`, and `/tmp` are covered only by the named list in `SYSTEM_READ_DENY`. A credential in a location that list does not name is readable.
+- Paths outside `$HOME`, `/Users`, and `/tmp` are covered only by the named list in `SYSTEM_READ_DENY`. A credential in a location that list does not name is readable. The per-user temp container (`$TMPDIR`) is one of those. Denying it entry by entry is not the answer: a working machine holds five figures of them, and `sandbox-exec` compile time climbs faster than the rule count (3k denies cost 2s per spawn, 11k cost 30s, 19k never finish, so the child never starts).
+- Whatever the walk had not reached when it hit `MAX_GENERATED_DENIES`, which exists for the same reason. The profile warns when the walk stops there.
 
-Seatbelt has no deny-except form for reads, so none of these can be fixed by reordering rules: an earlier `subpath` deny beats a later allow whatever the order.
+Seatbelt matches rules last-first, so a later allow re-opens an earlier `subpath` deny. That is what lets the broad `file-read*` allow be denied back, and it means a crowded directory can be confined without a rule per entry: deny the root once, then allow each path the run needs.
 
 ### sandbox-exec is deprecated
 

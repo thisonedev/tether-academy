@@ -17,6 +17,8 @@ const {
   defaultTemplateVars,
   expandDeep,
   secretsDir,
+  confinedPaths,
+  appStateDir,
 } = require('../../workers/sandbox/capabilities.cjs');
 
 test('capabilities - qvac capability has the expected shape', (t) => {
@@ -233,6 +235,34 @@ test('capabilities - the deny set is rebuilt from disk every time', { skip: proc
   t.ok(denied(buildProfile('qvac'), later), 'a directory added since the last build is covered');
 });
 
+// An unbounded walk turns a crowded directory into a child that never starts;
+// see MAX_GENERATED_DENIES for what the profile costs at that size. The
+// warning matters as much as the cap: paths the walk skipped stay readable,
+// and nothing else records that.
+test('capabilities - a crowded directory cannot grow the profile without bound', { skip: process.platform !== 'darwin' }, (t) => {
+  const realHome = process.env.HOME;
+  t.teardown(() => {
+    process.env.HOME = realHome;
+  });
+
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ta-home-crowded-')));
+  t.teardown(() => fs.rmSync(home, { recursive: true, force: true }));
+  for (let i = 0; i < 6000; i++) {
+    fs.writeFileSync(path.join(home, `entry-${i}`), '');
+  }
+  process.env.HOME = home;
+
+  const warnings = [];
+  const cap = expandDeep(CAPABILITIES.qvac, defaultTemplateVars());
+  const denies = macAllowRules(cap, { warnings }).filter((rule) => rule.startsWith('(deny file-read*'));
+
+  t.ok(denies.length < 6000, `deny rules capped at ${denies.length}, not one per entry`);
+  t.ok(
+    warnings.some((w) => w.includes('deny walk stopped')),
+    'the profile records that the walk stopped early',
+  );
+});
+
 // Windows has no shipped confinement comparable to seatbelt or bwrap, so
 // peer-exec must report unavailable and refuse rather than run unconfined.
 test('capabilities - windows reports unavailable', { skip: process.platform !== 'win32' }, (t) => {
@@ -245,4 +275,27 @@ test('capabilities - windows reports unavailable', { skip: process.platform !== 
 
   t.is(result.mode, 'windows-unavailable');
   t.ok(result.warnings.length > 0, 'refusal is explained');
+});
+
+// The capability's deny list has to name the resolved userData, not the
+// home-default. Without this, the profile lies about which directory the
+// sandbox refuses, and a peer-exec that escapes can read the identity
+// record from the real path the host was launched into.
+test('capabilities - defaultTemplateVars honors a userData override', (t) => {
+  const override = path.join(os.tmpdir(), 'sandbox-test-override');
+  const vars = defaultTemplateVars({ userData: override });
+  t.is(vars.userData, override, 'the resolved path is what the profile denies');
+
+  // confinedPaths() reads the same override. The keys dir moves with it.
+  const confined = confinedPaths(override);
+  t.ok(confined.includes(override), 'the state dir is in the deny list');
+  t.ok(
+    confined.includes(path.join(override, 'keys')),
+    'the keys dir moves with the override',
+  );
+
+  // The home-default still works when no override is supplied.
+  const home = appStateDir();
+  const fallback = confinedPaths();
+  t.ok(fallback.includes(home), 'no override means home-default is denied');
 });

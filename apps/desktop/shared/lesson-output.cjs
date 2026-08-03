@@ -55,9 +55,79 @@ function precreateOutputDirs(src, cwd) {
   }
 }
 
+// A lesson that hands a directory to the SDK gets its bytes written by the
+// native side, which never passes through the snippet's writeFileSync and so
+// never prints a [saved] line. A finetune writes adapter weights plus optimizer
+// state to a static path that nothing prunes, so diff the folder across the run
+// and name it in the output.
+const NOTE_MIN_BYTES = 32 * 1024 * 1024;
+
+/** Every file under the output folder, keyed by path relative to it. */
+function snapshotOutputs(cwd) {
+  const root = path.join(cwd, 'output');
+  const sizes = new Map();
+  const stack = [''];
+  while (stack.length > 0) {
+    const rel = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(path.join(root, rel), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const childRel = rel ? path.join(rel, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        stack.push(childRel);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        sizes.set(childRel, fs.statSync(path.join(root, childRel)).size);
+      } catch {
+        // vanished mid-scan
+      }
+    }
+  }
+  return sizes;
+}
+
+function formatBytes(bytes) {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+/**
+ * What the run added, grouped by the folder each lesson owns, and only past a
+ * size a person would care about. Growth counts as well as new files: a
+ * resumed finetune rewrites a checkpoint in place.
+ * @param {Map<string, number>} before From snapshotOutputs, taken pre-run.
+ * @returns {string} Chunk text to print, empty when there is nothing to report.
+ */
+function describeNewOutputs(before, cwd) {
+  const root = path.join(cwd, 'output');
+  const byFolder = new Map();
+  for (const [rel, size] of snapshotOutputs(cwd)) {
+    const added = size - (before.get(rel) ?? 0);
+    if (added <= 0) continue;
+    const folder = rel.split(path.sep)[0];
+    byFolder.set(folder, (byFolder.get(folder) ?? 0) + added);
+  }
+  let note = '';
+  for (const [folder, bytes] of byFolder) {
+    if (bytes < NOTE_MIN_BYTES) continue;
+    note +=
+      `[output] this run wrote ${formatBytes(bytes)} to ${path.join(root, folder)}. ` +
+      `Nothing removes it for you, so delete it when you are done.\n`;
+  }
+  return note;
+}
+
 module.exports = {
   lessonHomeDir,
   lessonCwd,
   lessonOutputDir,
   precreateOutputDirs,
+  snapshotOutputs,
+  describeNewOutputs,
 };

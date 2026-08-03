@@ -246,11 +246,17 @@ async function createWorkerPeers(t, n, opts = {}) {
 // peer:paired event. A no-op exec is the only probe for whether it is ready;
 // without this the first real exec races the channel and throws
 // "no exec channel".
-async function waitForExecChannel(peer, discoveryKey, timeoutMs = 5000) {
+// The probe is a real sandboxed spawn, and on macOS sandbox-exec compiles the
+// generated deny set before the child starts, which takes seconds on a
+// populated $HOME. A budget tuned to an empty snippet times out on the
+// profile instead, and that reads as a broken exec channel.
+const EXEC_PROBE_MS = 15_000;
+
+async function waitForExecChannel(peer, discoveryKey, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      await runExec(peer, { peerId: discoveryKey, code: 'null' }, 2000);
+      await runExec(peer, { peerId: discoveryKey, code: 'null' }, EXEC_PROBE_MS);
       return;
     } catch (err) {
       if (!String(err.message).includes('no exec channel')) throw err;

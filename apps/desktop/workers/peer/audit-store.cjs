@@ -27,7 +27,6 @@ const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 let _stream = null;
 let _path = null;
 let _bytes = 0;
-let _rotationInFlight = null;
 
 function auditPath(stateDir) {
   return path.join(stateDir, AUDIT_FILE);
@@ -86,8 +85,9 @@ function append(entry) {
     fs.writeSync(stream.fd, line);
     _bytes += Buffer.byteLength(line, 'utf8');
     if (_bytes >= MAX_FILE_BYTES) {
-      // Coalesce rotations: only one in flight at a time.
-      if (!_rotationInFlight) _rotationInFlight = rotate();
+      // rotate() is sync; the previous latch on the resolved promise
+      // never released because the body ran before the assignment landed.
+      rotate();
     }
     return true;
   } catch (err) {
@@ -147,7 +147,7 @@ function readTail(n = 1000) {
 // Rotate the active file: close, rename active -> .1, shift older generations
 // up, drop the oldest to keep the total at KEEP_GENERATIONS files
 // (active + (KEEP_GENERATIONS - 1) archives).
-async function rotate() {
+function rotate() {
   if (!_path) return;
   const stream = _stream;
   const currentPath = _path;
@@ -204,7 +204,6 @@ async function rotate() {
   } catch (err) {
     console.warn('[audit-store] reopen after rotate failed:', err?.message ?? err);
   }
-  _rotationInFlight = null;
 }
 
 // Manual clear by the UI clears the in-memory ring only; the durable record

@@ -122,18 +122,22 @@ function stripForNode(src) {
     .replace(/^export\s+\{[^}]*\};?\s*$/gm, '');
 }
 
-function hookMainCatch(src) {
-  const marker = 'main().catch(';
-  const start = src.indexOf(marker);
-  if (start === -1) return src;
-  let i = start + marker.length;
-  let depth = 1;
+// A lesson's entry call on its own line, with whatever the sample hangs off it.
+const ENTRY_CALL = /^[ \t]*(?:void[ \t]+|await[ \t]+)?main[ \t]*\([ \t]*\)/gm;
+
+/**
+ * Index just past the statement starting at `from`, or -1 when it does not end.
+ * Quotes, template literals, comments and nested brackets are skipped, so a
+ * `.catch(() => console.log(";"))` does not read as the end of the statement.
+ */
+function statementEnd(src, from) {
+  let depth = 0;
   let inSingle = false;
   let inDouble = false;
   let inTemplate = false;
   let inLineComment = false;
   let inBlockComment = false;
-  while (i < src.length && depth > 0) {
+  for (let i = from; i < src.length; i++) {
     const ch = src[i];
     const next = src[i + 1];
     if (inLineComment) {
@@ -152,37 +156,67 @@ function hookMainCatch(src) {
     } else if (inTemplate) {
       if (ch === '\\') i++;
       else if (ch === '`') inTemplate = false;
-    } else {
-      if (ch === '/' && next === '/') {
-        inLineComment = true;
-        i++;
-      } else if (ch === '/' && next === '*') {
-        inBlockComment = true;
-        i++;
-      } else if (ch === "'") inSingle = true;
-      else if (ch === '"') inDouble = true;
-      else if (ch === '`') inTemplate = true;
-      else if (ch === '(') depth++;
-      else if (ch === ')') {
-        depth--;
-        if (depth === 0) break;
-      }
+    } else if (ch === '/' && next === '/') {
+      inLineComment = true;
+      i++;
+    } else if (ch === '/' && next === '*') {
+      inBlockComment = true;
+      i++;
+    } else if (ch === "'") inSingle = true;
+    else if (ch === '"') inDouble = true;
+    else if (ch === '`') inTemplate = true;
+    else if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--;
+      if (depth < 0) return -1;
+    } else if (depth === 0 && ch === ';') return i + 1;
+    else if (depth === 0 && ch === '\n') {
+      // A chain can carry on to the next line; anything else ends the statement.
+      if (!/^\s*(?:\.|\?\.|\()/.test(src.slice(i))) return i;
     }
-    i++;
   }
-  if (depth !== 0) return src;
-  const handler = src.slice(start + marker.length, i);
-  let j = i + 1;
-  while (j < src.length && (src[j] === ' ' || src[j] === '\t' || src[j] === '\n' || src[j] === '\r')) j++;
-  if (src[j] === ';') j++;
-  const replacement = `main().catch(${handler}).finally(() => close().catch(() => {})).then(() => process.exit(0));`;
-  return src.slice(0, start) + replacement + src.slice(j);
+  return depth === 0 ? src.length : -1;
+}
+
+function isTrivia(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').trim() === '';
+}
+
+/**
+ * Hand the lesson's entry call to __academyFinish, so teardown runs the moment
+ * it settles. A lesson that loaded a model does not end on its own: the SDK's
+ * worker holds the process open past the last line, and the run only stops when
+ * a watchdog gives up on it. The call is only wrapped when it is the last
+ * statement: exiting early would cut off whatever came after it.
+ */
+function hookLessonExit(src) {
+  let match = null;
+  ENTRY_CALL.lastIndex = 0;
+  for (let m = ENTRY_CALL.exec(src); m; m = ENTRY_CALL.exec(src)) match = m;
+  if (!match) return src;
+
+  const callAt = match.index + match[0].indexOf('main');
+  const end = statementEnd(src, callAt);
+  if (end === -1 || !isTrivia(src.slice(end))) return src;
+
+  const expr = src.slice(callAt, end).replace(/;\s*$/, '').trim();
+  return `${src.slice(0, match.index)}__academyFinish(${expr});${src.slice(end)}`;
 }
 
 function resolveFixturePaths(src, coursesDir) {
+  // Contain the rewrite: a `examples/../../etc/passwd` traversal is a read
+  // of whatever the user account can see, and the local runner is
+  // unsandboxed. path.join collapses `..` silently, so check the resolved
+  // path is still under coursesDir.
+  const root = path.resolve(coursesDir);
+  const rootWithSep = root + path.sep;
   return src.replace(/(['"])(\.?\/?examples\/[^'"]+)\1/g, (match, quote, rel) => {
     const clean = rel.replace(/^\.\//, '');
-    return `${quote}${path.join(coursesDir, clean)}${quote}`;
+    const abs = path.resolve(root, clean);
+    if (abs !== root && !abs.startsWith(rootWithSep)) {
+      throw new Error(`buildLesson: refused path outside coursesDir: ${rel}`);
+    }
+    return `${quote}${abs}${quote}`;
   });
 }
 
@@ -208,6 +242,25 @@ function __academyWriteFile(target, data, opts) {
   console.log("[saved] " + __academyResolve(p));
   return p;
 }
+function __academyExit(code) {
+  process.exitCode = code;
+  // stdout is a pipe here, so a queued write is still in flight at this point
+  // and process.exit would drop it. The timer covers a runtime whose write
+  // takes no callback.
+  let pending = 2;
+  const bail = setTimeout(() => process.exit(code), 250);
+  if (typeof bail.unref === "function") bail.unref();
+  const flushed = () => { if (--pending === 0) { clearTimeout(bail); process.exit(code); } };
+  try { process.stdout.write("", flushed); } catch { flushed(); }
+  try { process.stderr.write("", flushed); } catch { flushed(); }
+}
+function __academyEnd(code) {
+  Promise.resolve().then(() => close()).catch(() => {}).then(() => __academyExit(code));
+}
+function __academyFinish(p) {
+  Promise.resolve(p).then(() => __academyEnd(0), (err) => { console.error(err); __academyEnd(1); });
+}
+process.on('unhandledRejection', () => { __academyEnd(1); });
 `;
 
 function routeWritesThroughDedupe(src) {
@@ -254,7 +307,7 @@ function buildLesson({ source, cwd, runtime = 'node' }) {
   const importedNames = extractImportedNames(source);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
   const importLine = `import { ${namesForImport.join(', ')} } from ${JSON.stringify(parentRequire.resolve('@qvac/sdk'))};\n`;
-  const hooked = hookMainCatch(stripForNode(resolvedSource));
+  const hooked = hookLessonExit(stripForNode(resolvedSource));
   const runtimePreamble = runtime === 'bare' ? barePreamble(source) : '';
   return `${runtimePreamble}${importLine}${dedupePreamble(runtime)}${hooked}\n`;
 }

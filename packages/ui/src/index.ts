@@ -16,4 +16,6 @@ export { SiteHeader } from './components/site-header.js';
 export { StartCourseButton } from './components/start-course-button.js';
 export { UserMenu } from './components/user-menu.js';
 export { NotificationCenter } from './components/notification-center.js';
+export { RunRow } from './components/notification-center.js';
+export type { RunNotice, RunTone } from './components/notification-center.js';
 export { UsernamePrompt } from './components/username-prompt.js';

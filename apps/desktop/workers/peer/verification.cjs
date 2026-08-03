@@ -31,6 +31,11 @@ function createVerification({
     if (!session) return;
 
     if (msg.kind === identityHandshake.HELLO_KIND) {
+      // The first hello carries the device and identity keys the sender will
+      // prove possession of. A second hello is rejected wholesale: the proof
+      // is bound to the nonce, so allowing more than one would let a peer
+      // rebind an already-verified session to a key it has not proven.
+      if (session.remote) return;
       const remote = identityHandshake.readHello(msg);
       if (!remote) return;
       const signingKeyPair = getSigningKeyPair();
@@ -42,11 +47,23 @@ function createVerification({
       );
     } else if (msg.kind === identityHandshake.PROOF_KIND) {
       if (!session.remote) return;
-      session.deviceVerified = identityHandshake.verifyProofReply(msg, {
+      // Store the key the signature actually covered, not a boolean. A later
+      // hello cannot reach this field, and applyIdentityResult reads from
+      // here rather than from session.remote.
+      session.verifiedDevicePublicKey = identityHandshake.verifyProofReply(msg, {
         discoveryKeyHex,
         nonce: session.nonce,
         devicePublicKey: session.remote.devicePublicKey,
-      });
+      })
+        ? session.remote.devicePublicKey
+        : null;
+      // Same pinning for the identity half: only set if the same proof also
+      // attests the identity key. Both come from the same hello, so a
+      // different key on the wire cannot move this value either.
+      session.verifiedIdentityPublicKey =
+        session.remote.identityProven && session.verifiedDevicePublicKey
+          ? session.remote.identityPublicKey
+          : null;
     }
     applyIdentityResult(discoveryKeyHex);
   }
@@ -60,19 +77,22 @@ function createVerification({
     const session = identitySessions.get(discoveryKeyHex);
     const peer = peers.get(discoveryKeyHex);
     if (!session || !peer || session.applied) return;
-    if (!session.remote || !session.deviceVerified) return;
+    if (!session.remote || !session.verifiedDevicePublicKey) return;
     session.applied = true;
 
-    const { devicePublicKey, identityPublicKey, identityProven } = session.remote;
+    // Read the proven keys, not the announced ones. A second hello can no
+    const devicePublicKey = session.verifiedDevicePublicKey;
+    const identityPublicKey = session.verifiedIdentityPublicKey;
+    const identityVerified = !!identityPublicKey;
     peer.verifiedDevicePublicKey = devicePublicKey;
-    peer.verifiedIdentityPublicKey = identityProven ? identityPublicKey : null;
-    peer.identityVerified = identityProven;
+    peer.verifiedIdentityPublicKey = identityVerified ? identityPublicKey : null;
+    peer.identityVerified = identityVerified;
 
     appendAudit('peer:identity-verified', {
       discoveryKey: discoveryKeyHex,
       devicePublicKey,
       identityPublicKey: peer.verifiedIdentityPublicKey,
-      identityVerified: identityProven,
+      identityVerified,
     });
     emit('peer:identity-verified', {
       discoveryKey: discoveryKeyHex,

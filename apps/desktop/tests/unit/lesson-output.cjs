@@ -9,7 +9,13 @@ const os = require('os');
 const path = require('path');
 
 const { buildLesson } = require('../../electron/runner-process.cjs');
-const { lessonHomeDir, lessonOutputDir, precreateOutputDirs } = require('../../shared/lesson-output.cjs');
+const {
+  lessonHomeDir,
+  lessonOutputDir,
+  precreateOutputDirs,
+  snapshotOutputs,
+  describeNewOutputs,
+} = require('../../shared/lesson-output.cjs');
 
 const COURSES = path.join(__dirname, '..', '..', '..', '..', 'packages', 'courses');
 
@@ -121,6 +127,58 @@ test('lesson-output - output lands in a named folder a person can find', (t) => 
   fs.mkdirSync(path.join(home, 'Documents'));
   t.is(lessonHomeDir(home), path.join(home, 'Documents', 'Tether Academy'));
   t.is(lessonOutputDir(home), path.join(home, 'Documents', 'Tether Academy', 'output'));
+});
+
+// Checkpoints are written by the addon, so no [saved] line announces them and
+// nothing deletes them. The run has to say where the bytes went.
+function writeOutput(cwd, rel, bytes) {
+  const abs = path.join(cwd, 'output', rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, Buffer.alloc(bytes));
+}
+
+test('lesson-output - a large run reports the folder it filled', (t) => {
+  const cwd = tmp(t);
+  const before = snapshotOutputs(cwd);
+  t.is(before.size, 0, 'no output folder yet');
+
+  writeOutput(cwd, path.join('finetune', 'checkpoints', 'step_1', 'optimizer.gguf'), 40 * 1024 * 1024);
+  const note = describeNewOutputs(before, cwd);
+
+  t.ok(note.includes(path.join(cwd, 'output', 'finetune')), 'names the folder to delete');
+  t.ok(note.includes('40 MB'));
+});
+
+test('lesson-output - a small run says nothing', (t) => {
+  const cwd = tmp(t);
+  const before = snapshotOutputs(cwd);
+  writeOutput(cwd, path.join('image-gen', 'cat.png'), 1024);
+  t.is(describeNewOutputs(before, cwd), '', 'writeFileSync already logged [saved]');
+});
+
+test('lesson-output - files the run did not touch are not counted', (t) => {
+  const cwd = tmp(t);
+  writeOutput(cwd, path.join('finetune', 'old.gguf'), 40 * 1024 * 1024);
+  const before = snapshotOutputs(cwd);
+  t.is(describeNewOutputs(before, cwd), '', 'a prior run\'s bytes are its own');
+});
+
+// A resumed finetune rewrites a checkpoint at the same path.
+test('lesson-output - a file that grew counts as new bytes', (t) => {
+  const cwd = tmp(t);
+  writeOutput(cwd, path.join('finetune', 'adapter.gguf'), 1024);
+  const before = snapshotOutputs(cwd);
+  writeOutput(cwd, path.join('finetune', 'adapter.gguf'), 40 * 1024 * 1024);
+  t.ok(describeNewOutputs(before, cwd).includes('finetune'));
+});
+
+test('lesson-output - the pause/resume lesson leaves periodic checkpoints off', (t) => {
+  const dir = path.join(COURSES, 'examples', 'qvac', 'fine-tuning');
+  for (const name of ['pause-resume-cancel.starting.ts', 'pause-resume-cancel.answer.ts']) {
+    const src = fs.readFileSync(path.join(dir, name), 'utf8');
+    // Only pause checkpoints are cleaned up; checkpoint_step_* dirs accumulate.
+    t.absent(src.includes('checkpointSaveSteps'), name);
+  }
 });
 
 test('lesson-output - the sandbox grants the lesson folder, not all of Documents', (t) => {

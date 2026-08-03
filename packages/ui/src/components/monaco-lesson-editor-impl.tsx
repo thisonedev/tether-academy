@@ -1,9 +1,16 @@
 'use client';
 
-import Editor, { type Monaco, type OnMount } from '@monaco-editor/react';
+import Editor, { loader, type Monaco, type OnMount } from '@monaco-editor/react';
 import type * as monacoTypes from 'monaco-editor';
 import { useCallback, useRef } from 'react';
 import { QVAC_THEME, setupQvacMonaco } from './monaco-qvac-setup.js';
+
+// Pin the loader to the app-bundled Monaco. Without this, @monaco-editor/react
+// fetches the AMD loader from cdn.jsdelivr.net at runtime, which the renderer
+// CSP cannot allow without trusting a third-party origin to deliver executable
+// code into the same origin that holds window.academy. The path is the public
+// asset copy produced by apps/web's prebuild step.
+loader.config({ paths: { vs: '/monaco/vs' } });
 
 const COMMON_EDITOR_OPTIONS: monacoTypes.editor.IStandaloneEditorConstructionOptions = {
   fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',

@@ -116,6 +116,14 @@ function isUnder(parent, child) {
 // The lesson folder is two levels down and a checked-out repo can be four.
 const MAX_DENY_DEPTH = 5;
 
+// sandbox-exec compiles the profile on every spawn and the cost climbs faster
+// than the rule count: 3k denies cost 2s, 11k cost 30s, 19k never finish. A
+// directory holding thousands of entries is ordinary, so without a ceiling one
+// crowded directory stops every run from starting, and a child that never
+// starts produces no error to explain itself. Past the ceiling the rest of
+// that directory stays readable and the profile warns.
+const MAX_GENERATED_DENIES = 4000;
+
 /**
  * Deny every entry of `dir` no needed path touches, descending into the ones
  * that merely contain one so a sibling is not kept along with it.
@@ -139,6 +147,7 @@ function denyAround(dir, needed, out, unresolved, depth = 0) {
     return;
   }
   for (const name of entries) {
+    if (out.size >= MAX_GENERATED_DENIES) return;
     const full = path.join(dir, name);
     if (needed.some((n) => isUnder(full, n))) {
       // Keep it whole when the entry is itself needed, else descend.
@@ -180,20 +189,18 @@ function reachablePaths(cap, command) {
  * Everything the child has no business reading, generated from what is on disk
  * rather than a fixed list, so a directory added later is still covered.
  *
- * Neither allowlist shape works here: a read cannot be re-allowed under a denied
- * subpath (seatbelt resolves the deny first), and a synthetic $HOME makes every
- * model look missing, since the SDK resolves its cache from it.
+ * A synthetic $HOME is not an option either: it makes every model look missing,
+ * since the SDK resolves its cache from it.
  *
  * The complement is generated under $HOME, under its parent so that sibling
- * accounts are covered, and under the shared temp root so that scratch owned
- * by other processes is too. This run's own directory survives the temp walk
- * because `reachable` names it. Credential stores outside all three are listed
- * in SYSTEM_READ_DENY, since the directories around those hold files the
- * runtime starts from.
+ * accounts are covered, and under /tmp. Credential stores outside all three are
+ * listed in SYSTEM_READ_DENY, since the directories around those hold files the
+ * runtime starts from. What the walk generates is capped: see
+ * MAX_GENERATED_DENIES for what a profile past that size costs.
  *
  * @param {import('@academy/sandbox-types').Capability} cap
  * @param {string} command
- * @returns {{ paths: Set<string>, generated: number, unresolved: string[] }}
+ * @returns {{ paths: Set<string>, generated: number, unresolved: string[], truncated: boolean }}
  */
 function sensitiveReadDenyPaths(cap, command) {
   // Resolved, because seatbelt matches the path the kernel arrived at.
@@ -231,7 +238,12 @@ function sensitiveReadDenyPaths(cap, command) {
     denyAround(real, needed, generatedPaths, unresolved);
   }
   for (const p of generatedPaths) paths.add(p);
-  return { paths, generated: generatedPaths.size, unresolved };
+  return {
+    paths,
+    generated: generatedPaths.size,
+    unresolved,
+    truncated: generatedPaths.size >= MAX_GENERATED_DENIES,
+  };
 }
 
 function allowRules(cap, { warnings = [], command = process.execPath, runtime = 'bare' } = {}) {
@@ -239,7 +251,7 @@ function allowRules(cap, { warnings = [], command = process.execPath, runtime = 
 
   // Broad read required for dyld and the runtime; $HOME denied below.
   rules.push('(allow file-read*)');
-  const { paths: denyRead, generated, unresolved } = sensitiveReadDenyPaths(cap, command);
+  const { paths: denyRead, generated, unresolved, truncated } = sensitiveReadDenyPaths(cap, command);
   for (const p of denyRead) {
     rules.push(`(deny file-read* (subpath ${sbString(p)}))`);
   }
@@ -249,6 +261,12 @@ function allowRules(cap, { warnings = [], command = process.execPath, runtime = 
           'generated from $HOME (a pure allowlist stops the runtime starting)'
       : 'mac sandbox: $HOME could not be enumerated; only the named denies apply',
   );
+  if (truncated) {
+    warnings.push(
+      `mac sandbox: the deny walk stopped at ${MAX_GENERATED_DENIES} generated paths, ` +
+        'so whatever it had not reached stays readable to the run',
+    );
+  }
   if (unresolved.length > 0) {
     warnings.push(
       `mac sandbox: could not list ${unresolved.join(', ')}, so the rest of each ` +
@@ -396,9 +414,12 @@ function buildProfile(capabilityName = 'qvac') {
  * @returns {string}
  */
 function writeProfile(profile, { tmpdir = os.tmpdir() } = {}) {
+  // 0600: the container is per-user, so any other process running as the
+  // user (including the very peer run the profile confines) is the
+  // practical reader.
   const name = `academy-sandbox-${crypto.randomBytes(6).toString('hex')}.sb`;
   const profilePath = path.join(tmpdir, name);
-  fs.writeFileSync(profilePath, profile, { mode: 0o644 });
+  fs.writeFileSync(profilePath, profile, { mode: 0o600 });
   return profilePath;
 }
 

@@ -102,11 +102,17 @@ function buildProofReply(discoveryKeyHex, nonce, signingKeyPair) {
 }
 
 /** Checks the reply answers our own nonce and was signed by the announced key. */
-function verifyProofReply(msg, { discoveryKeyHex, nonce, devicePublicKey }) {
+function verifyProofReply(msg, { discoveryKeyHex, nonce, devicePublicKey, expectedIdentity = null }) {
   if (!msg || typeof msg.signature !== 'string') return false;
   if (msg.nonce !== nonce) return false;
   const signature = Buffer.from(msg.signature, 'base64');
   if (signature.length !== SIGNATURE_BYTES) return false;
+  // The proof itself carries no identity field. The hello carries the
+  // announced identityPublicKey, and the invite carries what was
+  // promised; the comparison lives in the verification handler that has
+  // both. expectedIdentity is plumbed for the case where a future
+  // refactor moves the identity comparison into the verifier itself.
+  if (expectedIdentity != null && msg.devicePublicKey !== expectedIdentity) return false;
   try {
     return hypercoreCrypto.verify(
       signable(discoveryKeyHex, nonce),

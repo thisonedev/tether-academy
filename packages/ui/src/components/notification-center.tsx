@@ -28,11 +28,16 @@ export function NotificationCenter() {
   const deviceRequests = useDeviceRequests();
   const pairRequests = usePairRequests();
   const runs = useRunNotices();
+  // The top strip carries only incoming runs. Outgoing runs (a guest's
+  // remote execution) render inside the output panel of the lesson
+  // workspace, so the work-in-progress lives next to the bytes it is
+  // producing rather than at the top of the page.
+  const topRuns = runs.items.filter((run) => run.direction === 'incoming');
 
   if (
     deviceRequests.items.length === 0 &&
     pairRequests.items.length === 0 &&
-    runs.items.length === 0
+    topRuns.length === 0
   ) {
     return null;
   }
@@ -54,7 +59,7 @@ export function NotificationCenter() {
           onAnswer={pairRequests.answer}
         />
       ))}
-      {runs.items.map((run) => (
+      {topRuns.map((run) => (
         <RunRow key={run.id} run={run} onDismiss={runs.dismiss} />
       ))}
     </div>
@@ -265,9 +270,9 @@ function PairRequestRow({
 
 // --- runs --------------------------------------------------------------------
 
-type RunTone = 'running' | 'ok' | 'err';
+export type RunTone = 'running' | 'ok' | 'err';
 
-type RunNotice = {
+export type RunNotice = {
   id: string;
   /** incoming: a peer is running code here. outgoing: our code is running there. */
   direction: 'incoming' | 'outgoing';
@@ -286,7 +291,7 @@ function runIdFor(entry: AcademyPeerAuditEntry, direction: RunNotice['direction'
   return `${direction}:${entry.discoveryKey ?? 'unknown'}`;
 }
 
-function useRunNotices() {
+export function useRunNotices() {
   const [items, setItems] = useState<RunNotice[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -450,7 +455,7 @@ function runToneClass(tone: RunTone): string {
   }
 }
 
-function RunRow({
+export function RunRow({
   run,
   onDismiss,
 }: {
@@ -462,16 +467,16 @@ function RunRow({
   const sentence =
     run.direction === 'incoming' ? (
       <>
-        <span className="font-medium">{run.peerLabel}</span> is running code on this device
+        <span className="font-small">{run.peerLabel}</span> is running code on this device
       </>
     ) : (
       <>
-        Your code is running on <span className="font-medium">{run.peerLabel}</span>
+        Your code is running on <span className="font-small">{run.peerLabel}</span>
       </>
     );
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-canvas-border bg-canvas-muted/95 px-4 py-2 text-sm backdrop-blur">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-canvas-border bg-canvas-muted/95 px-2 py-2 text-sm backdrop-blur">
       {run.tone === 'running' ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-sky-400" />
       ) : null}

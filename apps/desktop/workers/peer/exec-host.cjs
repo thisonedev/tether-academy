@@ -26,7 +26,12 @@ const {
   sanitizeExecCode,
 } = require('./exec-validate.cjs');
 const { detectNetworkNeed, referencedModels } = require('./exec-network.cjs');
-const { lessonCwd, precreateOutputDirs } = require('../../shared/lesson-output.cjs');
+const {
+  lessonCwd,
+  precreateOutputDirs,
+  snapshotOutputs,
+  describeNewOutputs,
+} = require('../../shared/lesson-output.cjs');
 const { syncFast, scan, removeAddedSince, verifyModelsAsync } = require('../../shared/model-integrity.cjs');
 
 // --require'd into a node-runtime child so it does not claim a Dock icon.
@@ -189,6 +194,7 @@ function removeDir(dir) {
  * @param {(discoveryKeyHex: string) => unknown} ctx.getPeerUserData
  * @param {() => string} ctx.getExecPath
  * @param {() => string | null} ctx.getBareRuntimeBinPath
+ * @param {() => string | null} [ctx.getUserData]
  * @param {() => string | null} [ctx.getSecretScheme]
  * @param {(discoveryKeyHex: string) => string | null} [ctx.getRevokedDeviceKey]
  * @param {(discoveryKeyHex: string, timeoutMs: number) => Promise<{ ok: boolean, reason: string | null }>} [ctx.awaitDeviceVerified]
@@ -201,6 +207,7 @@ function createExecHost(ctx) {
     getPeerUserData,
     getExecPath,
     getBareRuntimeBinPath,
+    getUserData = () => null,
     getSecretScheme = () => null,
     getRevokedDeviceKey = () => null,
     // No transport means nothing can prove who is on the wire, so nothing runs.
@@ -309,14 +316,48 @@ function createExecHost(ctx) {
     }
   }
 
+  /** A run that no longer holds its peer's slot has already been reported. */
+  function isCurrent(discoveryKeyHex, run) {
+    return runs.get(discoveryKeyHex) === run;
+  }
+
   function finishRun(discoveryKeyHex, run) {
-    if (runs.get(discoveryKeyHex) !== run) return;
+    if (!isCurrent(discoveryKeyHex, run)) return;
     if (run.killTimer) clearTimeout(run.killTimer);
     // A clean exit still leaves the worker running if the lesson never
     // unloaded its model, so sweep the group either way.
     killGroup(run.child, 'SIGKILL');
     removeDir(run.fileDir);
     runs.delete(discoveryKeyHex);
+  }
+
+  /**
+   * Report how a run ended, once. Whoever gets here first owns the outcome:
+   * finishRun sweeps the process group, so every later exit belongs to that
+   * sweep and not to the lesson.
+   * @param {string} discoveryKeyHex
+   * @param {object} run
+   * @param {{ code: number | null, signal: string | null, source: string }} outcome
+   */
+  function reportExit(discoveryKeyHex, run, { code, signal, source }) {
+    if (!isCurrent(discoveryKeyHex, run)) return;
+    sendReply(discoveryKeyHex, {
+      kind: 'exit',
+      code,
+      signal,
+      mode: run.mode,
+      fileName: run.fileName,
+    });
+    appendAudit('peer:exec:finished', {
+      discoveryKey: discoveryKeyHex,
+      code,
+      signal,
+      mode: run.mode,
+      fileName: run.fileName,
+      cancelled: run.cancelled || undefined,
+      source,
+    });
+    finishRun(discoveryKeyHex, run);
   }
 
   /**
@@ -469,8 +510,19 @@ function createExecHost(ctx) {
       return;
     }
     spawnRun(discoveryKeyHex, msg).catch((err) => {
+      // A throw from inside spawnRun is what makes the silent failure
+      // (peer exec returns nothing, run directory leaks). Run the same
+      // cleanup fail() / finishRun() take on a deliberate refusal, so the
+      // peer gets a stable code, the audit event lands, and the run
+      // directory is removed.
       console.warn('[peer] spawnRun failed:', err?.message ?? err);
-      runs.delete(discoveryKeyHex);
+      const run = runs.get(discoveryKeyHex);
+      fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), {
+        mode: msg?.mode ?? null,
+        fileName: msg?.fileName ?? null,
+      });
+      if (run) finishRun(discoveryKeyHex, run);
+      else runs.delete(discoveryKeyHex);
     });
   }
 
@@ -731,6 +783,7 @@ function createExecHost(ctx) {
     // The SDK spawns bare as its own worker, so it is prepared either way.
     const bareRuntimeBinPath = getBareRuntimeBinPath();
     precreateOutputDirs(code, childCwd);
+    run.outputsBefore = snapshotOutputs(childCwd);
     const bareBin = ensureBareExecutable(bareRuntimeBinPath);
 
     const interpreter = runtime === 'node' ? getExecPath() : bareBin;
@@ -750,7 +803,17 @@ function createExecHost(ctx) {
       wrap = sandbox.wrapSpawn(
         interpreter,
         args,
-        { cwd: childCwd, bareRuntimeBinPath, grants, runDir: run.fileDir, runtime },
+        {
+          cwd: childCwd,
+          bareRuntimeBinPath,
+          grants,
+          runDir: run.fileDir,
+          runtime,
+          // The host's resolved userData, so the capability profile denies
+          // the real state directory rather than the home-default. Without
+          // this, `--storage` makes the two diverge.
+          userData: getUserData(),
+        },
         'qvac',
       );
     } catch (err) {
@@ -808,6 +871,10 @@ function createExecHost(ctx) {
     // on the slot the wrap named before the child exists. Closed in the parent
     // as soon as it is inherited.
     const seccompFd = wrap.seccompFilter ? sandbox.openSeccompFd(wrap.seccompFilter) : null;
+    // Stdio can include a raw file descriptor for the seccomp filter slot.
+    // bare-subprocess types it as `(number | Stream | IOType | "ipc")[]`; the
+    // JSDoc on the array carries the type past the literal.
+    /** @type {Array<'ignore' | 'pipe' | 'ipc' | number>} */
     const stdio = ['ignore', 'pipe', 'pipe'];
     if (seccompFd !== null) stdio.push(seccompFd);
 
@@ -852,31 +919,23 @@ function createExecHost(ctx) {
       if (finalIdleTimer) clearTimeout(finalIdleTimer);
       finalIdleTimer = setTimeout(() => {
         if (!isAlive(child) || run.cancelled || run.phase !== 'running') return;
-        sendReply(discoveryKeyHex, {
-          kind: 'exit',
-          code: 0,
-          signal: null,
-          mode,
-          fileName,
-        });
-        appendAudit('peer:exec:finished', {
-          discoveryKey: discoveryKeyHex,
-          code: 0,
-          signal: null,
-          mode,
-          fileName,
-          source: 'final-idle',
-        });
-        finishRun(discoveryKeyHex, run);
+        reportExit(discoveryKeyHex, run, { code: 0, signal: null, source: 'final-idle' });
       }, RUN_FINAL_IDLE_MS);
       if (typeof finalIdleTimer.unref === 'function') finalIdleTimer.unref();
     };
-    child.stdout.on('data', (chunk) => {
+    // The stdio array above names 'pipe' for stdout/stderr, so child.stdout
+    // and child.stderr are non-null at runtime. The JSDoc satisfies the
+    // checker without a defensive branch that would otherwise be dead code.
+    /** @type {NodeJS.ReadableStream} */
+    const childStdout = child.stdout;
+    /** @type {NodeJS.ReadableStream} */
+    const childStderr = child.stderr;
+    childStdout.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
       armFinalIdle();
       sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stdout', data: chunk.toString('utf8') });
     });
-    child.stderr.on('data', (chunk) => {
+    childStderr.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
       armFinalIdle();
       const data = stderrFilter.push(chunk.toString('utf8'));
@@ -884,13 +943,26 @@ function createExecHost(ctx) {
     });
     child.on('error', (err) => {
       if (finalIdleTimer) clearTimeout(finalIdleTimer);
+      if (!isCurrent(discoveryKeyHex, run)) return;
       fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), { mode, fileName });
       finishRun(discoveryKeyHex, run);
     });
     child.on('exit', (exitCode, signal) => {
       if (finalIdleTimer) clearTimeout(finalIdleTimer);
+      // Whatever already reported this run also killed the group on its way
+      // out, so this exit is the host's own SIGKILL rather than the lesson's
+      // result. Reporting it turned a finished run into a stopped one.
+      if (!isCurrent(discoveryKeyHex, run)) return;
       const tail = stderrFilter.end();
       if (tail) sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data: tail });
+
+      // Not through stderrFilter: the host wrote this, not the child.
+      try {
+        const note = describeNewOutputs(run.outputsBefore ?? new Map(), lessonCwd());
+        if (note) sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data: note });
+      } catch {
+        // advisory only
+      }
 
       // Fail closed on SIGTRAP: do not re-run unsandboxed.
       if (signal === 'SIGTRAP' && run.useKernelSandbox && !run.cancelled) {
@@ -903,23 +975,12 @@ function createExecHost(ctx) {
         return;
       }
 
-      sendReply(discoveryKeyHex, {
-        kind: 'exit',
+      reportExit(discoveryKeyHex, run, {
         code: exitCode,
         signal: signal ?? null,
-        mode,
-        fileName,
-      });
-      appendAudit('peer:exec:finished', {
-        discoveryKey: discoveryKeyHex,
-        code: exitCode,
-        signal: signal ?? null,
-        mode,
-        fileName,
-        cancelled: run.cancelled || undefined,
+        source: 'exit',
       });
       if (exitCode !== 0) revertModelAdditions(discoveryKeyHex, run);
-      finishRun(discoveryKeyHex, run);
     });
   }
 
@@ -930,7 +991,11 @@ function createExecHost(ctx) {
     run.cancelled = true;
     run.denyConsent?.('cancelled');
     run.denyIdentityWait?.();
-    terminate(run);
+    // The child's own exit arrives after the slot has been released, so a run
+    // that had reached spawn is reported here or not at all.
+    if (terminate(run)) {
+      reportExit(discoveryKeyHex, run, { code: null, signal: 'SIGTERM', source: 'stopped' });
+    }
     finishRun(discoveryKeyHex, run);
   }
 

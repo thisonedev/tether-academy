@@ -23,14 +23,12 @@ test('ipc contract keeps literal handlers in the registry', (t) => {
   t.ok(dynamic.includes('pear:worker:writeIPC:'), 'found dynamic worker handler');
 });
 
-test('ipc contract leaves only the wrapper and academy:run registrations', (t) => {
-  // The wrapper's body plus the academy:run handler are the only direct
-  // ipcMain.handle calls. academy:run stays manual because it formats parse
-  // errors into a string the renderer can print; the wrapper would surface
-  // them as rejections. protocol.handle('academy', ...) is the protocol
-  // scheme, not an IPC channel, and is counted separately.
+test('ipc contract leaves only the wrapper registrations', (t) => {
+  // The wrapper is the only direct ipcMain.handle call. protocol.handle
+  // is the protocol scheme, not an IPC channel, and is counted
+  // separately.
   const count = (main.match(/ipcMain\.handle\(/g) || []).length;
-  t.is(count, 2);
+  t.is(count, 1);
 });
 
 test('ipc contract registry schemas resolve to validation exports', async (t) => {

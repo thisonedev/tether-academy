@@ -13,8 +13,10 @@ const path = require('node:path');
 const MAX_RUNTIME_MS = 5 * 60 * 1000;
 
 const { buildLesson } = require('./electron/runner-process.cjs');
-const { lessonCwd } = require('./shared/lesson-output.cjs');
+const { createAccumulator } = require('./electron/run-accumulator.cjs');
+const { lessonCwd, snapshotOutputs, describeNewOutputs } = require('./shared/lesson-output.cjs');
 const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
+const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
@@ -36,6 +38,7 @@ function runExample({ source, language, argv, onChunk }) {
   // Lesson writes are relative, so the child runs in the writable workspace.
   // Fixture reads were made absolute by buildLesson.
   const childCwd = lessonCwd();
+  const outputsBefore = snapshotOutputs(childCwd);
   const wrapped = buildLesson({ source, cwd: coursesDir });
   const dir = mkdtempSync(join(tmpdir(), 'ta-run-'));
   const file = join(dir, 'snippet.mts');
@@ -92,15 +95,22 @@ function runExample({ source, language, argv, onChunk }) {
   };
 
   const promise = new Promise((resolve) => {
-    let output = '';
+    // Cap each stream at the same budget peer-exec uses. A lesson that
+    // prints in a loop still has a 1 MiB per-stream ceiling on what the
+    // final string holds; the renderer has seen every byte live.
+    const output = createAccumulator();
     let killed = false;
     const timer = setTimeout(() => {
       killed = true;
       killGroup('SIGTERM');
     }, MAX_RUNTIME_MS);
+    // Same model-loader and sandbox chatter the peer path strips, so
+    // a successful local run does not flood the output panel.
+    const stderrFilter = createNoiseFilter();
     const handleChunk = (stream) => (chunk) => {
-      const s = chunk.toString();
-      output += s;
+      const s = stream === 'stderr' ? stderrFilter.push(chunk.toString()) : chunk.toString();
+      if (!s) return;
+      output.append(stream, s);
       if (onChunk) onChunk({ stream, data: s });
     };
     child.stdout.on('data', handleChunk('stdout'));
@@ -108,13 +118,31 @@ function runExample({ source, language, argv, onChunk }) {
     child.on('error', (err) => {
       clearTimeout(timer);
       rm(dir, { recursive: true, force: true }).catch(() => {});
-      resolve({ ok: false, output: `[runner] ${err.message}\n${output}` });
+      resolve({ ok: false, output: `[runner] ${err.message}\n${output.result('stdout')}${output.result('stderr')}` });
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
       // A lesson that never unloads its model leaves the worker behind.
       killGroup('SIGKILL');
       rm(dir, { recursive: true, force: true }).catch(() => {});
+      const note = (() => {
+        try {
+          return describeNewOutputs(outputsBefore, childCwd);
+        } catch {
+          return '';
+        }
+      })();
+      if (note) {
+        output.append('stderr', note);
+        if (onChunk) onChunk({ stream: 'stderr', data: note });
+      }
+      // Drain the noise filter: a partial line held when the child
+      // closed may carry the final word of a real error.
+      const tail = stderrFilter.end();
+      if (tail) {
+        output.append('stderr', tail);
+        if (onChunk) onChunk({ stream: 'stderr', data: tail });
+      }
       // This run may have downloaded a model. Re-baseline so peer-exec's
       // integrity check treats the new bytes as the app's own work.
       try {
@@ -122,12 +150,13 @@ function runExample({ source, language, argv, onChunk }) {
       } catch {
         // advisory only
       }
+      const fullOutput = `${output.result('stdout')}${output.result('stderr')}`;
       if (killed)
         resolve({
           ok: false,
-          output: `${output}\n[runner] killed after ${MAX_RUNTIME_MS / 1000}s`,
+          output: `${fullOutput}\n[runner] killed after ${MAX_RUNTIME_MS / 1000}s`,
         });
-      else resolve({ ok: code === 0, output });
+      else resolve({ ok: code === 0, output: fullOutput });
     });
   });
 

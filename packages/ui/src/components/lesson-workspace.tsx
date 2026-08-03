@@ -23,6 +23,7 @@ import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
 import { MonacoLessonEditor } from './monaco-lesson-editor.js';
+import { RunRow, useRunNotices } from './notification-center.js';
 
 export interface LessonTest {
   id: string;
@@ -134,6 +135,24 @@ function runLabel(data: LessonData): string {
   const lesson = data.currentLesson?.slug;
   if (chapter && lesson) return `${chapter}/${lesson}`;
   return data.title;
+}
+
+/**
+ * The part of a run's final `output` the live stream never carried. Every
+ * chunk is sent as it arrives and the same bytes come back in the result, so
+ * appending the whole of `output` printed a failed run's log twice. What is
+ * left is the runner's own note about how the run ended.
+ */
+function unstreamed(output: string, streamed: OutputLine[]): string {
+  let rest = output;
+  for (const stream of ['stdout', 'stderr'] as const) {
+    const text = streamed
+      .filter((entry) => entry.stream === stream)
+      .map((entry) => entry.line)
+      .join('\n');
+    if (text) rest = rest.replace(text, '');
+  }
+  return rest.trim();
 }
 
 declare global {
@@ -560,21 +579,14 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
               endedAt: Date.now(),
             });
           }
-        } else if (result.output && result.output.trim().length > 0) {
-          producedOutput = [...streamBuffer, { stream: 'stdout', line: result.output.trim() }];
-          if (isRemoteRun && selectedPeerId) {
-            setLastRemoteRun({
-              kind: 'err',
-              peerId: selectedPeerId,
-              startedAt: runStartedAt,
-              endedAt: Date.now(),
-              code: result.remoteExit?.code ?? null,
-              signal: result.remoteExit?.signal ?? null,
-              message: result.output.trim().split('\n').pop() ?? null,
-            });
-          }
         } else {
-          producedOutput = [...streamBuffer, { stream: 'stdout', line: '[exit non-zero]' }];
+          // A native abort kills the child without printing anything, so the
+          // signal is all the student has to go on.
+          const ended = result.remoteExit?.signal
+            ? `[stopped by ${result.remoteExit.signal}]`
+            : '[exit non-zero]';
+          const note = unstreamed(result.output ?? '', streamBuffer) || ended;
+          producedOutput = [...streamBuffer, { stream: 'stdout', line: note }];
           if (isRemoteRun && selectedPeerId) {
             setLastRemoteRun({
               kind: 'err',
@@ -583,7 +595,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
               endedAt: Date.now(),
               code: result.remoteExit?.code ?? null,
               signal: result.remoteExit?.signal ?? null,
-              message: '[exit non-zero]',
+              message: note.split('\n').pop() ?? null,
             });
           }
         }
@@ -1249,10 +1261,12 @@ function Runner({
         ))}
       </div>
 
-      {/* A remote run's status lives in NotificationCenter, so the guest sees
-          it in the same place the host does rather than twice. */}
+      {/* A remote run's status lives next to its output: the host's
+          incoming run is the same component NotificationCenter renders
+          at the top, and the guest's outgoing run renders here so the
+          work-in-progress sits next to the bytes it is producing. */}
 
-      <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted p-4 font-mono text-sm text-canvas-foreground">
+      <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted font-mono text-sm text-canvas-foreground">
         {tab === 'output' ? (
           runMode === 'remote' && remotePeers.length === 0 ? (
             <div className="flex h-full items-center justify-center font-sans text-sm text-canvas-muted-foreground">
@@ -1310,7 +1324,10 @@ function Runner({
               </div>
             </div>
           ) : (
-            <OutputView key={outputKey} lines={outputLines} isAnimating={isAnimating} />
+            <>
+              {runMode === 'remote' ? <GuestRunStrip /> : null}
+              <OutputView key={outputKey} lines={outputLines} isAnimating={isAnimating} />
+            </>
           )
         ) : null}
         {tab === 'tests' ? <TestsView results={testResults} tests={null as never} /> : null}
@@ -1318,6 +1335,16 @@ function Runner({
       </div>
     </div>
   );
+}
+
+// Outgoing runs (a guest's remote execution) render inside the output
+// panel so the work-in-progress sits next to the bytes it is producing.
+function GuestRunStrip() {
+  const { items, dismiss } = useRunNotices();
+  const outgoing = items.filter((run) => run.direction === 'outgoing');
+  return outgoing.map((run) => (
+    <RunRow key={run.id} run={run} onDismiss={dismiss} />
+  ));
 }
 
 type RemoteRunState =
@@ -1446,7 +1473,7 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
   }, [isAnimating]);
 
   return (
-    <div className="space-y-1 text-canvas-muted-foreground">
+    <div className="space-y-1 p-4 text-canvas-muted-foreground">
       {lines.length === 0 && !isAnimating ? (
         <>
           <p className="text-emerald-400">$ Run your code to see results</p>

@@ -13,6 +13,7 @@
     ]
   },
   "include": [
-    "workers/sandbox/**/*.cjs"
+    "workers/**/*.cjs",
+    "workers/types.d.ts"
   ]
 }

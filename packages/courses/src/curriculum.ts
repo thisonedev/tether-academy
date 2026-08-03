@@ -1,7 +1,12 @@
 // Per-chapter numbering: each chapter resets at 01 so the strip
 // stays scannable as the course grows
 
-import type { Course, CurriculumChapter, CurriculumLesson, CurriculumLessonState } from './types.js';
+import type {
+  Course,
+  CurriculumChapter,
+  CurriculumLesson,
+  CurriculumLessonState,
+} from './types.js';
 
 const COURSE_BASE = '/courses/qvac/en';
 
@@ -605,6 +610,45 @@ export function getCurriculumLessonBySlug(
   slug: string,
 ): CurriculumLesson | undefined {
   return chapter.lessons.find((l) => l.slug === slug);
+}
+
+/** Everything a lesson can be found by: its own words and its chapter's. */
+function haystack(lesson: CurriculumLesson, chapter: CurriculumChapter): string {
+  return [
+    lesson.title,
+    lesson.shortTitle ?? '',
+    lesson.slug.replace(/-/g, ' '),
+    `${chapter.num}.${lesson.num}`,
+    chapter.label,
+    chapter.slug.replace(/-/g, ' '),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+/**
+ * Chapters narrowed to the lessons matching `query`, in curriculum order.
+ * Every word has to appear somewhere in the lesson's title, slug, number or
+ * chapter, so "tts stream" finds the streaming TTS lesson whichever order it
+ * is typed in. A chapter whose own label matches keeps all of its lessons.
+ * An empty query returns the chapters untouched.
+ */
+export function searchLessons(chapters: CurriculumChapter[], query: string): CurriculumChapter[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return chapters;
+  const out: CurriculumChapter[] = [];
+  for (const chapter of chapters) {
+    const lessons = chapter.lessons.filter((lesson) =>
+      words.every((word) => haystack(lesson, chapter).includes(word)),
+    );
+    if (lessons.length > 0) out.push({ ...chapter, lessons });
+  }
+  return out;
+}
+
+/** How many lessons these chapters hold in total. */
+export function countLessons(chapters: CurriculumChapter[]): number {
+  return chapters.reduce((sum, chapter) => sum + chapter.lessons.length, 0);
 }
 
 /** Returns the position state of a lesson relative to the current lesson in the same chapter. */

@@ -76,15 +76,29 @@ function secretsDir(home = os.homedir()) {
 /**
  * Directories every platform profile must refuse, whatever an allowlist asks
  * for. Nothing a lesson does needs the app's own state or keys.
+ * @param {string} [userData] Resolved userData from the host, used when the
+ *   app was launched with `--storage <dir>` or any other userData override.
+ *   Falls back to `appStateDir(home)` so the default-path story still holds.
  * @param {string} [home]
  * @returns {string[]}
  */
-function confinedPaths(home = os.homedir()) {
-  return [appStateDir(home), secretsDir(home)];
+function confinedPaths(userData, home = os.homedir()) {
+  const state = userData || appStateDir(home);
+  // The keys directory moves with `--storage` in the sense that the secrets
+  // sit next to the userData, not under $HOME/.tether-academy. A user that
+  // chooses an alternate state dir gets the matching keys dir denied too.
+  const keys = userData ? path.join(userData, 'keys') : secretsDir(home);
+  return [state, keys];
 }
 
 /**
- * @param {{ projectDir?: string, execDir?: string, execPath?: string, runDir?: string }} [overrides]
+ * @param {{
+ *   projectDir?: string,
+ *   execDir?: string,
+ *   execPath?: string,
+ *   runDir?: string,
+ *   userData?: string,
+ * }} [overrides]
  * @returns {TemplateVars}
  */
 function defaultTemplateVars(overrides = {}) {
@@ -104,7 +118,10 @@ function defaultTemplateVars(overrides = {}) {
     lessonDir: require('../../shared/lesson-output.cjs').lessonHomeDir(home),
     execDir: overrides.execDir || (overrides.execPath ? path.dirname(overrides.execPath) : path.dirname(process.execPath)),
     execPath: overrides.execPath || process.execPath,
-    userData: appStateDir(home),
+    // The app's real state directory, not the home-default. `--storage` and
+    // any future userData override flow through this override; the default
+    // path is the `appStateDir(home)` computation that the docs describe.
+    userData: overrides.userData || appStateDir(home),
   };
 }
 

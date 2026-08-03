@@ -253,6 +253,52 @@ test('exec-host - cancel on an idle peer is a no-op', (t) => {
   t.absent(host.cancel(PEER), 'nothing to cancel');
 });
 
+// A throw from inside spawnRun (after the run has been registered in the
+// slot) used to leave the peer silent, the run dir on disk, and nothing
+// in the audit. Drive that path and assert the catch runs the same
+// cleanup every deliberate refusal runs.
+test('exec-host - a throw inside spawnRun is reported with a stable code', async (t) => {
+  // Earlier tests in this file already consumed the per-key exec:request
+  // budget, so the test would hit the limiter before reaching spawnRun.
+  const { _resetAllForTests } = require('../../workers/peer/rate-limit.cjs');
+  _resetAllForTests();
+
+  const { host, replies, audit } = fakeHost({
+    // Throws after the run slot has been taken, so the catch handles it.
+    getExecPath: () => {
+      throw new Error('interpreter exploded');
+    },
+  });
+  t.teardown(() => host.stopAll());
+
+  // A node-only import (anything outside the bare-safe list) is what makes
+  // detectNodeOnly pick the node runtime, which is the only path that calls
+  // getExecPath() and lets the throw land in spawnRun's promise. The
+  // PACKAGE_NAME regex requires an absolute path, so the specifier includes
+  // a leading slash to mirror the build step's output.
+  host.handleRequest(PEER, {
+    kind: 'request',
+    code: 'import foo from "/abs/node_modules/some-pkg/index.js"; console.log(foo);',
+    mode: 'inline',
+  });
+  await settle();
+  // The catch is on the spawnRun promise; wait a few ticks for the
+  // rejection handler to run.
+  await settle();
+  await settle();
+  await settle();
+
+  const err = replies.find((r) => r.kind === 'error');
+  t.ok(err, 'the peer is told something happened');
+  t.is(err.code, 'spawn-failed', 'with the stable code, not the host-side error text');
+  t.is(err.message, PEER_ERROR_TEXT['spawn-failed'], 'and the fixed text for that code');
+  t.ok(
+    audit.some((a) => a.type === 'peer:exec:error' && a.code === 'spawn-failed'),
+    'an audit event is recorded',
+  );
+  t.absent(host.hasRun(PEER), 'and the slot is released');
+});
+
 // Pin the constant that backs the BCI-idle fix. The actual final-idle
 // behaviour needs a real spawn and so lives in tests/integration/exec-cancel.cjs
 // (or a new integration test); pinning the value here stops a tuning edit

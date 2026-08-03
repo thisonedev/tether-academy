@@ -129,6 +129,13 @@ export interface WrapOptions {
   runDir?: string;
   /** Which interpreter `command` is. Only 'node' needs the Electron guards. */
   runtime?: 'node' | 'bare';
+  /**
+   * Resolved userData from the host (`app.getPath('userData')`). The
+   * capability profile denies this path; without the override, the
+   * capability's default disagrees with the app's real state directory
+   * when the host was launched with `--storage` or any userData override.
+   */
+  userData?: string;
 }
 
 // Subset of Capability the dynamic JSON file can hold. Merged

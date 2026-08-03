@@ -42,7 +42,11 @@ function deriveSwarmSeed(privateKeyHex, info = PEER_SWARM_INFO) {
   // Ed25519 JWK "d" is 32 bytes; take the first 32 if longer.
   const keyMaterial = ikm.subarray(0, 32);
   const infoBuf = Buffer.from(info, 'utf8');
-  return Buffer.from(hkdfSync('sha256', keyMaterial, Buffer.alloc(0), infoBuf, 32));
+  // Node's @types/crypto types hkdfSync's return as `ArrayBufferLike`, but the
+  // runtime returns a Buffer; Buffer.from accepts the wider type.
+  /** @type {Buffer} */
+  const okm = Buffer.from(/** @type {ArrayBufferLike} */ (hkdfSync('sha256', keyMaterial, Buffer.alloc(0), infoBuf, 32)));
+  return okm;
 }
 
 function deriveSwarmSeedHex(privateKeyHex, info = PEER_SWARM_INFO) {

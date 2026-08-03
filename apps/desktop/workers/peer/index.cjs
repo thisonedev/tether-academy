@@ -68,6 +68,7 @@ let identity = null;
 // createRequire to find them with.
 let execPath = null;
 let bareRuntimeBinPath = null;
+let userData = null;
 // How main seals the identity record at rest. Null until init() reports one.
 let secretScheme = null;
 // Device keypair used to answer a peer's identity challenge, plus what this
@@ -132,6 +133,10 @@ const execHost = createExecHost({
   getPeerUserData: (discoveryKeyHex) => peers.get(discoveryKeyHex)?.userData ?? null,
   getExecPath: () => execPath,
   getBareRuntimeBinPath: () => bareRuntimeBinPath,
+  // Resolved userData from the host. The capability profile's deny list
+  // names this path; without the override, the default disagrees with the
+  // real location whenever the app was launched with `--storage`.
+  getUserData: () => userData,
   getSecretScheme: () => secretScheme,
   getRevokedDeviceKey: (discoveryKeyHex) => {
     if (!revocation) return null;
@@ -164,10 +169,12 @@ async function initOnce({
   attestation = null,
   revokedDevices: revokedOpt = null,
   auditPath: auditPathOpt = null,
+  userData: userDataOpt = null,
 }) {
   if (execPathOpt) execPath = execPathOpt;
   if (bareRuntimeBinPathOpt) bareRuntimeBinPath = bareRuntimeBinPathOpt;
   if (secretSchemeOpt) secretScheme = secretSchemeOpt;
+  if (typeof userDataOpt === 'string' && userDataOpt) userData = userDataOpt;
   revocation = createRevocation({ peers, pendingRequests, appendAudit, dropPeer, reject });
   verification = createVerification({
     identityHandshake,
@@ -331,6 +338,11 @@ function routeExecMessage(discoveryKeyHex, buf) {
   // Also before peers.get: the handshake starts with the channel, which can
   // open ahead of the peer entry on either side.
   if (identityHandshake.isIdentityFrame(buf)) {
+    // Rate-limit the wire side, not the verifier. Without this, an unpaired
+    // peer can drive unbounded IdentityKey.verify + ed25519 sign calls on
+    // the worker's single event loop. The discovery key is the same
+    // identifier dropPeer resets at, so teardown needs no change here.
+    if (!rateAllow('identity:frame', discoveryKeyHex)) return;
     try {
       const msg = JSON.parse(Buffer.from(buf).toString('utf8'));
       if (msg?.kind === identityHandshake.HELLO_KIND || msg?.kind === identityHandshake.PROOF_KIND) {
@@ -433,7 +445,8 @@ function startIdentityHandshake(discoveryKeyHex) {
   const session = {
     nonce: identityHandshake.newNonce(),
     remote: null,
-    deviceVerified: false,
+    verifiedDevicePublicKey: null,
+    verifiedIdentityPublicKey: null,
     applied: false,
   };
   identitySessions.set(discoveryKeyHex, session);
@@ -496,19 +509,20 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
   const member = pairing.addMember({
     discoveryKey,
     async onadd(candidate) {
-      // Global budget: every invite draws from one window so a host cannot
-      // multiply the per-invite budget by opening more invites.
+      // Cheaper check first: a closed or invalidated invite stays closed.
+      // The code gate is per-invite and is what actually stops the wrong
+      // code flood; charging the global budget only on attempts that got
+      // past it keeps one attacker from spending everyone else's window.
+      if (codeGate.invalidated) {
+        candidate._denied = true;
+        return;
+      }
       if (!rateAllow('pairing:attempt', GLOBAL_KEY)) {
         candidate._denied = true;
         appendAudit('peer:rejected', {
           discoveryKey: discoveryKeyHex,
           reason: 'pairing-global-budget',
         });
-        return;
-      }
-
-      if (codeGate.invalidated) {
-        candidate._denied = true;
         return;
       }
 
@@ -852,6 +866,17 @@ async function dropPeer(discoveryKeyHex) {
   if (peer.inviteId) pendingByInvite.delete(peer.inviteId);
   pendingPairingResponses.delete(discoveryKeyHex);
   identitySessions.delete(discoveryKeyHex);
+  // Settle any in-flight guest-side run on this discovery key. The handler
+  // tree for exit/error is the only path that clears activeGuestExec; a
+  // mid-run disconnect left the entry behind, which wedged the guest
+  // until the next pairing. Emit before deleting so main's promise can
+  // settle on a real event rather than a five-minute idle.
+  const guestRun = activeGuestExec.get(discoveryKeyHex);
+  if (guestRun) {
+    guestRun.emitter.emit('error', new Error('peer disconnected'));
+    guestRun.emitter.emit('end');
+    activeGuestExec.delete(discoveryKeyHex);
+  }
   verification.settleVerificationWaiters(discoveryKeyHex);
   // Per-peer rate-limit windows are keyed off the discovery key; without this
   // a re-pair inherits the previous peer's identity:frame or exec:request tally.
@@ -894,6 +919,10 @@ function handleExecReply(discoveryKeyHex, buf) {
       fileName: payload.fileName ?? null,
     });
   } else if (payload.kind === 'chunk') {
+    // The stream name comes off the wire; only the two values the host
+    // actually sends are events to forward. Anything else is a protocol
+    // violation, not an emitter key.
+    if (payload.stream !== 'stdout' && payload.stream !== 'stderr') return;
     active.emitter.emit(payload.stream, payload.data);
   } else if (payload.kind === 'exit') {
     active.emitter.emit('exit', { code: payload.code ?? null, signal: payload.signal ?? null });
@@ -933,7 +962,7 @@ function sendExecReply(discoveryKeyHex, payload) {
 
 const activeGuestExec = new Map();
 
-function exec({ peerId, code, cwd = null, mode = 'inline', argv = [], fileName = 'snippet.mts', label = null, declared = null }) {
+function exec({ peerId, code, mode = 'inline', argv = [], fileName = 'snippet.mts', label = null, declared = null }) {
   if (typeof peerId !== 'string' || !peerId) {
     throw new Error('exec: peerId is required');
   }
@@ -960,7 +989,10 @@ function exec({ peerId, code, cwd = null, mode = 'inline', argv = [], fileName =
   const emitter = new EventEmitter();
   activeGuestExec.set(peerId, { emitter });
   try {
-    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, cwd, mode, argv, fileName, label, declared }), 'utf8'));
+    // The wire does not carry a cwd. The host recomputes it from the
+    // lesson path; a renderer-supplied value would be dead and the next
+    // reader would assume the host honoured it.
+    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, mode, argv, fileName, label, declared }), 'utf8'));
   } catch (err) {
     activeGuestExec.delete(peerId);
     throw err;

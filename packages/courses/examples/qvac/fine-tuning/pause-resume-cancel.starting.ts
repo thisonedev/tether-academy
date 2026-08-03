@@ -11,7 +11,6 @@ async function main() {
     lrMin: 1e-8,
     loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
     assistantLossOnly: true,
-    checkpointSaveSteps: 2,
     checkpointSaveDir: "output/finetune/checkpoints/",
     outputParametersDir: "output/finetune/",
   };

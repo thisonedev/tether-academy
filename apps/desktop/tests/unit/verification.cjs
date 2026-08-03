@@ -84,7 +84,8 @@ function makeSession(dk, { devicePublicKey = 'device-a', identityPublicKey = nul
   return {
     nonce: 'n',
     remote: { nonce: 'n', devicePublicKey, identityPublicKey, identityProven: !!identityPublicKey },
-    deviceVerified: true,
+    verifiedDevicePublicKey: devicePublicKey,
+    verifiedIdentityPublicKey: identityPublicKey,
     applied: false,
   };
 }
@@ -148,7 +149,7 @@ test('verification - the proof reply reads the keypair at frame time', (t) => {
   const ctx = makeContext();
   const dk = 'cc'.repeat(32);
   ctx.peers.set(dk, makePeer(dk));
-  ctx.identitySessions.set(dk, { nonce: 'n', remote: null, deviceVerified: false, applied: false });
+  ctx.identitySessions.set(dk, { nonce: 'n', remote: null, verifiedDevicePublicKey: null, verifiedIdentityPublicKey: null, applied: false });
   ctx.setSigningKeyPair(null);
   const v = createVerification(ctx);
 
@@ -271,6 +272,79 @@ test('revocation - setRevokedDevices withdraws pending requests that claim a rev
 
   t.alike(rejected, ['req-1'], 'only the revoked request is withdrawn');
   t.is(dropped.length, 0, 'no peers to drop');
+});
+
+test('verification - a second hello cannot rebind a verified session', (t) => {
+  // Use the real handshake module so a later hello with a different key
+  // cannot substitute for the proven one through any stub short-circuit.
+  const identityHandshake = require('../../workers/peer/identity-handshake.cjs');
+  const hypercoreCrypto = require('hypercore-crypto');
+
+  const ctx = makeContext();
+  // Replace the stub handshake with the real one.
+  ctx.identityHandshake = identityHandshake;
+  // The signing keypair is what the host would use to sign proof replies.
+  // Use a real keypair so the reply is verifiable.
+  const hostKey = hypercoreCrypto.keyPair();
+  ctx.setSigningKeyPair(hostKey);
+
+  // Two distinct device keypairs the attacker can speak as.
+  const victimKey = hypercoreCrypto.keyPair();
+  const attackerKey = hypercoreCrypto.keyPair();
+  const victimHex = victimKey.publicKey.toString('hex');
+  const attackerHex = attackerKey.publicKey.toString('hex');
+
+  const dk = 'ee'.repeat(32);
+  ctx.peers.set(dk, makePeer(dk, {
+    userData: { devicePublicKey: victimHex, identityPublicKey: null },
+  }));
+  ctx.identitySessions.set(dk, {
+    nonce: '11'.repeat(32),
+    remote: null,
+    verifiedDevicePublicKey: null,
+    verifiedIdentityPublicKey: null,
+    applied: false,
+  });
+  const v = createVerification(ctx);
+
+  // hello(victim) — what a real host would have seen from the peer it intends
+  // to verify.
+  v.handleIdentityFrame(dk, {
+    kind: identityHandshake.HELLO_KIND,
+    nonce: '11'.repeat(32),
+    devicePublicKey: victimHex,
+  });
+  // The host's proof reply, signed for the victim's nonce.
+  const reply = identityHandshake.buildProofReply(dk, '11'.repeat(32), hostKey);
+  // The attacker forges a reply too — but the host is verifying the *reply*
+  // it received, not what the attacker has in hand. To make the first proof
+  // actually verify, the host would have to receive a reply signed by the
+  // victim. In a live attack, the attacker has only the public side, so they
+  // cannot produce a valid reply. We construct one with the victim key to
+  // pin the test at the field, not the verifier.
+  const realReply = identityHandshake.buildProofReply(dk, '11'.repeat(32), victimKey);
+  v.handleIdentityFrame(dk, { ...reply, ...realReply, kind: identityHandshake.PROOF_KIND });
+  // A second hello, this time with the attacker's key. The fix is the
+  // `if (session.remote) return` guard at the top of the HELLO branch, so
+  // this frame must be ignored entirely.
+  v.handleIdentityFrame(dk, {
+    kind: identityHandshake.HELLO_KIND,
+    nonce: '22'.repeat(32),
+    devicePublicKey: attackerHex,
+  });
+
+  // The proven key survives; the attacker cannot substitute theirs.
+  t.is(ctx.peers.get(dk).verifiedDevicePublicKey, victimHex);
+  t.is(ctx.peers.get(dk).verifiedIdentityPublicKey, null);
+
+  // And a third hello with a different nonce is also a no-op: the second
+  // hello was already rejected, and the session is still bound to the first.
+  v.handleIdentityFrame(dk, {
+    kind: identityHandshake.HELLO_KIND,
+    nonce: '33'.repeat(32),
+    devicePublicKey: attackerHex,
+  });
+  t.is(ctx.peers.get(dk).verifiedDevicePublicKey, victimHex);
 });
 
 test('revocation - isRevokedDevice respects the most recent set', (t) => {

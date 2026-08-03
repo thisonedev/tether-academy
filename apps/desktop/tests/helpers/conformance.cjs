@@ -101,7 +101,16 @@ const CONFORMANCE = [
     id: 'app-state-unreadable',
     claim: "the app's own state directory is unreadable",
     grants: [],
-    code: () => readFile(path.join(appStateDir(), 'identity-v3.json')),
+    // The path here is the resolved userData when one is supplied to
+    // wrapSpawn; otherwise it is the home-default. The conformance runner
+    // can pass the override through, and the test against the default path
+    // remains a useful row for the home-default story.
+    code: (ctx) => {
+      const target = ctx.userData
+        ? path.join(ctx.userData, 'identity-v3.json')
+        : path.join(appStateDir(), 'identity-v3.json');
+      return readFile(target);
+    },
     expect: { darwin: 'denied', linux: 'denied' },
   },
   {

@@ -34,12 +34,6 @@ pnpm start:desktop    # open the Electron shell
 
 The desktop loads `apps/web/out/`. To hot-reload web changes into the desktop, run `pnpm dev` in one terminal and `PEAR_DEV_URL=http://localhost:3000 pnpm start:desktop` in another. See `apps/desktop/README.md` for storage (Corestore) and deep-link details.
 
-### Build everything
-
-```bash
-pnpm build            # packages first, then web
-```
-
 ## Layout
 
 ```
@@ -89,7 +83,8 @@ pnpm check:yaml    # validate every lesson's YAML frontmatter against the zod sc
 ## Keeping lessons in sync with the upstream SDK
 
 ```bash
-pnpm sync:examples
+pnpm sync:examples          # print per-lesson sync status
+pnpm sync:examples:check    # CI mode, exit 1 on any drift
 ```
 
 | Status | Exit | Meaning | Fix |
@@ -102,23 +97,12 @@ pnpm sync:examples
 
 The vendored `.answer.ts` is a pedagogical subset of upstream, not a verbatim copy, so the script does not auto-overwrite it. To refresh a vendored copy after an upstream rename, edit the file directly and commit.
 
-## Top-level commands
+## Funding
 
-| Command | What |
-|---|---|
-| `pnpm dev` | Web dev server (Turbopack) |
-| `pnpm build` | Build all packages, then the web |
-| `pnpm start:web` (alias: `pnpm start`) | Serve the web static export on `:3000` |
-| `pnpm start:desktop` | Open the Electron shell |
-| `pnpm lint` / `pnpm check` / `pnpm format` | Biome (currently web-only; see above) |
-| `pnpm verify:tests` / `pnpm verify:tests:check` | Lesson tests (routed to `@academy/courses`) |
-| `pnpm check:yaml` | Lesson frontmatter check (routed to `@academy/courses`) |
-| `pnpm sync:examples` / `pnpm sync:examples:check` | Lesson sync with upstream SDK (routed to `@academy/courses`) |
-
-## Support
-
-This is a community-owned project. You can support this work via donation (USDT/USDC/ETH):
+This is a community-owned project. Buy me a coffee (USDT/USDC/ETH):
 
 ```
 0x409072a91aa81C9759E1170993e29F8Ec83E6405
 ```
+
+For sponsorships or grant inquiries, reach out [here](https://thisonedev.github.io/#contact).

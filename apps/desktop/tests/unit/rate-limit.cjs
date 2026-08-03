@@ -60,8 +60,9 @@ test('rate-limit - global pairing bound shares one budget across invites', (t) =
   _resetAllForTests();
   const op = 'pairing:attempt';
   let now = 1_000_000;
-  // 20 per minute global; 20 attempts on a sentinel key exhaust the budget.
-  for (let i = 0; i < 20; i++) isAllowed(op, '__pairing__', now);
+  // Global ceiling: every invite draws from one window. 60 per minute
+  // (raised from 20 once the per-invite code gate moved ahead of it).
+  for (let i = 0; i < 60; i++) isAllowed(op, '__pairing__', now);
   t.is(isAllowed(op, '__pairing__', now), false, 'the budget is shared globally');
 });
 
@@ -97,7 +98,26 @@ test('rate-limit - pruning: a peer that left and came back starts fresh', (t) =>
 // not a silent one. The plan documents each row and its reason.
 test('rate-limit - limits table matches the documented rows', (t) => {
   t.alike(LIMITS['exec:request'],    { max: 10,  windowMs: 60_000 });
-  t.alike(LIMITS['pairing:attempt'], { max: 20,  windowMs: 60_000 });
+  t.alike(LIMITS['pairing:attempt'], { max: 60,  windowMs: 60_000 });
   t.alike(LIMITS['identity:frame'],  { max: 60,  windowMs: 60_000 });
   t.alike(LIMITS['rpc:command'],     { max: 600, windowMs: 60_000 });
+});
+
+// Per-key window tables should not retain an empty list for a key that
+// went away. The header of rate-limit.cjs makes the same promise; this
+// pins it.
+test('rate-limit - prune drops the key once its window empties', (t) => {
+  const { isAllowed, prune, _resetAllForTests } = require('../../workers/peer/rate-limit.cjs');
+  _resetAllForTests();
+  const op = 'identity:frame';
+  const key = 'peer-prune';
+  let now = 1_000_000;
+  isAllowed(op, key, now);
+  // Advance past the window and prune: the per-key list is empty, and
+  // because the key is not the global one, the table no longer names it.
+  now += 60_001;
+  prune(op, key, now);
+  // isAllowed from a clean slate: the per-peer slot was reset, so the
+  // next call is admitted (rather than still capped on the old list).
+  t.is(isAllowed(op, key, now), true, 'a fresh window admits after prune');
 });

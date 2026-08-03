@@ -96,6 +96,28 @@ test('audit-store - rotation shifts generations and caps at KEEP_GENERATIONS', a
   auditStore.close();
 });
 
+test('audit-store - rotation past the second threshold writes a third generation', (t) => {
+  const { dir, file } = makeFile(t);
+  auditStore.init(file);
+  // 4 MiB cap. Each line is 16 KiB by byteLength even though the file
+  // compresses below that on disk; 4 MiB / 16 KiB = 256 lines per rotation.
+  // Three 200-line passes trip the cap twice, producing .1 and .2.
+  const line = 'x'.repeat(16 * 1024);
+  for (let i = 0; i < 200; i += 1) auditStore.append({ type: 'a', i, payload: line });
+  for (let i = 0; i < 200; i += 1) auditStore.append({ type: 'b', i, payload: line });
+  for (let i = 0; i < 400; i += 1) auditStore.append({ type: 'c', i, payload: line });
+  auditStore.close();
+
+  const files = fs.readdirSync(dir).filter((n) => n.startsWith('peer-audit'));
+  t.ok(files.includes('peer-audit.jsonl'), 'active file present');
+  t.ok(files.includes('peer-audit.jsonl.1'), 'first generation present');
+  t.ok(files.includes('peer-audit.jsonl.2'), 'second generation present');
+  // Active is the third file. Without the fix it grew without bound past
+  // 4 MiB (the latch latched on first use).
+  const activeSize = fs.statSync(file).size;
+  t.ok(activeSize < 4 * 1024 * 1024, 'active file is bounded by the cap');
+});
+
 test('audit-store - recordClear appends a clear event before the ring wipes', (t) => {
   const { file } = makeFile(t);
   auditStore.init(file);

@@ -47,6 +47,11 @@ function createPearEnd(userDataDir, opts = {}) {
       attestation: idm.attestation(),
       revokedDevices: idm.revokedDeviceKeys(),
       auditPath,
+      // The app's resolved state directory. The capability profile's deny
+      // list names this path; without it, the profile's default disagrees
+      // with the actual location whenever the app was launched with
+      // `--storage` (the dev:host script, or any future userData override).
+      userData: userDataDir,
     });
     return true;
   }
