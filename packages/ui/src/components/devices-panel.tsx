@@ -527,42 +527,32 @@ export function DevicesPanel() {
       </div>
 
       <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-              Lockdown
-            </p>
-            <p className="mt-1 text-sm text-canvas-muted-foreground">
-              Drop every active pair and reject every pending request. You can re-pair afterwards.
-            </p>
-          </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+            Lockdown
+          </p>
           {lockdownConfirm ? (
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setLockdownConfirm(false)}
-                  className="rounded px-2 py-1 text-xs text-canvas-muted-foreground hover:text-canvas-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={onLockdown}
-                  disabled={lockdownBusy}
-                  className="inline-flex items-center gap-1 rounded bg-red-500 px-2.5 py-1 text-xs font-semibold text-canvas transition-colors hover:bg-red-400 disabled:opacity-50"
-                >
-                  {lockdownBusy ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <ShieldAlert className="size-3" />
-                  )}
-                  Drop everything
-                </button>
-              </div>
-              <p className="text-right text-[10px] text-canvas-muted-foreground/80">
-                Disconnects all peers immediately.
-              </p>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setLockdownConfirm(false)}
+                className="whitespace-nowrap rounded-md px-3 py-1.5 text-sm text-canvas-muted-foreground hover:text-canvas-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onLockdown}
+                disabled={lockdownBusy}
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
+              >
+                {lockdownBusy ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <ShieldAlert className="size-3.5" />
+                )}
+                Drop em
+              </button>
             </div>
           ) : (
             <button
@@ -575,6 +565,9 @@ export function DevicesPanel() {
             </button>
           )}
         </div>
+        <p className="mt-1 text-sm text-canvas-muted-foreground">
+          Drop every active pair and reject every pending request. You can re-pair afterwards.
+        </p>
       </div>
 
       {inviteModal ? (
