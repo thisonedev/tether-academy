@@ -31,8 +31,7 @@ const ACCENT_FG: Record<CourseHomeProps['accent'], string> = {
   rose: '#f5a5a5',
 };
 
-/** Course home: hero + chapter list, every lesson visible. Mirrors Codecademy/Scrimba.
- *  Each chapter is its own section with a clickable list of lessons. */
+/** Course home: hero + chapter list, every lesson visible, mirroring Codecademy/Scrimba. */
 export function CourseHome({ courseName, courseSlug, courseDescription, accent }: CourseHomeProps) {
   const hydrated = useUserHydrated();
   const username = useUserStore((s) => s.username);

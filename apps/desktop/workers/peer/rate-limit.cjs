@@ -1,26 +1,19 @@
-// Sliding-window rate limit for the peer paths. One table covers per-peer
-// and global limits: callers pass the discovery-key hex for per-peer ops and
-// a fixed constant for global ones, so the bookkeeping is the same shape
-// either way. Timestamps are pruned on read, so a peer that went away leaves
-// no trace in the table.
+// Sliding-window rate limit for the peer paths. One table covers per-peer and
+// global limits: per-peer callers pass the discovery-key hex, global callers a
+// fixed constant, so the bookkeeping is the same shape either way.
 'use strict';
 
 const LIMITS = Object.freeze({
   'exec:request':    { max: 10,  windowMs: 60_000 },  // per discovery key
-  // Global ceiling across all invites. One attacker cannot multiply this
-  // by opening N invites: the per-invite code gate stops floods of one
-  // invite at the cheaper cost, and the global row only sees attempts
-  // that got past it. A generous value here: 20 per minute was tight
-  // when it was the first gate; as a backstop, 60 is still tight enough
-  // to pin a runaway loop and loose enough for legitimate hosts.
+  // Global ceiling across all invites, checked only after the per-invite
+  // code gate. 60/min is a backstop, not a per-attacker budget.
   'pairing:attempt': { max: 60,  windowMs: 60_000 },  // global
   'identity:frame':  { max: 60,  windowMs: 60_000 },  // per discovery key
   'rpc:command':     { max: 600, windowMs: 60_000 },  // global, human-driven
 });
 
-// `rpc:command` exists to stop a runaway loop on the worker RPC channel; the
-// number is a backstop rather than a per-attacker budget, since these calls
-// originate from main and are driven by a human's UI.
+// rpc:command is a backstop against a runaway loop on the worker RPC
+// channel; calls originate from main and are driven by a human's UI.
 const GLOBAL_KEY = '__global__';
 
 // op -> key -> ascending list of timestamps inside the window.
@@ -40,8 +33,8 @@ function getWindow(op, key) {
   return list;
 }
 
-// true => proceed, false => refused. `now` is injectable so unit tests do not
-// have to sleep a minute to advance the window.
+// true => proceed, false => refused. `now` is injectable so tests can advance
+// the window without sleeping.
 function isAllowed(op, key, now = Date.now()) {
   const limit = LIMITS[op];
   if (!limit) return false;
@@ -56,9 +49,8 @@ function isAllowed(op, key, now = Date.now()) {
   return true;
 }
 
-// Drop per-key window entries the moment they empty. The global key
-// stays because its window is the cross-invite budget; the per-peer
-// tables should not retain an empty list for a key that went away.
+// Drop per-key window entries the moment they empty; the global key stays
+// since its window is the cross-invite budget.
 function prune(op, key, now = Date.now()) {
   const byKey = windows.get(op);
   if (!byKey) return;
@@ -80,8 +72,7 @@ function reset(key) {
   }
 }
 
-// Test-only: clear every window. The production path resets per-key from
-// dropPeer and close.
+// Test-only; production resets per-key from dropPeer and close.
 function _resetAllForTests() {
   windows.clear();
 }

@@ -1,9 +1,8 @@
 'use strict';
 
-// How the sandbox turns a capability's `exec` names into allowlist entries.
-// Two ways it can silently produce an unusable one: a symlinked entry, since
-// seatbelt matches the resolved path; and a GUI launch, whose PATH cannot see
-// Homebrew. Kernel enforcement is integration/sandbox-spawn.cjs.
+// How the sandbox turns a capability's `exec` names into allowlist entries;
+// a symlinked entry (seatbelt matches the resolved path) and a GUI launch
+// (whose PATH cannot see Homebrew) can each silently produce an unusable one.
 
 const test = require('brittle');
 const fs = require('fs');
@@ -60,11 +59,8 @@ test('exec-resolve - resolution survives a GUI launch PATH', { skip: notPosix },
     process.env.PATH = original;
   });
 
-  // Finder/dock gives the app no PATH worth the name; `command -v` is itself
-  // unreachable here, so this exercises the fallback directories.
+  // Finder/dock gives the app no PATH worth the name, so this exercises the fallback directories.
   process.env.PATH = '';
-  // Which directory wins differs by distro, so assert the search worked, not
-  // where the binary happens to live.
   const resolved = resolveExecName('sh');
   t.ok(resolved && path.isAbsolute(resolved), 'standard bin dirs are searched without PATH');
   t.is(path.basename(resolved), 'sh');

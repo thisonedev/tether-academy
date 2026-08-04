@@ -1,8 +1,7 @@
 'use strict';
 
-// Compaction of the append-only KV state log. A run that rewrites one key
-// once a second grows the log forever; a snapshot op + clear() range keeps
-// it bounded. Replay must read [wait: false] so a cleared block returns
+// Compaction of the append-only KV state log: a snapshot op + clear() range
+// keeps it bounded. Replay must read {wait: false} so a cleared block returns
 // null instead of hanging forever on a local-only core.
 
 const test = require('brittle');
@@ -37,8 +36,7 @@ test('state-store - compaction appends a snapshot and clears prior blocks', asyn
   }
   await store.close();
 
-  // Reopen a fresh corestore on the same dir; only one corestore holds the
-  // directory at a time, so close-then-reopen is required.
+  // Only one corestore holds the directory at a time, so close-then-reopen is required.
   const Corestore = require('corestore');
   const cs = new Corestore(path.join(dir, 'corestore'));
   const rawCore = cs.get({ name: 'kv-state', valueEncoding: 'json' });
@@ -49,7 +47,6 @@ test('state-store - compaction appends a snapshot and clears prior blocks', asyn
   t.alike(tail.state, Object.fromEntries(
     Array.from({ length: SNAPSHOT_THRESHOLD }, (_, i) => [`k${i}`, i]),
   ));
-  // Pre-snapshot blocks have been cleared and return null.
   const head = await rawCore.get(0, { wait: false });
   t.is(head, null, 'pre-snapshot blocks are gone');
   await cs.close();
@@ -74,8 +71,7 @@ test('state-store - reopened store replays from snapshot', async (t) => {
 
 test('state-store - snapshot reached without clear replays correctly', async (t) => {
   const dir = tmpDir(t, 'kv-snapshot-only');
-  // Drive the threshold exactly so a snapshot is appended; pre-snapshot
-  // blocks still exist because we will inspect the core without clear().
+  // Drives the threshold exactly so a snapshot is appended, with pre-snapshot blocks still intact since clear() is never called.
   const store = await createStore(dir);
   for (let i = 0; i < SNAPSHOT_THRESHOLD; i++) {
     await store.set(`k${i}`, i);
@@ -92,9 +88,7 @@ test('state-store - snapshot reached without clear replays correctly', async (t)
   t.ok(tail && tail.op === 'snapshot', 'snapshot appended');
   await cs.close();
 
-  // Reopen: the snapshot replaces the accumulator, so earlier set entries
-  // do not double-apply. Without the snapshot branch, an entry written
-  // before the snapshot would clobber it.
+  // The snapshot replaces the accumulator on reopen, so earlier set entries do not double-apply.
   const store2 = await createStore(dir);
   t.alike(await store2.list(),
     Array.from({ length: SNAPSHOT_THRESHOLD }, (_, i) => ({ key: `k${i}`, value: i })),
@@ -103,10 +97,8 @@ test('state-store - snapshot reached without clear replays correctly', async (t)
 });
 
 test('state-store - reopen after a clear completes without hanging', async (t) => {
-  // The regression this guards is a hang, not a wrong value. The test runs
-  // against a real corestore with no peers; if the replay loop calls
-  // core.get(i) without { wait: false }, it blocks forever instead of
-  // returning null and the test timeout would fire.
+  // The regression this guards is a hang, not a wrong value: against a real corestore with no peers, a
+  // replay loop calling core.get(i) without {wait: false} blocks forever instead of returning null.
   const dir = tmpDir(t, 'kv-clear-hang');
   const Corestore = require('corestore');
   const corestore = new Corestore(path.join(dir, 'corestore'));

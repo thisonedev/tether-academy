@@ -1,9 +1,4 @@
-// Input validation for peer-exec. Everything a remote peer can influence passes
-// through here before it reaches spawn: the filename it lands in, the argv, and
-// the source itself.
-//
-// Pure functions with no module state, so they are cheap to reason about and to
-// test in isolation. Keep them that way.
+// Input validation for peer-exec, checked before anything reaches spawn.
 'use strict';
 
 const MAX_EXEC_ARGV = 32;
@@ -12,7 +7,6 @@ const MAX_EXEC_SOURCE_BYTES = 1_000_000;
 const MAX_EXEC_FILENAME_LENGTH = 128;
 const SAFE_EXEC_FILENAME_EXTS = ['.mts', '.mjs', '.js', '.ts', '.cjs'];
 
-// Basename only, no path separators/traversal, allowed extensions only.
 function isSafeExecFileName(name) {
   if (typeof name !== 'string' || !name) return false;
   if (name.length > MAX_EXEC_FILENAME_LENGTH) return false;
@@ -60,9 +54,7 @@ function sanitizeExecCode(code) {
   return code;
 }
 
-// ffmpeg capture backends and the helper the course samples wrap them in.
-// Generous on purpose: a false positive costs one prompt, a false negative
-// costs silence.
+// Generous on purpose: a false positive costs one prompt, a false negative costs silence.
 const MICROPHONE_PATTERNS = [
   /\bavfoundation\b/,
   /\bdshow\b/,
@@ -72,7 +64,6 @@ const MICROPHONE_PATTERNS = [
 ];
 
 /**
- * Devices this source will need, for the per-run consent prompt.
  * @param {string} code
  * @returns {string[]}
  */
@@ -81,12 +72,8 @@ function detectDeviceNeeds(code) {
   return MICROPHONE_PATTERNS.some((re) => re.test(code)) ? ['microphone'] : [];
 }
 
-// buildLesson rewrites the lesson's own node: imports to Bare packages, but it
-// cannot reach inside a dependency: @modelcontextprotocol/sdk pulls cross-spawn,
-// which requires 'child_process', and @sqliteai/sqlite-wasm imports 'module'.
-// So the rule is the package, not the symptom — anything but the QVAC SDK and
-// the Bare shims is refused, and a lesson importing something new is caught the
-// first time rather than failing with a resolver error from inside node_modules.
+// buildLesson can't rewrite imports inside a dependency, so the rule is the
+// package, not the symptom: anything but the QVAC SDK and Bare shims is refused.
 const BARE_SAFE_PACKAGES = [/^@qvac\/sdk$/, /^bare-[a-z0-9-]+$/];
 
 const IMPORT_SPECIFIER = /\bfrom\s+["']([^"']+)["']/g;
@@ -94,8 +81,7 @@ const IMPORT_SPECIFIER = /\bfrom\s+["']([^"']+)["']/g;
 const PACKAGE_NAME = /.*\/node_modules\/((?:@[^/]+\/)?[^/]+)/;
 
 /**
- * Packages this source pulls in beyond the ones the Bare child can load. Run on
- * the built source, where every specifier is already an absolute path.
+ * Run on the built source, where every specifier is already an absolute path.
  * @param {string} code
  * @returns {string[]}
  */
@@ -110,12 +96,10 @@ function nodeOnlyPackages(code) {
   return out;
 }
 
-// Read out so the host can check them against its shipped list before
-// installing any of them. See mcp-warm.cjs.
+// Read out so the host can check against its shipped list before installing.
 const NPX_PACKAGE = /["'](?:-y|--yes|-p|--package)["']\s*,\s*["']([^"']+)["']/g;
 
 /**
- * Packages this source asks npx to fetch.
  * @param {string} code
  * @returns {string[]}
  */
@@ -129,8 +113,7 @@ function npxPackages(code) {
 }
 
 /**
- * Why this source needs the Node runtime rather than Bare, or null when Bare
- * can take it.
+ * Null when Bare can take it.
  * @param {string} code
  * @returns {string | null}
  */

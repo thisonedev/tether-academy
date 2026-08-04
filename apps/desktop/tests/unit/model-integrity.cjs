@@ -1,8 +1,6 @@
 'use strict';
 
-// A cached model a peer could rewrite is one a later local run parses without a
-// sandbox. These tests cover what the pre-run check has to get right: notice a
-// rewrite, stay quiet on a re-scan, and never flag the app's own downloads.
+// Covers what the pre-run integrity check has to get right: notice a rewrite, stay quiet on a re-scan, and never flag the app's own downloads.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -35,7 +33,6 @@ function fixture(t, name) {
   return { stateDir, root };
 }
 
-// Nothing to compare a file against the first time it is seen.
 test('model-integrity - a first scan records, and reports nothing changed', (t) => {
   const { stateDir, root } = fixture(t, 'mi-first');
 
@@ -58,8 +55,7 @@ test('model-integrity - a rewritten file is reported', (t) => {
   t.alike(syncFast(stateDir, root).changed, ['aaaa_model.gguf']);
 });
 
-// The app's own runs are what download models. If a download read as tampering
-// the next peer-exec would be refused, and every one after it.
+// If a download from the app's own runs read as tampering, every peer-exec after it would be refused.
 test('model-integrity - accepting re-baselines what a local run downloaded', (t) => {
   const { stateDir, root } = fixture(t, 'mi-accept');
   syncFast(stateDir, root);
@@ -84,8 +80,7 @@ test('model-integrity - a removed model leaves no record behind', (t) => {
   t.alike(Object.keys(readManifest(stateDir).files), ['aaaa_model.gguf']);
 });
 
-// The stat check catches a careless rewrite; a rewrite that restores size and
-// mtime needs the hash, which is why one is recorded at all.
+// A rewrite that restores size and mtime needs the hash, which is why one is recorded at all.
 test('model-integrity - verify catches a rewrite the stat check misses', (t) => {
   const { stateDir, root } = fixture(t, 'mi-verify');
   const abs = path.join(root, 'aaaa_model.gguf');
@@ -101,11 +96,8 @@ test('model-integrity - verify catches a rewrite the stat check misses', (t) => 
   t.alike(verifyAll(stateDir, root).mismatched, ['aaaa_model.gguf'], 'different bytes');
 });
 
-// verifyAll reads the whole cache, so it is a thing a user asks for, not
-// something a run can wait on. verifyModels reads only what the run named,
-// which is what makes a content check affordable on the exec path.
-// The SDK prefixes a cache entry with 16 hex chars of its content hash, and
-// the registry publishes the plain name, so the two have to be matched up.
+// verifyAll reads the whole cache and is user-invoked; verifyModels reads only what the run named, which makes a content
+// check affordable on the exec path. The SDK prefixes a cache entry with 16 hex chars of its content hash.
 const CACHED = '0123456789abcdef_model.gguf';
 
 test('model-integrity - verifyModels catches the same rewrite, reading one file', (t) => {
@@ -140,8 +132,7 @@ test('model-integrity - verifyModels reads nothing the run did not name', (t) =>
   t.alike(verifyModels(['absent.gguf'], stateDir, root).mismatched, [], 'nor does an absent one');
 });
 
-// The peer worker gates a run on verifyModelsAsync, so the result shape and
-// the rewrite detection have to match the sync version.
+// The peer worker gates a run on verifyModelsAsync, so its result shape and rewrite detection must match the sync version.
 test('model-integrity - verifyModelsAsync catches the same rewrite', async (t) => {
   const { stateDir, root } = fixture(t, 'mi-verify-async');
   const abs = writeModel(root, CACHED, Buffer.alloc(64, 1));
@@ -177,11 +168,9 @@ test('model-integrity - sha256FileAsync matches sha256File', async (t) => {
   );
 });
 
-// Main warms the manifest via scheduleVerifyAll so most files already have
-// hashes before the worker's run-time check asks. Cooldown collapses bursts.
+// Main warms the manifest via scheduleVerifyAll so most files already have hashes before the worker's run-time check asks.
 test('model-integrity - scheduleVerifyAll runs verifyAll in the background', async (t) => {
   const { stateDir, root } = fixture(t, 'mi-schedule');
-  // Manifest is empty until the schedule runs.
   t.is(Object.keys(readManifest(stateDir).files).length, 0);
 
   const result = await scheduleVerifyAll(stateDir, root);

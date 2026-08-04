@@ -1,8 +1,7 @@
 'use strict';
 
 // Manual approval: an invite created without autoApprove parks the guest in a
-// pending state until the host approves. The guest has to learn about that
-// approval, which is what the wake mechanism in pairing-wake.cjs makes fast.
+// pending state until the host approves; the wake mechanism in pairing-wake.cjs makes learning about it fast.
 
 const test = require('brittle');
 const os = require('node:os');

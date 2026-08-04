@@ -1,9 +1,6 @@
 // One row per ipcMain.handle() channel main.js registers, mapped to the
 // @academy/validation schema its payload parses against (or null when none).
-// A channel that is not here throws at startup, so a 44th handler cannot
-// inherit nothing. The dynamic pear:worker:writeIPC:* handler falls back to a
-// longest-prefix lookup against this map; pear:startWorker validates the
-// specifier before it ever names a worker.
+// A channel not listed here throws at startup.
 'use strict';
 
 const PEAR_WORKER_PREFIX = 'pear:worker:writeIPC:';

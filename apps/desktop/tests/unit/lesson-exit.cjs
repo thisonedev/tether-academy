@@ -1,9 +1,8 @@
 'use strict';
 
-// A lesson that loaded a model does not end when its last line runs: the SDK's
-// worker holds the process open. buildLesson hands the entry call to a teardown
-// that closes the SDK and exits, so a finished run reports as finished instead
-// of being killed by whichever watchdog notices first.
+// A lesson that loaded a model does not end when its last line runs, since the
+// SDK's worker holds the process open. buildLesson hands the entry call to a
+// teardown that closes the SDK and exits, so a finished run reports as such instead of being killed by a watchdog.
 
 const test = require('brittle');
 const { spawn } = require('node:child_process');
@@ -36,8 +35,7 @@ test('lesson-exit - a semicolon inside the handler does not end the statement', 
   t.ok(built.includes('__academyFinish(main().catch(() => console.log("a; b")));'));
 });
 
-// The provider lesson serves until it is stopped, and the BCI lessons run
-// their work at the top level. Neither has an entry call to hang teardown off.
+// The provider lesson serves until stopped, and BCI lessons run at the top level; neither has an entry call to hang teardown off.
 test('lesson-exit - a lesson with no entry call is left alone', (t) => {
   const built = build('const modelId = await loadModel({});\nawait unloadModel({ modelId });\n');
   t.absent(/__academyFinish\(main/.test(built), 'nothing is wrapped');
@@ -48,8 +46,7 @@ test('lesson-exit - work after the entry call blocks the rewrite', (t) => {
   t.absent(/__academyFinish\(main/.test(built), 'exiting here would cut off the last line');
 });
 
-// A run whose lesson finished has to end on its own, and everything it
-// printed has to survive the exit.
+// A run whose lesson finished has to end on its own, and everything it printed has to survive the exit.
 test('lesson-exit - a lesson holding a live handle still exits', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-exit-'));
   t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }));

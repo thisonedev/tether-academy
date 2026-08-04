@@ -3,7 +3,6 @@
 import type { MouseEvent } from 'react';
 import { useUserHydrated, useUserStore } from '../store/user-store.js';
 
-// Returns an `onClick` handler that opens the sign-in prompt for unsigned visitors.
 export function useSignInGate() {
   const hydrated = useUserHydrated();
   const username = useUserStore((s) => s.username);

@@ -1,6 +1,5 @@
-// Pear-end worker entry. Runs under real Bare (spawned via PearRuntime.run()
-// from worker-client.cjs), never under Node/Electron. Owns peer.cjs (pairing,
-// swarm, exec orchestration) behind a bare-rpc command router.
+// Pear-end worker entry. Runs under real Bare, never Node/Electron. Owns
+// peer.cjs (pairing, swarm, exec orchestration) behind a bare-rpc command router.
 const RPC = require('bare-rpc');
 const peer = require('./peer/index.cjs');
 const CMD = require('../shared/rpc-commands.cjs');
@@ -21,11 +20,6 @@ const router = new RPC.CommandRouter();
 let rpc = null;
 
 /**
- * Register a handler behind its own shape check. Everything here has already
- * passed main's schema; checked again because that is an assumption, not a check.
- * The 'rpc:command' row in the rate limiter is a runaway-loop backstop on
- * the worker channel: these calls originate from main, are human-driven, and
- * share one global budget so a single hung UI cannot pin the worker.
  * @param {number} command
  * @param {(args: object) => unknown} handler
  */
@@ -46,8 +40,7 @@ function respond(command, handler) {
   });
 }
 
-// peerId -> in-flight guest-side exec, so EXEC_* pushes can't be confused
-// with a later, unrelated exec on the same peer.
+// peerId -> in-flight guest-side exec.
 const pendingRunIds = new Map();
 
 function pushRequest(command, payload) {
@@ -58,9 +51,7 @@ function pushRequest(command, payload) {
   req.reply().catch(() => {});
 }
 
-// One subscription per process. A second listener pushes every peer event to
-// main twice, and main fans events out to a renderer that reloads its lists on
-// each one.
+// One subscription per process; a second listener would push every peer event to main twice.
 let eventsBound = false;
 
 respond(CMD.INIT, async (args) => {
@@ -84,9 +75,8 @@ respond(CMD.INIT, async (args) => {
 
 respond(CMD.SHUTDOWN, async () => {
   await peer.close();
-  // No self-exit here: worker-client.cjs always calls worker.destroy() after
-  // this ack (success or not), which kills the process from the outside.
-  // Self-exiting here raced the ack write against process termination.
+  // No self-exit: worker-client.cjs calls worker.destroy() after this ack,
+  // which raced the ack write when done here instead.
   return toJson({ ok: true });
 });
 

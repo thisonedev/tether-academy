@@ -2,16 +2,14 @@
 
 // The bare-rpc boundary between the Electron main process and the Bare worker
 // hosting peer.cjs. All of this also works in-process (pairing.cjs, exec.cjs);
-// what this file proves is that it survives the RPC channel, including the
-// worker-to-main push commands carrying streamed exec output.
+// this proves it survives the RPC channel, including the worker-to-main push commands carrying streamed exec output.
 
 const test = require('brittle');
 const os = require('node:os');
 
 const { createWorkerPeers, runExec, waitFor, waitForExecChannel } = require('../helpers/index.cjs');
 
-// The worker path adds an RPC round-trip and a process spawn on top of the DHT
-// handshake, so a tighter bound than this failed intermittently.
+// The worker path adds an RPC round-trip and a process spawn on top of the DHT handshake; a tighter bound failed intermittently.
 const PAIR_TIMEOUT_MS = 30_000;
 
 async function pairWorkers(t, label) {
@@ -45,8 +43,7 @@ test('worker-client - listPeers round-trips on both sides', async (t) => {
   t.is((await guest.listPeers()).length, 1);
 });
 
-// Exec output arrives via the worker→main push commands (EXEC_CHUNK/EXEC_EXIT),
-// which is the part most likely to break independently of the in-process path.
+// Exec output arrives via the worker->main push commands (EXEC_CHUNK/EXEC_EXIT), most likely to break independently of the in-process path.
 test('worker-client - exec output streams back through the push commands', async (t) => {
   const { guest, guestEvent } = await pairWorkers(t, 'rpc-exec');
   await waitForExecChannel(guest, guestEvent.discoveryKey, 10_000);

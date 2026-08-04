@@ -1,15 +1,14 @@
-// Derive a Hyperswarm seed from private key material via HKDF.
-// Never seed from a public identity key — that would let anyone who has
-// seen the pubkey recompute the Noise keypair. Domain-separated info
-// strings keep mesh and QVAC seeds distinct.
+// Derive a Hyperswarm seed from private key material via HKDF. Never seed from
+// a public identity key; that would let anyone who has seen the pubkey
+// recompute the Noise keypair. Domain-separated info strings keep mesh and
+// QVAC seeds distinct.
 const crypto = require('crypto');
 
 const PEER_SWARM_INFO = 'tether-academy/peer-swarm-v1';
 const QVAC_SWARM_INFO = 'tether-academy/qvac-swarm-v1';
 
-// bare-crypto has no hkdfSync. RFC 5869 HKDF-SHA256 built from createHmac,
-// which both real Node crypto and bare-crypto export. Used only as a
-// fallback so the real Node crypto.hkdfSync path (main process) is untouched.
+// bare-crypto has no hkdfSync; RFC 5869 HKDF-SHA256 built from createHmac as a
+// fallback, so the real Node crypto.hkdfSync path (main process) is untouched.
 function hkdfSha256Compat(ikm, salt, info, keylen) {
   const prk = crypto.createHmac('sha256', salt).update(ikm).digest();
   const hashLen = prk.length;
@@ -42,8 +41,7 @@ function deriveSwarmSeed(privateKeyHex, info = PEER_SWARM_INFO) {
   // Ed25519 JWK "d" is 32 bytes; take the first 32 if longer.
   const keyMaterial = ikm.subarray(0, 32);
   const infoBuf = Buffer.from(info, 'utf8');
-  // Node's @types/crypto types hkdfSync's return as `ArrayBufferLike`, but the
-  // runtime returns a Buffer; Buffer.from accepts the wider type.
+  // @types/node types hkdfSync's return as ArrayBufferLike; Buffer.from accepts it.
   /** @type {Buffer} */
   const okm = Buffer.from(/** @type {ArrayBufferLike} */ (hkdfSync('sha256', keyMaterial, Buffer.alloc(0), infoBuf, 32)));
   return okm;

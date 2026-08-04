@@ -1,7 +1,5 @@
-// Collects device hardware info for the Settings page.
-//
-// Best-effort across macOS, Linux, and Windows. Anything not detectable
-// returns null/empty rather than throwing.
+// Collects device hardware info for the Settings page. Best-effort across
+// platforms; anything not detectable returns null/empty rather than throwing.
 
 const os = require('node:os');
 const fsp = require('node:fs/promises');
@@ -38,8 +36,7 @@ function classifyOs(platform) {
 
 function osLabel(platform, release, version) {
   if (platform === 'darwin') {
-    // darwin release is the kernel major; the marketing name comes from
-    // the sw_vers build, but `os.release()` is good enough as a fallback.
+    // darwin release is the kernel major, not the marketing version; sw_vers gives the real one.
     const sw = runProbe('sw_vers', ['-productVersion']);
     const name = runProbe('sw_vers', ['-productName']);
     const ver = sw.trim() || release;
@@ -112,8 +109,7 @@ function probeGpu(platform) {
 
 function parseMacGpu(out) {
   if (!out) return null;
-  // Look for the first "Chipset Model:" line. macOS names the GPU the same
-  // as the SoC on Apple Silicon.
+  // macOS names the GPU the same as the SoC on Apple Silicon.
   const m = /Chipset Model:\s*([^\n]+)/.exec(out);
   if (!m) return null;
   const name = m[1].trim();
@@ -129,7 +125,6 @@ function parseLinuxGpu(out) {
     .map((l) => l.trim())
     .filter(Boolean);
   for (const line of lines) {
-    // Typical: "0000:01:00.0 VGA compatible controller: NVIDIA ..."
     const colon = line.indexOf(':');
     const after = colon >= 0 ? line.slice(colon + 1).trim() : line;
     const controller = /^(?:VGA compatible controller|3D controller|Display controller):\s*(.+)$/i.exec(

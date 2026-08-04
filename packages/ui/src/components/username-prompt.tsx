@@ -17,11 +17,7 @@ const VALID_RE = /^[a-zA-Z0-9_-]+$/;
 
 type DesktopStep = 'choose' | 'backup' | 'recover' | 'username';
 
-/**
- * Sign-in modal.
- * Desktop: create identity, recover with phrase, or continue if already set up.
- * Web: local display name only.
- */
+/** Sign-in modal. Desktop: create identity, recover with phrase, or continue if already set up. Web: local display name only. */
 export function UsernamePrompt() {
   const hydrated = useUserHydrated();
   const promptOpen = useUserStore((s) => s.signInPromptOpen);

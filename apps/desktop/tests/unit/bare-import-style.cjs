@@ -1,11 +1,9 @@
 'use strict';
 
-// Which import style a file may use is decided by the runtime it loads in, not
-// by taste. package.json's "imports" map rewrites bare specifiers per runtime
-// (`fs` -> `bare-fs` under Bare, `fs` under Node) and a `node:` prefix opts out
-// of that map entirely. So a `node:` import inside worker or shared code
-// resolves under Node, passes review, and then throws MODULE_NOT_FOUND the
-// first time a peer runs something.
+// package.json's "imports" map rewrites bare specifiers per runtime (`fs` ->
+// `bare-fs` under Bare, `fs` under Node), and a `node:` prefix opts out of
+// that map entirely. A `node:` import inside worker or shared code resolves
+// under Node, passes review, then throws MODULE_NOT_FOUND the first time a peer runs something.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -41,8 +39,7 @@ test('bare-import-style - Bare-loaded code never uses a node: prefix', (t) => {
     for (const file of sourceFiles(path.join(APP, root))) {
       const src = fs.readFileSync(file, 'utf8');
       for (const [, spec] of src.matchAll(/require\('(node:[^']+)'\)/g)) {
-        // Only the mapped names matter: `node:util` is unavailable under Bare
-        // either way, so the prefix is not what breaks it.
+        // Only mapped names matter: `node:util` is unavailable under Bare either way.
         const bare = spec.slice('node:'.length);
         if (MAPPED.includes(bare)) {
           offenders.push(`${path.relative(APP, file)} requires '${spec}', should be '${bare}'`);

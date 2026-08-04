@@ -1,16 +1,12 @@
 'use strict';
 
-// Bounds on a deeplink the host accepts. The renderer reads these
-// fields with textContent today, but a probe that ships control
-// characters in a query field is a sign the deeplink surface is being
-// walked; reject it at parse time.
+// Bounds on a deeplink the host accepts; rejected at parse time rather than left to the renderer.
 
 const test = require('brittle');
 const fs = require('node:fs');
 
-// parsePairUrl is not exported; read the source and lift just that
-// function plus the protocol constant. The function depends on the
-// outer-scope `deeplinkProtocol`; we re-declare both here.
+// parsePairUrl is not exported; read the source and lift just that function plus the
+// protocol constant, since the function depends on the outer-scope `deeplinkProtocol`.
 const src = fs.readFileSync(
   require('node:path').join(__dirname, '../../electron/main.js'),
   'utf8',
@@ -19,8 +15,6 @@ const fnMatch = src.match(/function parsePairUrl\([\s\S]+?\n\}/);
 if (!fnMatch) {
   throw new Error('parsePairUrl not found in main.js');
 }
-// Use the actual productName-derived protocol by reading it from
-// package.json. Fall back to "tether-academy" if absent.
 const pkg = JSON.parse(
   fs.readFileSync(
     require('node:path').join(__dirname, '../../package.json'),

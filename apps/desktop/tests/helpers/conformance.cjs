@@ -1,11 +1,7 @@
 'use strict';
 
-// What each platform's sandbox is claimed to enforce, in one table. The three
-// backends guarantee different things: allowlisted reads on Linux, a generated
-// read denylist on macOS, nothing on Windows, and that used to be recorded only
-// as prose in each backend file. A claim living in a comment is a claim nothing
-// checks, so every row here is asserted against a real kernel by
-// integration/sandbox-conformance.cjs.
+// What each platform's sandbox is claimed to enforce, in one table; every row
+// is asserted against a real kernel by integration/sandbox-conformance.cjs.
 //
 // `expect` values:
 //   'denied'      the platform stops it, and the test fails if the run succeeds
@@ -18,8 +14,7 @@ const path = require('node:path');
 
 const { appStateDir } = require('../../workers/sandbox/capabilities.cjs');
 
-// Reports 'blocked: <errno>' or 'leaked', never throws, so a denial and a crash
-// cannot be read as the same thing.
+// Reports 'blocked: <errno>' or 'leaked', never throws, so a denial and a crash cannot be read as the same thing.
 const attempt = (body) =>
   `try { ${body} } catch (e) { process.stdout.write('blocked: ' + e.code + '\\n'); process.exit(0); }`;
 
@@ -29,8 +24,7 @@ const readFile = (file) =>
       + `process.stdout.write('leaked ' + d.length + '\\n');`,
   );
 
-// A host that resolves but is not loopback. The timeout branch counts as
-// reached: the connection was permitted and something else was slow.
+// A host that resolves but is not loopback; the timeout branch counts as reached, since the connection was permitted.
 const connectTo = (host) =>
   `const req = require('http').get('http://${host}/', () => { process.stdout.write('reached\\n'); process.exit(0); });`
   + `req.on('error', (e) => { process.stdout.write('blocked: ' + e.code + '\\n'); process.exit(0); });`
@@ -101,10 +95,7 @@ const CONFORMANCE = [
     id: 'app-state-unreadable',
     claim: "the app's own state directory is unreadable",
     grants: [],
-    // The path here is the resolved userData when one is supplied to
-    // wrapSpawn; otherwise it is the home-default. The conformance runner
-    // can pass the override through, and the test against the default path
-    // remains a useful row for the home-default story.
+    // The path is the resolved userData when supplied to wrapSpawn, otherwise the home-default.
     code: (ctx) => {
       const target = ctx.userData
         ? path.join(ctx.userData, 'identity-v3.json')

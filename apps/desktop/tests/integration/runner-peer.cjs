@@ -1,9 +1,8 @@
 'use strict';
 
 // "Paired device" mode end to end: a real lesson, wrapped by buildLesson() as
-// the app wraps it, run on a remote peer. The part unique to this file is
-// whether `import from "@qvac/sdk"` still resolves inside the sandbox, and
-// whether the child gets the `process` the lesson writes to.
+// the app wraps it, run on a remote peer. The part unique here is whether
+// `import from "@qvac/sdk"` resolves inside the sandbox, and whether the child gets the `process` the lesson writes to.
 
 const test = require('brittle');
 const path = require('node:path');
@@ -26,8 +25,7 @@ const LESSON_SOURCE = [
   'main().catch((err) => { console.error("peer-runner:error", err); process.exit(1); });',
 ].join('\n');
 
-// buildLesson injects the SDK teardown; without it a lesson that loaded a model
-// would leave the runtime open and the process would never exit.
+// Without the SDK teardown, a lesson that loaded a model would leave the runtime open and the process would never exit.
 test('runner-peer - buildLesson wraps the lesson with SDK teardown', (t) => {
   const wrapped = buildLesson({ source: LESSON_SOURCE, cwd: COURSES_DIR });
 
@@ -35,8 +33,7 @@ test('runner-peer - buildLesson wraps the lesson with SDK teardown', (t) => {
   t.ok(wrapped.includes('.finally'), 'teardown is hooked onto main()');
 });
 
-// The lesson mentions neither, so both come from the wrapper or every sample
-// that prints a line fails on the remote side.
+// The lesson mentions neither, so both must come from the wrapper.
 test('runner-peer - the Bare build supplies process and the SDK plugins', (t) => {
   const wrapped = buildLesson({ source: LESSON_SOURCE, cwd: COURSES_DIR, runtime: 'bare' });
 

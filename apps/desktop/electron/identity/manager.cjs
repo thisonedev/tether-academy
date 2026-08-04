@@ -1,5 +1,5 @@
-// Root + device identity (keet-identity-key).
-// Sources: 'tether-academy' (default) | 'keet-linked' (QR/attest only).
+// Root + device identity (keet-identity-key). Sources: 'tether-academy'
+// (default) or 'keet-linked' (QR/attest only).
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -13,9 +13,7 @@ const {
 
 const RECORD_FILE = 'identity-v3.json';
 const RECORD_VERSION = 3;
-// An attest session is one leg of a hands-on flow happening at two devices at
-// once. Nothing about it should stay confirmable overnight, so it ages out
-// instead of waiting for a caller that never returns.
+// Attest sessions age out rather than staying confirmable indefinitely for a caller that never returns.
 const ATTEST_SESSION_TTL_MS = 10 * 60_000;
 
 /** @typedef {'none'|'pending-backup'|'ready'} IdentityStatus */
@@ -105,7 +103,6 @@ function createManager(userDataDir, opts = {}) {
   function status() {
     if (!record) return 'none';
     if (!record.proof || !record.devicePublicKey) return 'none';
-    // TA root identities require backup confirmation before mesh use.
     if (record.source === 'tether-academy' && !record.backupConfirmedAt) {
       return 'pending-backup';
     }
@@ -290,7 +287,6 @@ function createManager(userDataDir, opts = {}) {
     if (typeof devicePublicKeyHex !== 'string' || !/^[0-9a-fA-F]{64}$/.test(devicePublicKeyHex)) {
       throw new Error('identity: devicePublicKey must be 32-byte hex');
     }
-    // Refuse if revoked.
     const revoked = (record.devices || []).find(
       (d) => d.publicKey === devicePublicKeyHex && d.revoked,
     );
@@ -332,7 +328,6 @@ function createManager(userDataDir, opts = {}) {
     if (rootSeedHex) {
       // Prefer root bootstrap path when we hold the seed (first device).
       const id = await IdentityKey.from({ seed: fromHex(rootSeedHex) });
-      // If this is the first extra device, attest from current device chain.
       const parent = keyPairFromHex(record.devicePublicKey, deviceSecretKeyHex);
       proof = IdentityKey.attestDevice(newDevicePub, parent, existingProof);
       id.clear();

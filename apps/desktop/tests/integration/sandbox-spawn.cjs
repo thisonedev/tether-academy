@@ -1,9 +1,7 @@
 'use strict';
 
 // Real-spawn enforcement: everything else checks what the profile says, this
-// checks what the kernel does. Each case runs a snippet inside the sandbox and
-// reads back whether the operation was permitted. Skipped on Windows, where
-// peer-exec is refused and there is no confinement to verify.
+// checks what the kernel does. Skipped on Windows, where peer-exec is refused.
 
 const test = require('brittle');
 const { spawn } = require('node:child_process');
@@ -18,9 +16,7 @@ const skip = process.platform === 'win32';
 const project = path.resolve(__dirname, '../..');
 const CHILD_TIMEOUT_MS = 12_000;
 
-// Runs `code` inside the sandbox and resolves its stdout. The snippet always
-// exits 0 and reports its outcome on stdout, so a blocked syscall and a crash
-// cannot be confused for each other.
+// Runs `code` inside the sandbox and resolves its stdout; the snippet always exits 0 and reports its outcome on stdout.
 async function runSandboxed(t, code, grants = []) {
   const wrap = wrapSpawn(process.execPath, ['-e', code], { cwd: project, grants }, CAPABILITIES.qvac);
   if (wrap.profilePath) {
@@ -63,8 +59,7 @@ test('sandbox-spawn - cannot read ~/.ssh private keys', { skip }, async (t) => {
   t.ok(out.startsWith('blocked'), `expected a denial, got: ${out}`);
 });
 
-// The deny-list is generated from $HOME rather than a fixed set of names, so
-// this asserts that an ordinary home directory nobody named is out of reach.
+// The deny-list is generated from $HOME rather than a fixed set of names, so an ordinary home directory nobody named must still be out of reach.
 test('sandbox-spawn - cannot read home directories the run has no claim on', { skip }, async (t) => {
   const probes = ['Desktop', 'Downloads', 'Movies', 'Pictures'].filter((name) =>
     fs.existsSync(path.join(os.homedir(), name)),
@@ -88,8 +83,7 @@ test('sandbox-spawn - cannot read home directories the run has no claim on', { s
 });
 
 test('sandbox-spawn - cannot write outside the scratch dir', { skip }, async (t) => {
-  // /usr is not in the qvac write allowlist. /tmp would not prove anything,
-  // since os.tmpdir() is allowlisted on purpose.
+  // /tmp would not prove anything, since os.tmpdir() is allowlisted on purpose.
   const { out } = await runSandboxed(
     t,
     attempt(
@@ -124,8 +118,7 @@ test('sandbox-spawn - an ungranted run cannot reach a host', { skip }, async (t)
   t.ok(out.startsWith('blocked'), `expected a denial, got: ${out}`);
 });
 
-// Known gap, asserted rather than left as a comment: once a run is granted the
-// network, sandbox-exec cannot filter by domain, so it gets every host.
+// Known gap, asserted rather than left as a comment: sandbox-exec cannot filter by domain, so a granted run reaches every host.
 test('sandbox-spawn - a granted run reaches any host', { skip }, async (t) => {
   const { out } = await runSandboxed(t, reachExample, ['network']);
 

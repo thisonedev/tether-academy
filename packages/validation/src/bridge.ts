@@ -17,8 +17,7 @@ export interface AcademyWindowAPI {
   close: () => Promise<void>;
 }
 
-// One entry in the downloaded-models list. `id` is a stable relative path
-// within the SDK models cache directory; pass it back to `models.remove`.
+// `id` is a stable relative path within the SDK models cache directory; pass it back to `models.remove`.
 export interface AcademyModelLessonRef {
   chapter: string;
   lessons: string[];
@@ -29,8 +28,7 @@ export interface AcademyModelEntry {
   name: string;
   sizeBytes: number;
   kind: 'single' | 'sharded' | 'set';
-  // Hash prefix that the SDK prepends to single-file cache entries.
-  // Empty for sharded / set groups since those are keyed by directory.
+  // Hash prefix the SDK prepends to single-file cache entries; empty for sharded/set groups.
   sourceHash: string;
   fileCount: number;
   usedIn: AcademyModelLessonRef[];
@@ -62,8 +60,7 @@ export interface AcademyDeviceInfo {
   osLabel: string;
   arch: string;
   hostname: string;
-  // Human-friendly model identifier. On macOS this is the Apple Silicon
-  // SoC (e.g. "Apple M3 Max"); on Linux/Windows it's the CPU model.
+  // Apple Silicon SoC name on macOS (e.g. "Apple M3 Max"); CPU model on Linux/Windows.
   model: string;
   cpuCores: number;
   cpuPhysicalCores: number;
@@ -88,13 +85,9 @@ export interface AcademyPeerInfo {
   userData: unknown;
   autobaseKey: string;
   inviteId: string | null;
-  /** For guest-role peers: the host install's main public key, as claimed by the
-   *  invite link. Use it as `providerPublicKey` in `loadModel({ delegate })` to
-   *  target the host. Claimed, not proven: see `verifiedIdentityPublicKey`. */
+  /** Host's main public key as claimed by the invite link (guest-role peers only); claimed, not proven. */
   hostIdentity: string | null;
-  /** True once the peer proved it holds a device key attested to the root
-   *  identity it announced. False means the pair works but nobody vouched for
-   *  who is on the other end. */
+  /** True once the peer proved it holds a device key attested to the root identity it announced. */
   identityVerified: boolean;
   /** Device key the peer proved it holds. null until the handshake completes. */
   verifiedDevicePublicKey: string | null;
@@ -102,7 +95,6 @@ export interface AcademyPeerInfo {
   verifiedIdentityPublicKey: string | null;
 }
 
-/** A pair request waiting for the host to approve or reject. */
 export interface AcademyPeerPending {
   requestId: string;
   discoveryKey: string;
@@ -227,8 +219,7 @@ export interface AcademyPeerInvite {
   userData: unknown;
   /** 6-character code the host generates. Share out-of-band with the guest. */
   pairingCode: string;
-  /** Host's root identity key, or its device key when it has no root. Goes in
-   *  the invite link so the guest can check what it actually paired with. */
+  /** Host's root identity key, or its device key when it has no root; lets the guest check what it paired with. */
   hostIdentity: string | null;
 }
 
@@ -313,16 +304,11 @@ export interface AcademyAPI {
   models?: AcademyModelsAPI;
   device?: AcademyDeviceAPI;
   peer?: AcademyPeerAPI;
-  /** Root + device identity. */
   identity?: AcademyIdentityAPI;
   clipboard?: AcademyClipboardAPI;
 }
 
 export interface AcademyClipboardAPI {
-  /**
-   * Copy, and clear again after `scrubAfterMs` unless the clipboard has moved
-   * on. Main owns the timer, so the scrub still happens if the window closes
-   * first. Pass 0 to leave the text in place.
-   */
+  /** Copies text and clears it after `scrubAfterMs` (0 = never); main owns the timer so the scrub survives the window closing. */
   copy: (text: string, scrubAfterMs?: number) => Promise<boolean>;
 }

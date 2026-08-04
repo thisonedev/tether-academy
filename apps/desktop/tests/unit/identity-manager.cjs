@@ -1,8 +1,7 @@
 'use strict';
 
 // Root + device identity via keet-identity-key: create, back up, recover.
-// safeStorage is null throughout so these run headless. The OS keychain path
-// is exercised by the app, not here.
+// safeStorage is null throughout so these run headless; the OS keychain path is exercised by the app, not here.
 
 const test = require('brittle');
 
@@ -16,8 +15,7 @@ test('identity-manager - starts with no identity', (t) => {
   t.is(manager(t, 'empty').status(), 'none');
 });
 
-// A new identity is not usable until the user confirms they wrote the mnemonic
-// down, because losing it means losing the root key.
+// A new identity is not usable until the user confirms they wrote the mnemonic down, since losing it means losing the root key.
 test('identity-manager - createNew withholds ready until backup is confirmed', async (t) => {
   const m = manager(t, 'create');
 
@@ -81,10 +79,7 @@ test('identity-manager - revokedDeviceKeys lists only revoked devices', async (t
   t.alike(m.revokedDeviceKeys(), [other]);
 });
 
-// The device-link flow was removed while its proof path was still unbound. It
-// minted a challenge and never checked one, so it accepted any proof attesting
-// this device's public key, and the QR it produced published that key. Whoever
-// saw the QR could attest it into their own identity and hand the proof back.
+// The device-link flow was removed rather than patched: it never validated a returned proof against the challenge it issued.
 test('identity-manager - the unbound device-link flow is gone', (t) => {
   const m = createManager(tmpDir(t, 'idm-no-link'), { safeStorage: null });
 
@@ -93,8 +88,7 @@ test('identity-manager - the unbound device-link flow is gone', (t) => {
   t.is(m.status(), 'none', 'with no pending-link state to sit in');
 });
 
-// One leg of a flow happening at two devices at once. Left open, it stays
-// confirmable indefinitely.
+// One leg of a flow happening at two devices at once; left open, it would stay confirmable indefinitely.
 test('identity-manager - an attest session stops being confirmable once it expires', async (t) => {
   const m = createManager(tmpDir(t, 'idm-attest-ttl'), {
     safeStorage: null,

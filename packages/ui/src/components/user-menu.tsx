@@ -20,8 +20,7 @@ export function UserMenu() {
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  // Settings only exists in the desktop app. Detect the bridge after mount so
-  // the initial server-rendered HTML matches the first client render.
+  // Detect the desktop bridge after mount so SSR HTML matches the first client render.
   useEffect(() => {
     setIsDesktop(typeof window !== 'undefined' && !!window.academy);
   }, []);

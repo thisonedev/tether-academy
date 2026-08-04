@@ -1,6 +1,4 @@
 // How much network a run gets, decided host-side from the code about to run.
-// A cached model loads and streams tokens with outbound rules off, so the
-// answer is 'none' unless the source shows a download or names a host.
 'use strict';
 
 const fs = require('fs');
@@ -31,8 +29,7 @@ const LOOPBACK_PATTERNS = [
   /(?:https?|ws):\/\/(?:localhost|127\.0\.0\.1|\[::1\])/,
 ];
 
-// Generous on purpose: a false positive costs one prompt, a false negative
-// costs a run that hangs with no way to say why.
+// Generous on purpose: a false positive costs one prompt, a false negative costs a silent hang.
 const EGRESS_PATTERNS = [
   { re: /\bregistry:\/\//, why: 'it names a model registry source directly' },
   { re: /\bhyper:\/\//, why: 'it opens a hyper:// source' },
@@ -52,9 +49,7 @@ const EGRESS_PATTERNS = [
 let registry = null;
 
 /**
- * Model constant name -> what a complete download looks like on disk. Split
- * rather than matched whole-file, so an entry missing a field cannot borrow the
- * next entry's.
+ * Split per-entry rather than matched whole-file, so a field can't leak from the next entry.
  * @returns {Map<string, { modelId: string, expectedSize: number }>}
  */
 function modelRegistry() {
@@ -84,8 +79,7 @@ function modelRegistry() {
 }
 
 /**
- * Biggest on-disk size per cached file name, hashed and plain: sets and shards
- * repeat a name, and only the complete copy settles it.
+ * Biggest size per cached file name (hashed and plain): sets/shards can repeat a name.
  * @returns {Map<string, number>}
  */
 function cachedSizes() {
@@ -106,8 +100,7 @@ function cachedSizes() {
 }
 
 /**
- * Model constants this source names. Matched on the constants, since the import
- * line has been rewritten to an absolute path by the time it reaches a host.
+ * Matched on the constant, since the import line is already rewritten to an absolute path.
  * @param {string} code
  * @returns {string[]}
  */
@@ -121,8 +114,7 @@ function referencedModels(code) {
 }
 
 /**
- * Models the run names that are not fully downloaded. A partial file counts as
- * missing: the SDK streams to the final path, so an interrupted run leaves one.
+ * A partial file counts as missing since the SDK streams to the final path.
  * @param {string} code
  * @returns {string[]}
  */
@@ -139,9 +131,7 @@ function missingModels(code) {
 }
 
 /**
- * The network this run should get. `mode` is what the profile enforces;
- * `reason` is what the human answering is shown, and is null only when the run
- * needs no network at all.
+ * `reason` is shown to the human approving the run; null only when no network is needed.
  * @param {string} code
  * @returns {{ mode: 'none' | 'localhost' | 'all', reason: string | null, missingModels: string[] }}
  */

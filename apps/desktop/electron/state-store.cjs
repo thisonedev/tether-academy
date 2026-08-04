@@ -2,15 +2,12 @@ const path = require('node:path');
 const fs = require('node:fs');
 const Corestore = require('corestore');
 
-// Key-value state only. The device identity lives in identity/manager.cjs;
-// this file used to keep a second ed25519 keypair of its own, which is one
-// identity implementation more than the trust model has room for.
+// Key-value state only; device identity lives in identity/manager.cjs.
 //
-// Compaction: every SNAPSHOT_THRESHOLD set/remove ops, a snapshot op is
-// appended carrying the full cache, then the prior blocks are cleared with
-// core.clear(). Replay reads [wait: false] on every index because the local
-// core has no peers and core.get() defaults to wait: true, which would hang
-// forever on a cleared index instead of returning null.
+// Compaction: every SNAPSHOT_THRESHOLD set/remove ops, a snapshot op carrying
+// the full cache is appended and prior blocks are cleared with core.clear().
+// Replay reads with wait: false, since the default wait: true would hang
+// forever on a cleared index on this peerless core instead of returning null.
 
 const SNAPSHOT_THRESHOLD = 64;
 
@@ -23,17 +20,15 @@ async function createStore(userDataDir) {
   const store = new Corestore(dir);
 
   const cache = await loadOrMigrateState(store, userDataDir);
-  // Keeps a count of ops appended since the last snapshot, so compaction
-  // runs on a fixed budget rather than a timer.
+  // Compaction runs on a fixed op budget rather than a timer.
   let opsSinceSnapshot = 0;
 
   const stateCore = store.get({ name: 'kv-state', valueEncoding: 'json' });
   await stateCore.ready();
 
   async function compact() {
-    // Append the snapshot first, then clear everything before it. If the
-    // process dies between the append and the clear, replay reaches the
-    // snapshot and discards the stale early ops anyway.
+    // Snapshot is appended before the clear, so a crash between the two
+    // still leaves replay landing on the snapshot with stale ops discarded.
     const snapshot = { ...cache };
     await stateCore.append({ op: 'snapshot', state: snapshot, ts: Date.now() });
     const snapshotIndex = stateCore.length - 1;
@@ -84,9 +79,7 @@ async function loadOrMigrateState(store, userDataDir) {
   const cache = {};
   const len = core.length;
   for (let i = 0; i < len; i++) {
-    // wait: false returns null when the block is gone (cleared), so a
-    // local-only core never hangs on a deleted index. The catch above is
-    // why the loop must guard evt before reading op.
+    // null means the block was cleared; guard before reading evt.op.
     const evt = await core.get(i, { wait: false });
     if (evt === null) continue;
     if (evt.op === 'set') cache[evt.key] = evt.value;

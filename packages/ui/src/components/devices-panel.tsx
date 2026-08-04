@@ -25,14 +25,7 @@ export function shortHex(hex: string, head = 8, tail = 6): string {
 /** How long a pairing code or invite link may sit on the clipboard. */
 const CLIPBOARD_SCRUB_MS = 90_000;
 
-/**
- * Copy, then take it back. A clipboard holds what it was given until something
- * else is copied, which may be never.
- *
- * The desktop bridge is preferred because its timer lives in the main process
- * and survives the window closing. The web build has no such place, so its
- * scrub is best effort and dies with the tab.
- */
+/** Copies text and clears it after a delay. The desktop bridge is preferred because its timer lives in main and survives the window closing; the web fallback's scrub is best-effort and dies with the tab. */
 function copyEphemeral(text: string): Promise<unknown> {
   const bridge = typeof window !== 'undefined' ? window.academy?.clipboard : undefined;
   if (bridge) return bridge.copy(text, CLIPBOARD_SCRUB_MS);
@@ -40,8 +33,7 @@ function copyEphemeral(text: string): Promise<unknown> {
   return copyToClipboard(text).then(() => {
     setTimeout(() => {
       if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) return;
-      // Only clear what is still ours, so a scrub cannot take whatever the
-      // user copied in the meantime.
+      // Only clear what is still ours; a later copy by the user should survive.
       navigator.clipboard
         .readText()
         .then((current) => {
@@ -99,7 +91,7 @@ function parsePairInput(input: string): {
   return { invite: trimmed, hostIdentity: null };
 }
 
-/** Invite link only — pairing code is shared separately, never in this URL. */
+/** The invite link excludes the pairing code, which the user shares separately. */
 function pairUrl(invite: string, hostIdentity: string | null): string {
   const base = `tether-academy://pair?i=${encodeURIComponent(invite)}`;
   return hostIdentity ? `${base}&h=${encodeURIComponent(hostIdentity)}` : base;
@@ -320,8 +312,7 @@ export function DevicesPanel() {
     setError(null);
     try {
       const invite = await window.academy.peer.invite();
-      // Straight from the invite: the guest checks this against what the host
-      // proves during pairing, so the two have to be the same key.
+      // The guest checks this against what the host proves during pairing.
       setInviteModal({ invite, hostIdentity: invite.hostIdentity ?? null });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create invite');
@@ -372,9 +363,7 @@ export function DevicesPanel() {
     }
   }, []);
 
-  // `ephemeral` for the pairing code, which is the secret that gates pairing,
-  // and for the invite link, which is lower stakes but has as short a useful
-  // life. The identity key is public and stays put.
+  // `ephemeral` for the pairing code and invite link; the identity key is public and stays put.
   const onCopy = useCallback(async (text: string, key: string, ephemeral = false) => {
     await (ephemeral ? copyEphemeral(text) : copyToClipboard(text));
     setCopied(key);
@@ -1011,9 +1000,7 @@ export function PairedDevicesSection() {
   );
 }
 
-/** Verified means the peer proved it holds a device key attested to the root
- *  identity it announced. Unverified pairs still work (the pairing code and the
- *  approval gated them), but nothing vouches for whose device it is. */
+/** Verified means the peer proved it holds a device key attested to the root identity it announced; unverified pairs still work but nothing vouches for whose device it is. */
 function IdentityBadge({ peer }: { peer: AcademyPeerInfo }) {
   if (peer.identityVerified) {
     return (

@@ -1,9 +1,6 @@
 'use strict';
 
-// The capability model and the profile built from it. Structural assertions are
-// shared; enforcement assertions are per-platform, since each OS backend emits a
-// different artefact. This checks what the profile says. Whether the kernel
-// enforces it is integration/sandbox-spawn.cjs.
+// Checks what the generated profile says; whether the kernel enforces it is integration/sandbox-spawn.cjs.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -37,8 +34,7 @@ test('capabilities - qvac capability has the expected shape', (t) => {
   }
 });
 
-// The generated profile is a macOS artefact, but generating it is pure string
-// work, so the deny-by-default posture is worth asserting everywhere.
+// Generating the profile is pure string work, so this runs on every platform.
 test('capabilities - generated profile denies by default', (t) => {
   const profile = buildProfile('qvac');
   t.ok(profile.startsWith('(version 1)\n'));
@@ -68,8 +64,7 @@ test('capabilities - mac profile grants what the runtime needs', { skip: process
   t.absent(CAPABILITIES.qvac.env.force?.ELECTRON_RUN_AS_NODE);
 });
 
-// A lesson that can write this directory writes its own permissions for the
-// next run, since the sandbox policy is one of the files in it.
+// The sandbox policy itself lives in this directory, so a lesson that could write it controls its own permissions next run.
 test('capabilities - the app state directory is denied, not granted', { skip: process.platform !== 'darwin' }, (t) => {
   const profile = buildProfile('qvac');
   const vars = defaultTemplateVars();
@@ -77,19 +72,14 @@ test('capabilities - the app state directory is denied, not granted', { skip: pr
   t.absent(CAPABILITIES.qvac.fs.write.includes('<%= userData %>'), 'not in the write list');
   t.ok(profile.includes(`(deny file-write* file-write-create (subpath "${vars.userData}")`));
   t.ok(profile.includes(`(deny file-read* (subpath "${vars.userData}")`));
-  // The audit file lives under userData, so the subpath deny above covers it
-  // by containment rather than by name. Pin that here so a future move out of
-  // userData shows up.
+  // The audit file is covered by containment, not by name; pin that so a future move out of userData shows up.
   const auditFile = path.join(vars.userData, 'peer-audit.jsonl');
   t.ok(auditFile.startsWith(vars.userData + path.sep) || auditFile.startsWith(vars.userData + '/'),
     'audit file is inside userData, where the subpath deny already covers it');
   t.ok(profile.includes(`(deny file-read* (subpath "${secretsDir()}"))`), 'and the fallback key with it');
 });
 
-// ~/.qvac has to stay writable: the registry corestore updates on every model
-// load, there is a KV-cache lesson, and a run may need to fetch a model it
-// lacks. Immutability is per-file and applied by wrapSpawn, not by a subtree
-// rule here, so a run can add a model but never rewrite one already cached.
+// ~/.qvac stays writable for model fetches/cache updates; per-file immutability is applied by wrapSpawn, not by a subtree rule here.
 test('capabilities - the SDK state directory is writable', (t) => {
   const qvac = CAPABILITIES.qvac;
 
@@ -98,8 +88,7 @@ test('capabilities - the SDK state directory is writable', (t) => {
   t.alike(qvac.fs.readOnly, [], 'nothing frozen statically');
 });
 
-// A deny naming only file-write* loses to the grant above it, which names
-// file-write-create: the specific operation outranks the later wildcard.
+// The specific operation (file-write-create) outranks a later file-write* wildcard grant.
 test('capabilities - a frozen path is denied for creation too', { skip: process.platform !== 'darwin' }, (t) => {
   const profile = [
     '(version 1)',
@@ -115,8 +104,7 @@ test('capabilities - a frozen path is denied for creation too', { skip: process.
   t.ok(profile.includes('(deny file-write-create (vnode-type SYMLINK))'), 'and no links anywhere');
 });
 
-// os.tmpdir() is a per-user directory on macOS but /tmp on Linux, where
-// granting the whole thing opens a symlink attack on every other account.
+// os.tmpdir() is a per-user directory on macOS but shared /tmp on Linux, so writes are scoped to the run directory, not the whole thing.
 test('capabilities - writes are scoped to one run, not all of /tmp', (t) => {
   const qvac = CAPABILITIES.qvac;
 
@@ -124,8 +112,7 @@ test('capabilities - writes are scoped to one run, not all of /tmp', (t) => {
   t.absent(qvac.fs.write.includes('<%= tmpDir %>'));
 });
 
-// dyld and Node need to read broadly, so reads are allow-then-deny rather than
-// an allowlist. The deny list is what protects secrets.
+// dyld and Node need to read broadly, so reads are allow-then-deny; the deny list is what protects secrets.
 test('capabilities - mac profile denies sensitive reads', { skip: process.platform !== 'darwin' }, (t) => {
   const profile = buildProfile('qvac');
 
@@ -134,8 +121,7 @@ test('capabilities - mac profile denies sensitive reads', { skip: process.platfo
   t.ok(profile.includes('.ssh'), '~/.ssh denied');
 });
 
-// The deny list is generated from $HOME, so an entry nobody named is covered.
-// This is the rule-generation half; sandbox-spawn.cjs asks the kernel.
+// The deny list is generated from $HOME, so an entry nobody named is still covered; this is the rule-generation half, sandbox-spawn.cjs asks the kernel.
 test('capabilities - home entries are denied unless the run needs them', { skip: process.platform !== 'darwin' }, (t) => {
   const home = os.homedir();
   const denied = new Set(
@@ -153,7 +139,6 @@ test('capabilities - home entries are denied unless the run needs them', { skip:
     return;
   }
 
-  // Everything the capability lists as reachable, plus what the runtime needs.
   const cap = expandDeep(CAPABILITIES.qvac, defaultTemplateVars());
   const reachable = [...(cap.fs?.read ?? []), ...(cap.fs?.write ?? []), process.execPath];
   const needed = (entry) => {
@@ -167,8 +152,7 @@ test('capabilities - home entries are denied unless the run needs them', { skip:
   t.alike(missed, ['Library'], `only Library stays readable wholesale, got: ${missed.join(', ')}`);
 });
 
-// No outbound until a run is granted it. sandbox-exec cannot filter by domain,
-// so a granted run gets everything and network.hosts only documents intent.
+// sandbox-exec cannot filter by domain, so network.hosts only documents intent; a granted run gets everything.
 test('capabilities - network is denied by default', { skip: process.platform !== 'darwin' }, (t) => {
   t.is(CAPABILITIES.qvac.network?.mode, 'none');
   t.ok(Array.isArray(CAPABILITIES.qvac.network?.hosts));
@@ -187,8 +171,7 @@ test('capabilities - linux bwrap args unshare everything including the network',
   t.ok(args.includes('--unshare-all'));
   t.absent(args.includes('--share-net'), 'no net until a run is granted it');
 
-  // The separator belongs to buildWrap, which probes the real bwrap. A machine
-  // without a usable one gets the command back untouched, nothing to separate.
+  // A machine without a usable bwrap gets the command back untouched, nothing to separate.
   const wrap = linux.buildWrap(cap, '/usr/bin/node', ['-e', '1']);
   if (wrap.bwrapMissing || wrap.namespacesUnavailable || wrap.seccompUnavailable) {
     t.is(wrap.command, '/usr/bin/node', 'an unusable bwrap hands the command back');
@@ -200,11 +183,7 @@ test('capabilities - linux bwrap args unshare everything including the network',
   t.alike(wrap.args.slice(sep + 1), ['/usr/bin/node', '-e', '1'], 'child command follows it');
 });
 
-// The deny complement is generated by listing what is on disk, which makes
-// caching the profile the obvious optimisation and a silent way to pin one
-// home's answer. A directory that appeared since the last spawn has to show up
-// in the next profile, and a different $HOME has to replace the set instead of
-// adding to it.
+// The deny complement is generated by listing what's on disk, so caching the profile would silently pin one home's answer.
 test('capabilities - the deny set is rebuilt from disk every time', { skip: process.platform !== 'darwin' }, (t) => {
   const realHome = process.env.HOME;
   t.teardown(() => {
@@ -235,10 +214,7 @@ test('capabilities - the deny set is rebuilt from disk every time', { skip: proc
   t.ok(denied(buildProfile('qvac'), later), 'a directory added since the last build is covered');
 });
 
-// An unbounded walk turns a crowded directory into a child that never starts;
-// see MAX_GENERATED_DENIES for what the profile costs at that size. The
-// warning matters as much as the cap: paths the walk skipped stay readable,
-// and nothing else records that.
+// An unbounded walk turns a crowded directory into a child that never starts; the warning matters as much as the cap since skipped paths stay readable.
 test('capabilities - a crowded directory cannot grow the profile without bound', { skip: process.platform !== 'darwin' }, (t) => {
   const realHome = process.env.HOME;
   t.teardown(() => {
@@ -263,8 +239,7 @@ test('capabilities - a crowded directory cannot grow the profile without bound',
   );
 });
 
-// Windows has no shipped confinement comparable to seatbelt or bwrap, so
-// peer-exec must report unavailable and refuse rather than run unconfined.
+// Windows has no shipped confinement comparable to seatbelt or bwrap, so peer-exec must refuse rather than run unconfined.
 test('capabilities - windows reports unavailable', { skip: process.platform !== 'win32' }, (t) => {
   const win = require('../../workers/sandbox/sandbox-windows.cjs');
   const result = win.buildWrap(
@@ -277,16 +252,12 @@ test('capabilities - windows reports unavailable', { skip: process.platform !== 
   t.ok(result.warnings.length > 0, 'refusal is explained');
 });
 
-// The capability's deny list has to name the resolved userData, not the
-// home-default. Without this, the profile lies about which directory the
-// sandbox refuses, and a peer-exec that escapes can read the identity
-// record from the real path the host was launched into.
+// The deny list must name the resolved userData, not the home-default, or the profile denies the wrong directory.
 test('capabilities - defaultTemplateVars honors a userData override', (t) => {
   const override = path.join(os.tmpdir(), 'sandbox-test-override');
   const vars = defaultTemplateVars({ userData: override });
   t.is(vars.userData, override, 'the resolved path is what the profile denies');
 
-  // confinedPaths() reads the same override. The keys dir moves with it.
   const confined = confinedPaths(override);
   t.ok(confined.includes(override), 'the state dir is in the deny list');
   t.ok(
@@ -294,7 +265,6 @@ test('capabilities - defaultTemplateVars honors a userData override', (t) => {
     'the keys dir moves with the override',
   );
 
-  // The home-default still works when no override is supplied.
   const home = appStateDir();
   const fallback = confinedPaths();
   t.ok(fallback.includes(home), 'no override means home-default is denied');

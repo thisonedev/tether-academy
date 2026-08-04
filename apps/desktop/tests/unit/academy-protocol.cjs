@@ -1,11 +1,9 @@
 'use strict';
 
-// Pin the navigation hardening's URL comparison and the resolveStaticPath
-// behaviour that the academy:// protocol handler relies on.
-//
-// The hazard this guards is silent: Node's URL serialises every non-special
-// scheme to origin 'null', so an origin comparison would accept academy://evil/
-// alongside academy://app/. The test pins the fix.
+// Pins the navigation hardening's URL comparison and resolveStaticPath, which
+// the academy:// protocol handler relies on. Node's URL serialises every
+// non-special scheme to origin 'null', so a naive origin comparison would
+// accept academy://evil/ alongside academy://app/.
 
 const test = require('brittle');
 const path = require('path');
@@ -53,8 +51,6 @@ test('academy protocol - academy://evil/ is refused when academy://app is in the
 });
 
 test('academy protocol - origin comparison would accept academy://evil/ (the trap)', (t) => {
-  // The implementation fix exists because Node's URL returns 'null' for both,
-  // so a naive origin comparison would let the wrong host through.
   const a = new URL('academy://app/').origin;
   const b = new URL('academy://evil/').origin;
   t.is(a, b, 'Node serialises both custom-scheme URLs to the same origin');
@@ -84,8 +80,7 @@ test('academy protocol - http(s) dev URLs compare on origin', (t) => {
 });
 
 test('academy protocol - main.js implements the fix', (t) => {
-  // Belt for the live wiring: the implementation has to branch on academy:
-  // explicitly and not rely on parsed.origin.
+  // Belt for the live wiring: main.js must branch on academy: explicitly, not rely on parsed.origin.
   t.ok(
     /parsed\.protocol === 'academy:' && parsed\.host === allow\.host/.test(main),
     'main.js compares academy scheme + host explicitly',

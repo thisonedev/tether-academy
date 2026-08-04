@@ -1,8 +1,7 @@
 'use strict';
 
-// Direct coverage for the extracted verification + revocation factories.
-// The end-to-end trust flows still live in tests/integration/*, which exercise
-// the same wiring through index.cjs; this file pins the factory contracts.
+// Direct coverage for the extracted verification + revocation factories; the
+// end-to-end trust flows live in tests/integration/*.
 
 const test = require('brittle');
 
@@ -50,8 +49,7 @@ function makeContext() {
   const sent = [];
   const dropped = [];
   const identityHandshake = makeIdentityHandshakeStub();
-  // Mutable so a test can wire the factory before the keypair exists, which is
-  // the order init() uses.
+  // Mutable so a test can wire the factory before the keypair exists, matching the order init() uses.
   let signingKeyPair = { secretKey: Buffer.alloc(64) };
   const setSigningKeyPair = (kp) => {
     signingKeyPair = kp;
@@ -143,8 +141,7 @@ test('verification - peerVerification flags device-key-mismatch after proof', (t
   t.alike(v.peerVerification(dk), { ok: false, reason: 'device-key-mismatch' });
 });
 
-// init() wires this factory before it derives the keypair, and close() drops
-// the keypair again. Reading it per frame is what keeps the reply signed.
+// init() wires this factory before deriving the keypair; reading it per frame is what keeps the reply signed.
 test('verification - the proof reply reads the keypair at frame time', (t) => {
   const ctx = makeContext();
   const dk = 'cc'.repeat(32);
@@ -182,16 +179,12 @@ test('verification - settleVerificationWaiters wakes parked callers with the cur
   const dk = 'cc'.repeat(32);
   ctx.peers.set(dk, makePeer(dk, { verifiedDevicePublicKey: 'a' }));
   const v = createVerification(ctx);
-  // Park the caller on a peer that's still pending first.
   const pending = 'dd'.repeat(32);
   ctx.peers.set(pending, makePeer(pending));
   const parked = v.awaitPeerVerification(pending, 1000);
-  // Promote the peer and wake the parked caller so the promise resolves.
   ctx.peers.get(pending).verifiedDevicePublicKey = 'a';
   v.settleVerificationWaiters(pending);
-  // The waiter resolves through settleVerificationWaiters's for-loop, which
-  // runs synchronously inside the call; the .then() observer fires in the next
-  // microtask, so one tick is enough for the value to land.
+  // settleVerificationWaiters resolves synchronously; the .then() observer fires next microtask, so one await is enough.
   const observed = await parked;
   t.alike(observed, { ok: true, reason: null });
 });
@@ -201,11 +194,8 @@ test('verification - awaitPeerVerification resolves to timeout when the handshak
   const dk = 'ee'.repeat(32);
   ctx.peers.set(dk, makePeer(dk));
   const v = createVerification(ctx);
-  // The internal handshake timer calls .unref() so it cannot keep the loop
-  // alive by itself — a deliberate choice so a stuck handshake never pins the
-  // process. In tests that means Node would otherwise fire beforeExit before
-  // the timer has a chance to elapse, which brittle reads as a deadlock. A
-  // ref'd keeper timer holds the loop open for the test's duration.
+  // The handshake timer is .unref()'d so a stuck handshake never pins the process; that means Node
+  // would fire beforeExit before it elapses, which brittle reads as a deadlock. This keeper timer holds the loop open.
   const keeper = setTimeout(() => {}, 500);
   try {
     const result = await v.awaitPeerVerification(dk, 50);
@@ -226,9 +216,7 @@ test('verification - settleAllWaiters drains every parked caller', async (t) => 
   const bParked = v.awaitPeerVerification(b, 1000);
   v.settleAllWaiters();
   const [aSettled, bSettled] = await Promise.all([aParked, bParked]);
-  // Parked callers each get the current peerVerification state; both peers
-  // here are pending (no verifiedDevicePublicKey yet), so the wake reports
-  // `pending` rather than the no-peer reason a fresh peer would.
+  // Both peers are pending (no verifiedDevicePublicKey yet), so the wake reports `pending`, not `no-peer`.
   t.alike(aSettled, { ok: false, reason: 'pending' });
   t.alike(bSettled, { ok: false, reason: 'pending' });
 });
@@ -275,20 +263,16 @@ test('revocation - setRevokedDevices withdraws pending requests that claim a rev
 });
 
 test('verification - a second hello cannot rebind a verified session', (t) => {
-  // Use the real handshake module so a later hello with a different key
-  // cannot substitute for the proven one through any stub short-circuit.
+  // Uses the real handshake module so a later hello with a different key cannot substitute via a stub short-circuit.
   const identityHandshake = require('../../workers/peer/identity-handshake.cjs');
   const hypercoreCrypto = require('hypercore-crypto');
 
   const ctx = makeContext();
-  // Replace the stub handshake with the real one.
   ctx.identityHandshake = identityHandshake;
-  // The signing keypair is what the host would use to sign proof replies.
-  // Use a real keypair so the reply is verifiable.
+  // A real keypair so the proof reply is verifiable.
   const hostKey = hypercoreCrypto.keyPair();
   ctx.setSigningKeyPair(hostKey);
 
-  // Two distinct device keypairs the attacker can speak as.
   const victimKey = hypercoreCrypto.keyPair();
   const attackerKey = hypercoreCrypto.keyPair();
   const victimHex = victimKey.publicKey.toString('hex');
@@ -307,38 +291,26 @@ test('verification - a second hello cannot rebind a verified session', (t) => {
   });
   const v = createVerification(ctx);
 
-  // hello(victim) — what a real host would have seen from the peer it intends
-  // to verify.
   v.handleIdentityFrame(dk, {
     kind: identityHandshake.HELLO_KIND,
     nonce: '11'.repeat(32),
     devicePublicKey: victimHex,
   });
-  // The host's proof reply, signed for the victim's nonce.
   const reply = identityHandshake.buildProofReply(dk, '11'.repeat(32), hostKey);
-  // The attacker forges a reply too — but the host is verifying the *reply*
-  // it received, not what the attacker has in hand. To make the first proof
-  // actually verify, the host would have to receive a reply signed by the
-  // victim. In a live attack, the attacker has only the public side, so they
-  // cannot produce a valid reply. We construct one with the victim key to
-  // pin the test at the field, not the verifier.
+  // The reply is constructed directly with the victim's key, since this pins the rebinding guard, not proof-signature verification.
   const realReply = identityHandshake.buildProofReply(dk, '11'.repeat(32), victimKey);
   v.handleIdentityFrame(dk, { ...reply, ...realReply, kind: identityHandshake.PROOF_KIND });
-  // A second hello, this time with the attacker's key. The fix is the
-  // `if (session.remote) return` guard at the top of the HELLO branch, so
-  // this frame must be ignored entirely.
+  // The guard at the top of the HELLO branch (`if (session.remote) return`) makes this frame ignored entirely.
   v.handleIdentityFrame(dk, {
     kind: identityHandshake.HELLO_KIND,
     nonce: '22'.repeat(32),
     devicePublicKey: attackerHex,
   });
 
-  // The proven key survives; the attacker cannot substitute theirs.
   t.is(ctx.peers.get(dk).verifiedDevicePublicKey, victimHex);
   t.is(ctx.peers.get(dk).verifiedIdentityPublicKey, null);
 
-  // And a third hello with a different nonce is also a no-op: the second
-  // hello was already rejected, and the session is still bound to the first.
+  // A third hello with a different nonce is also a no-op: the second hello was already rejected.
   v.handleIdentityFrame(dk, {
     kind: identityHandshake.HELLO_KIND,
     nonce: '33'.repeat(32),

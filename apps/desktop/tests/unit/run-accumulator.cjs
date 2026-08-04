@@ -1,10 +1,8 @@
 'use strict';
 
-// Bounded accumulator for the stdout/stderr chunks a peer run emits. The
-// renderer has already seen every chunk live through sendChunk; this buffer
-// exists only to build the final { ok, output } string. Without a cap, a run
-// that prints in a loop grows main-process memory until the process dies —
-// the defect this caps.
+// Bounded accumulator for the stdout/stderr chunks a peer run emits, used only
+// to build the final { ok, output } string (the renderer already saw every
+// chunk live via sendChunk). Without a cap, a run that prints in a loop grows main-process memory until the process dies.
 
 const test = require('brittle');
 

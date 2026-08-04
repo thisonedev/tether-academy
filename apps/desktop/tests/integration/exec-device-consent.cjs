@@ -1,8 +1,7 @@
 'use strict';
 
 // A run wanting the microphone is held until a human answers, and the answer
-// decides whether the sandbox grants it. Runs through the worker so the
-// consent round trip crosses the real RPC boundary.
+// decides whether the sandbox grants it. Runs through the worker so consent crosses the real RPC boundary.
 
 const test = require('brittle');
 const os = require('node:os');
@@ -17,8 +16,7 @@ const {
 
 const PAIR_TIMEOUT_MS = 45_000;
 
-// Captures one second from the default mic and reports how much of it was not
-// silence. A denied capture on macOS returns zeroes rather than an error.
+// Captures one second from the default mic and reports how much was not silence; a denied capture on macOS returns zeroes rather than an error.
 const MIC_PROBE = `
   ${bareRequires('child_process')}
   const { spawnSync } = child_process;

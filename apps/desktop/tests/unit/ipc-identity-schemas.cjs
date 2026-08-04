@@ -8,8 +8,7 @@ const test = require('brittle');
 const UUID = '123e4567-e89b-12d3-a456-426614174000';
 const HEX_KEY = 'a'.repeat(64);
 
-// @academy/validation is ESM, so require() cannot load it. Memoised so each
-// test can await it independently of run order.
+// @academy/validation is ESM, so require() cannot load it; memoised so each test can await it independently of run order.
 let pending;
 const validation = () => (pending ||= import('@academy/validation'));
 
@@ -27,8 +26,7 @@ test('identity-schemas - mnemonic requires at least 12 words', async (t) => {
   t.exception(() => v.identityMnemonicSchema.parse('too few words'));
 });
 
-// The device-link IPC is gone until the flow ships with a challenge-bound
-// proof. Schemas for it would be the only reason to keep it callable.
+// The device-link IPC is gone until the flow ships with a challenge-bound proof.
 test('identity-schemas - no schema is exported for the device-link IPC', async (t) => {
   const v = await validation();
   t.absent(v.identityBeginLinkOptsSchema);

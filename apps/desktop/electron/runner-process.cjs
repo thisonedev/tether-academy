@@ -1,19 +1,16 @@
-// Pure string-processing for lesson snippets. Reused by:
-// - apps/desktop/runner.cjs (writes the wrapped code to a temp file, spawns locally)
-// - apps/desktop/electron/main.js (ships the wrapped code to a peer via peer.exec)
-// No I/O, no spawning. The caller decides where the code runs.
-//
-// Two flavours, since the callers no longer run the same binary. Bare has no
+// Pure string-processing for lesson snippets, reused by runner.cjs (spawns
+// locally) and main.js (ships to a peer via peer.exec). No I/O, no spawning.
+// Two flavours since the callers no longer run the same binary: Bare has no
 // `process` global, ships each builtin separately, and needs the QVAC plugins
-// registered by hand; all three are handled here, not in the course samples.
+// registered by hand.
 
 const { createRequire } = require('node:module');
 const path = require('node:path');
 
 const parentRequire = createRequire(__filename);
 
-// Node builtins the course samples use, and the Bare package for each. Resolved
-// to absolute paths, so the snippet needs no resolution root of its own.
+// Node builtins the course samples use, mapped to their Bare package, resolved
+// to absolute paths so the snippet needs no resolution root of its own.
 const BARE_BUILTINS = {
   fs: 'bare-fs',
   'fs/promises': 'bare-fs/promises',
@@ -25,8 +22,8 @@ const BARE_BUILTINS = {
   crypto: 'bare-crypto',
 };
 
-// Registered together: which one a snippet needs is not known until it runs.
-// 461 ms for the set. Reached by path because the package's own
+// Registered together (461 ms for the set) since which one a snippet needs
+// isn't known until it runs. Reached by path because the package's own
 // `./<name>/plugin` exports are import-only and a CJS resolve of them fails.
 const BARE_PLUGIN_DIR = 'dist/server/bare/plugins';
 const BARE_PLUGINS = [
@@ -127,8 +124,7 @@ const ENTRY_CALL = /^[ \t]*(?:void[ \t]+|await[ \t]+)?main[ \t]*\([ \t]*\)/gm;
 
 /**
  * Index just past the statement starting at `from`, or -1 when it does not end.
- * Quotes, template literals, comments and nested brackets are skipped, so a
- * `.catch(() => console.log(";"))` does not read as the end of the statement.
+ * Quotes, template literals, comments and nested brackets are skipped.
  */
 function statementEnd(src, from) {
   let depth = 0;
@@ -183,11 +179,10 @@ function isTrivia(src) {
 }
 
 /**
- * Hand the lesson's entry call to __academyFinish, so teardown runs the moment
- * it settles. A lesson that loaded a model does not end on its own: the SDK's
- * worker holds the process open past the last line, and the run only stops when
- * a watchdog gives up on it. The call is only wrapped when it is the last
- * statement: exiting early would cut off whatever came after it.
+ * Hands the lesson's entry call to __academyFinish so teardown runs once it
+ * settles. A lesson that loaded a model won't end on its own otherwise, since
+ * the SDK's worker holds the process open. Only wrapped when it's the last
+ * statement, so exiting early can't cut off whatever came after it.
  */
 function hookLessonExit(src) {
   let match = null;
@@ -204,10 +199,7 @@ function hookLessonExit(src) {
 }
 
 function resolveFixturePaths(src, coursesDir) {
-  // Contain the rewrite: a `examples/../../etc/passwd` traversal is a read
-  // of whatever the user account can see, and the local runner is
-  // unsandboxed. path.join collapses `..` silently, so check the resolved
-  // path is still under coursesDir.
+  // path.join collapses `..` silently, so the resolved path is checked against coursesDir.
   const root = path.resolve(coursesDir);
   const rootWithSep = root + path.sep;
   return src.replace(/(['"])(\.?\/?examples\/[^'"]+)\1/g, (match, quote, rel) => {
@@ -220,8 +212,7 @@ function resolveFixturePaths(src, coursesDir) {
   });
 }
 
-// Never clobber: add _1, _2 like a browser download. The lesson calls
-// writeFileSync inside the sandbox, so the swap happens at the call site.
+// Never clobber: add _1, _2 like a browser download, swapped in at the call site.
 const dedupePreamble = (runtime) => `import { writeFileSync as __academyWrite, existsSync as __academyExists, mkdirSync as __academyMkdir } from ${JSON.stringify(resolveImport('node:fs', runtime))};
 import { dirname as __academyDirname, extname as __academyExt, join as __academyJoin, basename as __academyBase, resolve as __academyResolve } from ${JSON.stringify(resolveImport('node:path', runtime))};
 function __academyFreePath(target) {
@@ -244,9 +235,8 @@ function __academyWriteFile(target, data, opts) {
 }
 function __academyExit(code) {
   process.exitCode = code;
-  // stdout is a pipe here, so a queued write is still in flight at this point
-  // and process.exit would drop it. The timer covers a runtime whose write
-  // takes no callback.
+  // stdout is a pipe here, so a queued write can still be in flight; process.exit
+  // would drop it. The timer covers a runtime whose write takes no callback.
   let pending = 2;
   const bail = setTimeout(() => process.exit(code), 250);
   if (typeof bail.unref === "function") bail.unref();
@@ -268,9 +258,9 @@ function routeWritesThroughDedupe(src) {
 }
 
 /**
- * What Bare does not hand a snippet for free: a `process` global and an SDK with
- * its plugins loaded. Module-scoped, so they cover the snippet untouched.
- * Skipped when the snippet binds `process` itself, which would be a syntax error.
+ * What Bare doesn't hand a snippet for free: a `process` global and an SDK with
+ * its plugins loaded. Skipped when the snippet binds `process` itself, which
+ * would be a syntax error.
  */
 function barePreamble(source) {
   // resolve() lands on dist/index.js; the plugin tree hangs off the package root.

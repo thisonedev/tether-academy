@@ -63,8 +63,7 @@ const SETTINGS_TABS = [
 type SettingsTabId = (typeof SETTINGS_TABS)[number]['id'];
 
 interface RemoveState {
-  // The model id whose row is showing the inline confirm, or 'all' for the
-  // "remove all" button, or null when no confirm is open.
+  // Model id showing the inline confirm, 'all' for the remove-all button, or null when closed.
   pending: string | 'all' | null;
   // Once confirmed, the row shows a busy state until the IPC resolves.
   busy: boolean;
@@ -85,9 +84,7 @@ export function SettingsPage() {
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTabId>('models');
 
-  // Settings is desktop-only: model management and device info both depend on
-  // the `window.academy` bridge. On web, bounce back to the home page so a
-  // typed URL or stale bookmark doesn't show a dead page.
+  // Settings is desktop-only; on web, bounce back to the home page rather than show a dead page.
   useEffect(() => {
     setIsDesktop(typeof window !== 'undefined' && !!window.academy);
   }, []);
@@ -176,8 +173,7 @@ export function SettingsPage() {
   }
 
   if (!isDesktop) {
-    // Redirect already scheduled; render nothing so a brief flash of "Sign in"
-    // doesn't appear before the navigation lands.
+    // Redirect already scheduled; render nothing so "Sign in" doesn't flash before it lands.
     return null;
   }
 

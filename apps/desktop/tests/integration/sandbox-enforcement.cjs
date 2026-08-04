@@ -1,8 +1,7 @@
 'use strict';
 
 // The same confinement questions as sandbox-spawn.cjs, asked through the whole
-// pairing + exec path, because the sandbox only counts if it survives the route
-// the feature takes. Skipped on Windows, where peer-exec is refused.
+// pairing + exec path. Skipped on Windows, where peer-exec is refused.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -18,8 +17,7 @@ const skip = process.platform === 'win32';
 const projectDir = path.resolve(__dirname, '../..');
 const sshPath = path.join(os.homedir(), '.ssh', 'id_rsa');
 
-// Reports "blocked: <errno>" or "leaked", never throws, so a denial and a
-// crash cannot be mistaken for each other.
+// Reports "blocked: <errno>" or "leaked", never throws, so a denial and a crash cannot be mistaken for each other.
 const attempt = (body) =>
   `try { ${body} } catch (e) { process.stdout.write('blocked: ' + e.code + '\\n'); }`;
 
@@ -48,9 +46,7 @@ test('sandbox-enforcement - peer-exec cannot read the host user\'s ssh keys', { 
   t.ok(result.stdout.startsWith('blocked'), `expected a denial, got: ${result.stdout.trim()}`);
 });
 
-// The generated deny complement used to stop at $HOME, which left every
-// credential outside it readable. Each target below is world-readable with no
-// profile applied, so a denial here can only have come from the profile.
+// The generated deny complement used to stop at $HOME. Each target below is world-readable with no profile applied, so a denial can only come from the profile.
 test('sandbox-enforcement - read confinement reaches past $HOME', { skip: skip || process.platform !== 'darwin' }, async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'sbint-outside-home');
 
@@ -97,9 +93,7 @@ test('sandbox-enforcement - peer-exec can still read the app bundle', { skip }, 
   t.ok(result.stdout.startsWith('read '), `expected a successful read, got: ${result.stdout.trim()}`);
 });
 
-// npm needs its cache writable, and npx needs to execute what it extracted
-// there, so the two grants overlap unless they are split by subtree. This asks
-// the kernel whether the split holds.
+// npm needs its cache writable, and npx needs to execute what it extracted there; this asks the kernel whether the two are split by subtree.
 test('sandbox-enforcement - peer-exec cannot execute what it writes to the npm cache', { skip }, async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'sbint-npm-cache');
   const cacheDir = path.join(fs.realpathSync(os.tmpdir()), 'academy-npm-cache');
@@ -146,9 +140,7 @@ test('sandbox-enforcement - every run is audited as sandboxed', { skip }, async 
   );
 });
 
-// Sandbox mode is chosen by inspecting the code for QVAC usage. That decision
-// must not be fooled by a comment. Otherwise any lesson could opt itself into
-// a weaker mode by mentioning @qvac/sdk in a string.
+// Sandbox mode is chosen by inspecting the code for QVAC usage; that detection must not be fooled by a comment.
 test('sandbox-enforcement - a comment mentioning @qvac/sdk does not weaken the sandbox', { skip }, async (t) => {
   const { host, guest, discoveryKey } = await pairForExec(t, 'sbint-decoy');
   const before = host.getAudit().length;
@@ -165,9 +157,7 @@ test('sandbox-enforcement - a comment mentioning @qvac/sdk does not weaken the s
   t.not(entry?.sandboxMode, 'qvac-env-only', 'a comment did not unlock env-only mode');
 });
 
-// The QVAC SDK spawns bare-runtime as a nested child. That has to work under
-// the kernel sandbox without falling back to env-only mode, which would
-// confine nothing.
+// The QVAC SDK spawns bare-runtime as a nested child; this must work under the kernel sandbox without falling back to env-only mode.
 test('sandbox-enforcement - QVAC SDK can spawn a nested bare runtime while confined', { skip }, async (t) => {
   const { host, guest, discoveryKey } = await pairForExec(t, 'sbint-qvac');
   const before = host.getAudit().length;

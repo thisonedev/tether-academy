@@ -1,12 +1,9 @@
 // execFileSync isn't exported by bare-subprocess; this is a thin
-// spawnSync-based replacement with the same call shape, portable to
-// both Node's real child_process and bare-subprocess.
+// spawnSync-based replacement, portable to both Node and bare-subprocess.
 'use strict';
 
-// bare-subprocess's spawnSync doesn't honor the `encoding` option the way
-// Node's real spawnSync does: it returns raw bytes (Buffer or a plain
-// byte array) for stdout/stderr even when encoding is requested. Decode
-// explicitly instead of trusting the runtime to have done it.
+// bare-subprocess's spawnSync doesn't honor `encoding`: it returns raw bytes
+// even when requested, so decode explicitly rather than trust the runtime.
 function decode(value, encoding) {
   if (value == null || typeof value === 'string' || !encoding) return value;
   const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);

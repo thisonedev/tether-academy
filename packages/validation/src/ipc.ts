@@ -2,17 +2,13 @@ import { z } from 'zod';
 
 /** Max argv entries accepted from renderer or remote peer. */
 export const MAX_EXEC_ARGV = 32;
-/** Max bytes per argv entry. */
 export const MAX_EXEC_ARGV_ENTRY = 4096;
 /** Max source/code payload size (1 MiB). */
 export const MAX_EXEC_SOURCE_BYTES = 1_000_000;
 /** Allowed temp script extensions for peer-exec file mode. */
 export const SAFE_EXEC_FILENAME_EXTS = ['.mts', '.mjs', '.js', '.ts', '.cjs'] as const;
 
-/**
- * Host-side safe temp file name: basename only, no separators/traversal,
- * extension allowlist. Reject anything a remote peer could use for path abuse.
- */
+/** Host-side safe temp file name: basename only, no separators or traversal, with an extension allowlist. */
 export function isSafeExecFileName(name: string): boolean {
   if (typeof name !== 'string' || !name) return false;
   if (name !== name.normalize('NFC')) return false;
@@ -133,8 +129,7 @@ export const stateValueSchema = z.unknown().refine(
   { message: `state value exceeds ${MAX_STATE_VALUE_BYTES} bytes when serialized` },
 );
 
-/** academy:state:set takes a single object so the renderer cannot smuggle a
- *  second positional argument past the schema check. */
+/** academy:state:set takes a single object argument, validated as one unit. */
 export const stateSetSchema = z
   .object({
     key: stateKeySchema,
@@ -142,8 +137,7 @@ export const stateSetSchema = z
   })
   .strict();
 
-/** Renderer → main accept takes a single object; replaces the two-argument
- *  form. `.strict()` keeps the invite's autoApprove/code rejection. */
+/** Renderer → main accept takes a single object; `.strict()` keeps the invite's autoApprove/code rejection. */
 export const peerAcceptSchema = z
   .object({
     inviteB64: peerInviteB64Schema,
@@ -151,7 +145,6 @@ export const peerAcceptSchema = z
   })
   .strict();
 
-/** Max bytes accepted on one worker IPC frame. */
 export const MAX_WORKER_IPC_BYTES = 1_000_000;
 
 /** How long a copied pairing code or invite link may sit on the clipboard. */
@@ -159,17 +152,11 @@ export const CLIPBOARD_SCRUB_MS = 90_000;
 
 export const clipboardCopySchema = z.object({
   text: z.string().min(1).max(8192),
-  /** 0 leaves the text in place. Capped so a caller cannot park a scrub
-   *  timer far enough out that it never runs. */
+  /** 0 leaves the text in place; capped to keep the scrub timer bounded. */
   scrubAfterMs: z.number().int().min(0).max(10 * 60_000).default(CLIPBOARD_SCRUB_MS),
 });
 
-/**
- * A model cache entry id, used as a relative path under the models root. Any
- * depth is allowed; what is rejected is anything that could leave the root.
- * `removeModel()` resolves and containment-checks the result as well, so this
- * is the earlier of two gates rather than the only one.
- */
+/** A model cache entry id, used as a relative path under the models root; `removeModel()` containment-checks the resolved result too, so this is the earlier of two gates. */
 export const modelIdSchema = z
   .string()
   .min(1)

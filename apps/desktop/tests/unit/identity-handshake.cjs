@@ -12,8 +12,7 @@ const hs = require('../../workers/peer/identity-handshake.cjs');
 const DISCOVERY_KEY = 'c'.repeat(64);
 const OTHER_DISCOVERY_KEY = 'd'.repeat(64);
 
-// A device key with the attestation chain binding it to a fresh root identity,
-// which is what a real peer announces.
+// A device key with the attestation chain binding it to a fresh root identity, as a real peer announces.
 async function attestedDevice() {
   const mnemonic = IdentityKey.generateMnemonic();
   const id = await IdentityKey.from({ mnemonic });
@@ -179,8 +178,7 @@ test('identity-handshake - garbage signatures are rejected without throwing', (t
   );
 });
 
-// Exec stdout runs through the same message slot, so the pre-check has to be
-// cheap and has to not claim frames it cannot parse.
+// Exec stdout runs through the same message slot, so the pre-check must be cheap and must not claim frames it cannot parse.
 test('identity-handshake - frame detection ignores exec output', (t) => {
   const hello = Buffer.from(JSON.stringify(hs.buildHello(hs.newNonce(), { devicePublicKey: 'a'.repeat(64) })));
   t.ok(hs.isIdentityFrame(hello));

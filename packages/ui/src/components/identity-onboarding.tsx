@@ -19,10 +19,7 @@ function shortHex(hex: string | null | undefined, head = 10, tail = 6): string {
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
 }
 
-/**
- * Identity setup for Settings: create, recover, or view/remove the local identity.
- * Multi-device link and Keet app interop are deferred.
- */
+/** Identity setup for Settings: create, recover, or view/remove the local identity. Multi-device link and Keet app interop are deferred. */
 export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
   const resetUser = useUserStore((s) => s.reset);
   const [status, setStatus] = useState<AcademyIdentityStatus | null>(null);

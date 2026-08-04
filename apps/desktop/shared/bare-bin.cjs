@@ -1,9 +1,8 @@
 // @ts-check
 'use strict';
 
-// Resolve and prepare the bare-runtime platform binary used by @qvac/sdk
-// (node-rpc-client → bare-runtime/spawn). Done in the host process so the
-// sandboxed child never needs to chmod under node_modules.
+// Resolve and prepare the bare-runtime platform binary used by @qvac/sdk,
+// done host-side so the sandboxed child never needs to chmod under node_modules.
 
 const fs = require('fs');
 const path = require('path');
@@ -12,9 +11,7 @@ let cached = null;
 
 /**
  * Absolute path to the platform bare binary, or null if unavailable.
- * Uses Node's CJS module system (createRequire), main-process/Node only.
- * Never callable from inside a Bare worker. Pass a pre-resolved path to
- * ensureBareExecutable() there instead.
+ * Main-process/Node only, not callable from inside a Bare worker.
  * @returns {string | null}
  */
 function resolveBareBin() {
@@ -46,10 +43,8 @@ function resolveBareBin() {
 }
 
 /**
- * Ensure the bare binary is executable. Call from the unsandboxed host
- * before wrapping a child that will spawn bare. Pass `preresolved` when
- * calling from a Bare worker, where resolveBareBin()'s createRequire path
- * isn't available; the caller resolves it once on the Node/Electron side.
+ * Ensure the bare binary is executable. Call from the unsandboxed host, passing
+ * `preresolved` when calling from a Bare worker.
  * @param {string | null} [preresolved]
  * @returns {string | null} bare path or null
  */

@@ -1,7 +1,6 @@
 'use strict';
 
-// macOS emits kernel/codesign chatter on stderr when spawning sandboxed
-// children. It must never reach the lesson output the user sees.
+// macOS emits kernel/codesign chatter on stderr when spawning sandboxed children; it must never reach the lesson output the user sees.
 
 const test = require('brittle');
 
@@ -12,10 +11,7 @@ test('exec-noise - recognises platform chatter', (t) => {
   t.is(isNoiseLine('[0731/203044.387077:ERROR:electron/shell/common/mac/codesign_util.cc:79]'), true);
 });
 
-// Model-loader chatter from llama.cpp / mmproj / QVAC SDK: a successful
-// lesson that warms a vision model prints hundreds of `clip_model_loader:
-// tensor[N]: ...` lines to stderr. The output panel is for what the
-// lesson is doing, not the loader's bookkeeping.
+// A vision lesson that warms a model prints hundreds of `clip_model_loader: tensor[N]: ...` lines to stderr; the panel is for the lesson, not the loader.
 test('exec-noise - drops model loader chatter', (t) => {
   t.is(isNoiseLine('clip_model_loader: tensor[42]: n_dims = 2, name = v.blk.0.attn.weight, tensor_size=2506752, offset=12345, shape:[768, 3072, 1, 1], type = q8_0'), true);
   t.is(isNoiseLine('load_tensors: loaded 198 tensors from /Users/.../model.gguf'), true);
@@ -27,15 +23,12 @@ test('exec-noise - drops model loader chatter', (t) => {
   t.is(isNoiseLine('alloc_compute_meta: graph splits = 1, nodes = 394'), true);
   t.is(isNoiseLine('add_text: <|im_start|>User:'), true);
   t.is(isNoiseLine('clip_ctx: CLIP using MTL0 backend'), true);
-  // Lesson output still flows through.
   t.is(isNoiseLine('Compare the two newspaper articles. Which one is older?'), false);
   t.is(isNoiseLine('Result: The first article is from 1923.'), false);
 });
 
 test('exec-noise - drops llama.cpp LOG_INF and SDK helper chatter', (t) => {
-  // llama.cpp uses `llama_<tag>:` for its LOG_INF output. The QVAC SDK
-  // wraps the same logging without the prefix in a few helpers; the
-  // ones the screenshot showed in a vision lesson are pinned here.
+  // llama.cpp uses `llama_<tag>:` for LOG_INF; the QVAC SDK wraps the same logging without the prefix in a few helpers.
   t.is(isNoiseLine('llama_model_load_internal: model size = 103.73 MiB'), true);
   t.is(isNoiseLine('llama_new_context_with_model: n_ctx = 512'), true);
   t.is(isNoiseLine('llama_model_meta: loaded 198 tensors from /Users/.../model.gguf'), true);
@@ -43,22 +36,19 @@ test('exec-noise - drops llama.cpp LOG_INF and SDK helper chatter', (t) => {
   t.is(isNoiseLine('initFromConfig: load the model from disk file and apply lora adapter, if any.'), true);
   t.is(isNoiseLine('parse: load the model metadata from disk file.'), true);
   t.is(isNoiseLine('load_internals: arch = sm_120, n_vocab = 49152'), true);
-  // Lesson output still flows through, including prose that opens with a tag
-  // word but no `tag: `.
+  // Prose that opens with a tag word but no `tag: ` still flows through.
   t.is(isNoiseLine('statement that "The new town square? How algorithms shape our news".'), false);
   t.is(isNoiseLine('Result: The first article is from 1923.'), false);
   t.is(isNoiseLine('parse: ok'), true, 'parse: is filtered even with short messages (SDK-only tag)');
 });
 
-// A TTS or vision lesson probes every ggml backend and then dumps the Metal
-// device table, which buried the one line the lesson printed.
+// A TTS or vision lesson probes every ggml backend and dumps the Metal device table, burying the one line the lesson printed.
 test('exec-noise - drops ggml backend and Metal chatter', (t) => {
   t.is(isNoiseLine('ggml_backend_load_best: search path /Users/x/node_modules/@qvac/tts-ggml/prebuilds/darwin-arm64/qvac__tts-ggml does not exist'), true);
   t.is(isNoiseLine('ggml_metal_device_init: GPU name:   MTL0 (Apple M3 Max)'), true);
   t.is(isNoiseLine('ggml_metal_library_init: loaded in 8.645 sec'), true);
   t.is(isNoiseLine('ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)'), true);
-  // An abort has to reach the panel: it is the only thing that says why a
-  // run stopped mid-way.
+  // An abort has to reach the panel; it's the only thing that says why a run stopped mid-way.
   t.is(isNoiseLine('/Users/runner/work/qvac/ggml/src/ggml-opt.cpp:941: GGML_ASSERT(opt_pars.adamw.alpha > 0.0f) failed'), false);
   t.is(isNoiseLine('0   qvac__llm-llamacpp.bare             0x0000000132e27180 ggml_print_backtrace + 276'), false);
 });
@@ -96,18 +86,12 @@ test('exec-noise - filters noise out of a mixed chunk', (t) => {
   t.is(filter.end(), '', 'nothing buffered at end of stream');
 });
 
-// A peer that writes newline-free stderr in a loop is the path this guards:
-// without the cap, the filter's internal buffer would grow until the worker
-// is killed. With the cap, the partial line is forwarded verbatim once it
-// exceeds the budget — the text is not noise-matchable anyway.
+// Without a cap, newline-free stderr would grow the filter's internal buffer until the worker is killed.
 test('exec-noise - caps a newline-free stream at the line budget', (t) => {
   const filter = createNoiseFilter();
-  // Write 2x the cap in 1 KiB chunks, no newlines anywhere.
   const chunk = 'A'.repeat(1024);
   let forwarded = 0;
-  // The internal buffer is the leakage. Track it indirectly: after the
-  // cap, every push must flush its prior buf, so the next push's buf is
-  // bounded to the latest chunk's worth.
+  // The buffer is internal, so track the leak indirectly: past the cap, every push flushes its prior buf.
   for (let i = 0; i < 128; i += 1) {
     const out = filter.push(chunk);
     forwarded += out.length;

@@ -1,8 +1,6 @@
-// Shape checks for every command the worker accepts over bare-rpc.
-//
-// Deliberately not the Zod schemas main uses at its own boundary: sharing them
-// would make both ends agree by construction, which is what failed here. Plain
-// JS with no dependency, because this runs under Bare.
+// Shape checks for every command the worker accepts over bare-rpc. Deliberately
+// not the Zod schemas main uses, since sharing them would make both ends agree
+// by construction. Plain JS, no dependency, since this runs under Bare.
 'use strict';
 
 const CMD = require('../shared/rpc-commands.cjs');
@@ -19,11 +17,7 @@ const arrayOf = (check) => (v) => Array.isArray(v) && v.every(check);
 
 const optional = (check) => (v) => v == null || check(v);
 
-/**
- * Field checks plus a closed key set. An unknown key means either a caller
- * ahead of this worker or a schema behind its handler; both are worth failing on.
- * @param {Record<string, (v: unknown) => boolean>} fields
- */
+/** @param {Record<string, (v: unknown) => boolean>} fields */
 function object(fields) {
   return (value) => {
     if (!isPlainObject(value)) return 'expected an object';
@@ -67,8 +61,7 @@ const SCHEMAS = {
     attestation: nested(attestation),
     revokedDevices: optional(arrayOf(isString)),
     store: optional(isAny),
-    // Resolved by main against app.getPath('userData') so the worker does
-    // not need Electron or the sandbox module to find its audit file.
+    // Resolved by main against app.getPath('userData').
     auditPath: optional(isString),
   }),
   [CMD.SHUTDOWN]: noArgs,
@@ -114,9 +107,7 @@ const SCHEMAS = {
     argv: optional(arrayOf(isString)),
     fileName: optional(isString),
     label: optional(isString),
-    // Optional lesson frontmatter declared capabilities. Unioned with
-    // detection on the host so a declaration can only widen the prompt;
-    // see exec-host.cjs. Network is ordered none < localhost < all.
+    // Unioned with host-side detection: a declaration can only widen the prompt.
     declared: nested(
       object({
         network: optional(isString),
@@ -131,7 +122,6 @@ const SCHEMAS = {
 };
 
 /**
- * Parsed payload for a command, or throw. A command with no schema throws too.
  * @param {number} command
  * @param {unknown} args
  * @returns {object}

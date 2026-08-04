@@ -17,7 +17,6 @@ function normalize(code) {
   return String(code).toUpperCase().replace(/[^A-Z2-9]/g, '');
 }
 
-// Fixed-length constant-time compare after normalize.
 function equal(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
   const na = normalize(a);

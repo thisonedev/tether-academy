@@ -3,8 +3,7 @@
 import { useUserStore } from '@academy/core';
 import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
 import type { AcademyAPI, AcademyRunChunk } from '@academy/validation';
-// Subpath, not the package root: the root re-exports the MDX frontmatter config,
-// which pulls fumadocs-mdx and its fs/promises import into the browser bundle.
+// Subpath, not the package root: the root re-exports the MDX frontmatter config, pulling fumadocs-mdx's fs/promises import into the browser bundle.
 import {
   ArrowLeft,
   ArrowRight,
@@ -137,12 +136,7 @@ function runLabel(data: LessonData): string {
   return data.title;
 }
 
-/**
- * The part of a run's final `output` the live stream never carried. Every
- * chunk is sent as it arrives and the same bytes come back in the result, so
- * appending the whole of `output` printed a failed run's log twice. What is
- * left is the runner's own note about how the run ended.
- */
+/** The part of a run's final `output` the live stream never carried; appending all of `output` would print a failed run's log twice. */
 function unstreamed(output: string, streamed: OutputLine[]): string {
   let rest = output;
   for (const stream of ['stdout', 'stderr'] as const) {
@@ -165,8 +159,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const [userCode, setUserCode] = useState(data.startingCode);
   const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');
   const [tab, setTab] = useState<Tab>('output');
-  // typeof window differs between SSR and client; defer to useEffect
-  // so the first client render matches the SSR'd HTML.
+  // Deferred to useEffect so the first client render matches the SSR'd HTML.
   const [isDesktop, setIsDesktop] = useState(false);
   useEffect(() => {
     setIsDesktop(typeof window !== 'undefined' && typeof window.academy?.run === 'function');
@@ -202,8 +195,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [isDesktop]);
-  // Poll identity on a short interval: peer.init runs after app.whenReady, so
-  // a workspace mounted earlier in the boot may see null for a beat.
+  // Poll identity briefly: peer.init runs after app.whenReady, so an early-mounted workspace may see null for a beat.
   const [localPublicKey, setLocalPublicKey] = useState<string | null>(null);
   useEffect(() => {
     if (!isDesktop) return;
@@ -245,10 +237,8 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       hostIdentity: string | null;
     }>
   >([]);
-  // Two app instances sharing a userData dir pair as the same identity; the
-  // exec channel can't route between matching keys, so runs hang silently.
-  // Filter self-pairs, then keep only guest-role peers (the side that runs
-  // the code) so a host never tries to forward runs to itself-as-host.
+  // Two app instances sharing a userData dir pair as the same identity, and the exec channel
+  // can't route between matching keys, so filter self-pairs and keep only guest-role peers.
   const realRemotePeers = useMemo(() => {
     const notSelf = localPublicKey
       ? remotePeers.filter((p) => p.hostIdentity !== localPublicKey)
@@ -258,8 +248,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const selfPairCount = remotePeers.length - realRemotePeers.length;
   const localIsOnlyHost = remotePeers.length > 0 && remotePeers.every((p) => p.role === 'host');
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
-  // Auto-pick the most recently paired device when entering Paired-device mode
-  // with no current selection (initial entry, peer dropped, mode flip-back).
+  // Auto-pick the most recently paired device when entering Paired-device mode with no selection.
   useEffect(() => {
     if (runMode !== 'remote') return;
     if (realRemotePeers.length === 0) return;
@@ -336,7 +325,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     };
   }, [isDesktop, data.argv]);
 
-  // Empty value still represents an active override session; only non-empty values persist.
+  // An empty value keeps the override session active. Only non-empty values persist.
   const setArgvOverrideValue = useCallback(
     (name: string, value: string) => {
       setArgvOverrides((prev) => {
@@ -517,8 +506,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       if (isRemoteRun && selectedPeerId) {
         setLastRemoteRun({ kind: 'running', peerId: selectedPeerId, startedAt: runStartedAt });
       }
-      // Stream chunks as they arrive so 30-60s finetune runs don't look frozen.
-      // Local buffer keeps stream type so the panel can distinguish reasoning from answer text.
+      // Streamed as chunks arrive so 30-60s finetune runs don't look frozen.
       const streamBuffer: OutputLine[] = [];
       const captured = new Set<string>();
       const scanForCaptures = (text: string) => {
@@ -580,8 +568,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             });
           }
         } else {
-          // A native abort kills the child without printing anything, so the
-          // signal is all the student has to go on.
+          // A native abort kills the child without printing anything, so the signal is all the student has to go on.
           const ended = result.remoteExit?.signal
             ? `[stopped by ${result.remoteExit.signal}]`
             : '[exit non-zero]';
@@ -644,8 +631,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       setIsAnimating(false);
     }
 
-    // If the run produced nothing, fall back to the test results so the
-    // panel isn't blank and the student can see which check failed.
+    // Fall back to test results so the panel isn't blank when the run produces nothing.
     if (producedOutput.length === 0 && data.tests.length > 0) {
       const results = runTests(userCode, data.tests);
       const summary = results.map((r) =>
@@ -1091,8 +1077,6 @@ function Runner({
             type="button"
             onClick={isAnimating ? onStop : onRun}
             disabled={readOnly || (isAnimating ? stopRequested || !onStop : false)}
-            // Same control across run modes: only the run state changes the
-            // appearance, not whether the device is paired.
             className={
               isAnimating
                 ? stopRequested
@@ -1228,9 +1212,8 @@ function Runner({
         ) : null}
       </div>
 
-      {/* Monaco sits out of flow so its height comes from this box. In the
-          stacked layout nothing above it has a definite height, so its own
-          height:100% wrapper resolves to auto and collapses to a 5px strip. */}
+      {/* Monaco sits out of flow so its height comes from this box; in the stacked layout
+          its own height:100% wrapper would otherwise resolve to auto and collapse. */}
       <div className="relative min-h-[420px] flex-1 overflow-hidden">
         <div className="absolute inset-0">
           <MonacoLessonEditor
@@ -1260,11 +1243,6 @@ function Runner({
           </button>
         ))}
       </div>
-
-      {/* A remote run's status lives next to its output: the host's
-          incoming run is the same component NotificationCenter renders
-          at the top, and the guest's outgoing run renders here so the
-          work-in-progress sits next to the bytes it is producing. */}
 
       <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted font-mono text-sm text-canvas-foreground">
         {tab === 'output' ? (
@@ -1337,8 +1315,7 @@ function Runner({
   );
 }
 
-// Outgoing runs (a guest's remote execution) render inside the output
-// panel so the work-in-progress sits next to the bytes it is producing.
+// Outgoing runs (a guest's remote execution) render inside the output panel, next to the bytes they're producing.
 function GuestRunStrip() {
   const { items, dismiss } = useRunNotices();
   const outgoing = items.filter((run) => run.direction === 'outgoing');
@@ -1372,7 +1349,6 @@ function formatDuration(ms: number): string {
   return `${hr}h ${m2}m`;
 }
 
-// The lesson says `output/cat.png`; only the run knows where that resolved to.
 // Every write logs `[saved] <absolute path>`, which the footer makes clickable.
 const SAVED_LINE = /^\[saved\]\s+(.+)$/;
 
@@ -1412,7 +1388,6 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
   const savedFiles = savedFilesFrom(lines);
   // Find the latest finetune tick. Format: `▸ epoch=1 step=1 batch=1/16 ...`.
   const tickPattern = /epoch=(\d+)\s+step=(\d+)\s+batch=(\d+)\/(\d+)/;
-  // Match the trainer's final message or a user-side `console.log('... status: COMPLETED')`.
   // The trainer skips a tick on the last step, so without this the bar caps below 100%.
   const completedPattern = /(Training completed through step \d+|status:\s*COMPLETED)/;
   const progress = (() => {
@@ -1502,8 +1477,7 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
         </div>
       ) : null}
       {(() => {
-        // Smart rendering: collapse single newlines to spaces, keep double as paragraph breaks.
-        // Falls back to line-by-line when finetune progress lines are present.
+        // Collapses single newlines to spaces and keeps double as paragraph breaks; falls back to line-by-line when finetune progress lines are present.
         const hasFinetuneProgress = lines.some(
           (e) => e.stream === 'stdout' && /^▸\s+epoch=/.test(e.line),
         );
@@ -1526,8 +1500,6 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
           });
         }
 
-        // Group stdout into paragraphs on double newlines, collapse single newlines to spaces.
-        // stderr lines render line-by-line, dimmed.
         const stdoutText = lines
           .filter((e) => e.stream === 'stdout')
           .map((e) => e.line)

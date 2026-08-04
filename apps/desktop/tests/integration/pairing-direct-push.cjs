@@ -1,9 +1,8 @@
 'use strict';
 
-// Regression: the guest read the approval response from the DHT, so a failed or
-// stale put left it on acceptInvite's 30-minute timeout. The host now also
-// pushes the response down the exec channel. These sabotage delivery via
-// _testHooks; remove the push and the second case times out.
+// Regression: the guest read the approval response from the DHT, so a failed
+// or stale put left it on acceptInvite's 30-minute timeout. The host now also
+// pushes the response down the exec channel; these sabotage delivery via _testHooks.
 
 const test = require('brittle');
 const os = require('node:os');
@@ -11,8 +10,7 @@ const os = require('node:os');
 const { createPeers, waitFor } = require('../helpers/index.cjs');
 
 const PENDING_TIMEOUT_MS = 30_000;
-// The failure mode is a 30-minute hang, so anything in seconds proves delivery.
-// Kept tight because a working push lands in milliseconds.
+// The failure mode is a 30-minute hang, so anything in seconds proves delivery; kept tight since a working push lands in milliseconds.
 const PAIR_TIMEOUT_MS = 5000;
 const BUDGET_MS = 2000;
 
@@ -29,8 +27,7 @@ async function pairWithSabotage(t, label, sabotage) {
     .catch(() => {});
   const pending = await pendingPromise;
 
-  // Applied only now, so the host's setup completes normally and the sabotage
-  // isolates what happens inside approve().
+  // Applied only now, so the host's setup completes normally and the sabotage isolates what happens inside approve().
   sabotage(host);
   t.teardown(() => {
     host._testHooks.setSkipDhtPut(false);

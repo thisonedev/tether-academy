@@ -1,9 +1,7 @@
 // @ts-check
 'use strict';
 
-// Windows has no shipped per-process confinement comparable to macOS
-// sandbox-exec or Linux bwrap. AppContainer is the planned path; until
-// it lands, peer-exec is refused (sandboxed: false / unavailable).
+// Windows has no per-process confinement yet (AppContainer is planned); peer-exec is refused until it lands.
 
 const { resolveExecNames } = require('./capabilities.cjs');
 

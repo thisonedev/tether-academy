@@ -1,13 +1,7 @@
-// Lists, sizes, and removes downloaded QVAC models on disk.
-//
-// QVAC stores cached models under `<HOME>/.qvac/models/` in three layouts:
-//   - single:  `<shortHash>_<originalFile>`            (most common)
-//   - sharded: `sharded/<hyperdriveKey>/<shardFile>`   (split weights)
-//   - set:     `sets/<setKey>/<targetName>`            (companion set)
-//
-// The renderer only needs (id, name, sizeBytes, kind). We group the sharded
-// and set layouts into one row per directory so removing a row never leaves
-// a half-deleted model behind.
+// Lists, sizes, and removes downloaded QVAC models on disk. Models are cached
+// under `<HOME>/.qvac/models/` as single files, `sharded/<key>/`, or `sets/<key>/`;
+// the sharded and set layouts are grouped into one row per directory so removing
+// a row never leaves a half-deleted model behind.
 
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -82,8 +76,7 @@ async function dirSize(dir) {
   return { total, count };
 }
 
-// Strip the SDK's hash prefix from a single-file cache entry so the user sees
-// "Qwen3-0.6B-Q4_0.gguf" instead of "5b8aae816570a09d_Qwen3-0.6B-Q4_0.gguf".
+// Strip the SDK's hash prefix from a single-file cache entry for display.
 function displayNameFromSingle(filename) {
   const m = SINGLE_HASH_RE.exec(filename);
   return m ? m[2] : filename;

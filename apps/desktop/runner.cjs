@@ -1,8 +1,6 @@
 // Spawned via ELECTRON_RUN_AS_NODE so the CJS main can run an ESM .mts snippet.
-//
-// Unsandboxed, unlike peer-exec: the source is course content or the user's own
-// edit of it. Peer-exec writes the lesson folder this runs in, so a file under
-// it is not the user's own input.
+// Unsandboxed, unlike peer-exec: the source here is course content or the
+// user's own edit of it.
 const { spawn } = require('node:child_process');
 const { rm } = require('node:fs/promises');
 const { mkdtempSync, writeFileSync } = require('node:fs');
@@ -36,7 +34,6 @@ function runExample({ source, language, argv, onChunk }) {
 
   const coursesDir = path.join(__dirname, '..', '..', 'packages', 'courses');
   // Lesson writes are relative, so the child runs in the writable workspace.
-  // Fixture reads were made absolute by buildLesson.
   const childCwd = lessonCwd();
   const outputsBefore = snapshotOutputs(childCwd);
   const wrapped = buildLesson({ source, cwd: coursesDir });
@@ -46,9 +43,7 @@ function runExample({ source, language, argv, onChunk }) {
 
   writeFileSync(file, wrapped, 'utf-8');
 
-  // The unsandboxed path, so the one that matters: a cached model altered since
-  // the app last saw it gets parsed here with the user's full privileges.
-  // Stat-only, and advisory, since the machine is the user's own.
+  // Stat-only and advisory, since this is the unsandboxed local-run path.
   const changed = (() => {
     try {
       return syncFast().changed;
@@ -95,17 +90,14 @@ function runExample({ source, language, argv, onChunk }) {
   };
 
   const promise = new Promise((resolve) => {
-    // Cap each stream at the same budget peer-exec uses. A lesson that
-    // prints in a loop still has a 1 MiB per-stream ceiling on what the
-    // final string holds; the renderer has seen every byte live.
+    // Same 1 MiB per-stream cap peer-exec uses.
     const output = createAccumulator();
     let killed = false;
     const timer = setTimeout(() => {
       killed = true;
       killGroup('SIGTERM');
     }, MAX_RUNTIME_MS);
-    // Same model-loader and sandbox chatter the peer path strips, so
-    // a successful local run does not flood the output panel.
+    // Strips the same model-loader/sandbox chatter the peer path strips.
     const stderrFilter = createNoiseFilter();
     const handleChunk = (stream) => (chunk) => {
       const s = stream === 'stderr' ? stderrFilter.push(chunk.toString()) : chunk.toString();
@@ -136,15 +128,13 @@ function runExample({ source, language, argv, onChunk }) {
         output.append('stderr', note);
         if (onChunk) onChunk({ stream: 'stderr', data: note });
       }
-      // Drain the noise filter: a partial line held when the child
-      // closed may carry the final word of a real error.
+      // A partial line held when the child closed may carry a real error's final word.
       const tail = stderrFilter.end();
       if (tail) {
         output.append('stderr', tail);
         if (onChunk) onChunk({ stream: 'stderr', data: tail });
       }
-      // This run may have downloaded a model. Re-baseline so peer-exec's
-      // integrity check treats the new bytes as the app's own work.
+      // Re-baseline in case this run downloaded a model.
       try {
         acceptAll();
       } catch {

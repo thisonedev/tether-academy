@@ -1,9 +1,8 @@
 'use strict';
 
 // Two checks decide whether a lesson can run on a peer: the editor greys the
-// option out from the raw source, and the host refuses the built source. They
-// look at different text, so this runs both over every course sample and fails
-// if they ever disagree.
+// option out from raw source, and the host refuses the built source. They look
+// at different text, so this runs both over every course sample and fails if they disagree.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -87,9 +86,7 @@ test('node-only - the SDK and the Bare shims are never refused', (t) => {
   t.alike(nodeOnlyImports('import x from "./local.js";'), []);
 });
 
-// The editor reads raw specifiers and the build rewrites them, so a builtin
-// added to one list and not the other silently changes which lessons a peer
-// will take.
+// The editor reads raw specifiers and the build rewrites them, so a builtin added to one list and not the other silently changes which lessons a peer takes.
 test('node-only - both sides rewrite the same builtins', (t) => {
   t.alike(REWRITTEN_BUILTINS.slice().sort(), Object.keys(BARE_BUILTINS).sort());
 });

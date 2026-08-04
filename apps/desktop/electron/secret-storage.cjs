@@ -1,6 +1,5 @@
-// Encrypt short secrets at rest. Prefer Electron safeStorage (OS keychain /
-// DPAPI). Outside Electron (tests, headless), use AES-256-GCM with a
-// per-userData key file (mode 0o600).
+// Encrypt short secrets at rest. Prefers Electron safeStorage (OS keychain /
+// DPAPI); outside Electron, falls back to AES-256-GCM with a per-userData key file.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -12,7 +11,6 @@ const AES_ALGO = 'aes-256-gcm';
 
 function tryLoadSafeStorage() {
   try {
-    // Only resolves inside the Electron main process.
     // eslint-disable-next-line import/no-extraneous-dependencies
     const { safeStorage } = require('electron');
     if (safeStorage && typeof safeStorage.isEncryptionAvailable === 'function') {
@@ -25,10 +23,8 @@ function tryLoadSafeStorage() {
 }
 
 /**
- * Where this profile's fallback key lives. Outside userData, because the record
- * it decrypts sits there and one directory holding both turns a read into a
- * full identity takeover. Named per profile so `--storage` instances keep
- * separate keys, as they did when the key lived beside them.
+ * Where this profile's fallback key lives: outside userData (the record it
+ * decrypts sits there), named per profile so `--storage` instances differ.
  * @param {string} userDataDir
  * @param {string} [dir]
  * @returns {string}
@@ -50,8 +46,7 @@ function ensureLocalKey(userDataDir, opts = {}) {
   if (existing) return existing;
 
   fs.mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
-  // Installs that predate the move keep their key beside the record. Move it:
-  // a fresh key would orphan everything already sealed with the old one.
+  // Migrate installs that predate the move; a fresh key would orphan everything sealed with the old one.
   const legacyPath = path.join(userDataDir, LOCAL_KEY_FILE);
   const legacy = readKey(legacyPath);
   const key = legacy ?? crypto.randomBytes(32);
@@ -96,8 +91,7 @@ function decryptAesGcm(payloadB64, key) {
 /**
  * @param {string} userDataDir
  * @param {{ safeStorage?: object | null, keyDir?: string }} [opts]
- *   Pass safeStorage explicitly from Electron main; null forces local AES.
- *   keyDir overrides where the AES fallback key is kept (tests).
+ *   safeStorage: null forces local AES. keyDir: overrides key location (tests).
  */
 function createSecretStorage(userDataDir, opts = {}) {
   let safe =

@@ -1,7 +1,5 @@
-// Shared bare-rpc command IDs for the main<->pear-end-worker channel. One
-// command per peer.cjs action, no generic invoke(method, args) dispatcher.
-// Plain JS, no node:*/bare-* dependency, safe to require() from both the
-// Electron main process and the Bare worker.
+// Shared bare-rpc command IDs for the main<->pear-end-worker channel. Plain
+// JS with no node:*/bare-* dependency, so it's requirable from both sides.
 module.exports = {
   // main -> worker (request/response)
   INIT: 1,

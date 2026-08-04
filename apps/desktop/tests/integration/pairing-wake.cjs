@@ -1,9 +1,8 @@
 'use strict';
 
-// A performance guard. blind-pairing polls the DHT every 30s, so without the
+// A performance guard: blind-pairing polls the DHT every 30s, so without the
 // wake peer.cjs pushes, an approved guest sits on a spinner for up to half a
-// minute. Being a latency budget, this is the one test that can fail because the
-// machine is busy, hence several runs.
+// minute. As a latency budget, this can fail if the machine is busy, hence several runs.
 
 const test = require('brittle');
 const os = require('node:os');
@@ -11,8 +10,7 @@ const os = require('node:os');
 const { createPeers, waitFor } = require('../helpers/index.cjs');
 
 const RUNS = 3;
-// Generous against the 30s poll it is guarding: anything near the poll cycle
-// means the wake did not fire at all.
+// Generous against the 30s poll it is guarding; anything near the poll cycle means the wake did not fire.
 const BUDGET_MS = 2000;
 const PAIR_TIMEOUT_MS = 30_000;
 

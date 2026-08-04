@@ -1,10 +1,6 @@
-// Who is actually on the other end of a pair.
-//
-// Each side announces its device key together with the keet-identity-key proof
-// that binds that key to a root identity, and signs the other side's nonce to
-// show it holds the matching secret. A proof alone proves nothing about the
-// sender: proofs are public, so anyone who has seen one can replay it. Only the
-// signature ties the announced key to whoever is on this connection.
+// Each side announces its device key with a keet-identity-key proof binding it
+// to a root identity, then signs the other side's nonce. Proofs are public and
+// replayable; only the signature proves who is actually on this connection.
 'use strict';
 
 const crypto = require('crypto');
@@ -13,13 +9,12 @@ const IdentityKey = require('keet-identity-key');
 
 const HELLO_KIND = 'identity-hello';
 const PROOF_KIND = 'identity-proof';
-// Domain separator plus the pair's discovery key, so a signature captured on
-// one pair cannot be replayed on another.
+// Domain separator plus discovery key, so a signature can't be replayed on another pair.
 const SIGN_CONTEXT = 'tether-academy/peer-identity/v1';
 const NONCE_BYTES = 32;
 const SIGNATURE_BYTES = 64;
-// A handshake frame is a few hundred bytes. Anything larger is exec output that
-// happens to contain the marker string.
+// A handshake frame is a few hundred bytes; anything larger is exec output
+// that happens to contain the marker string.
 const MAX_FRAME_BYTES = 8192;
 const HEX_32 = /^[0-9a-fA-F]{64}$/;
 
@@ -107,11 +102,9 @@ function verifyProofReply(msg, { discoveryKeyHex, nonce, devicePublicKey, expect
   if (msg.nonce !== nonce) return false;
   const signature = Buffer.from(msg.signature, 'base64');
   if (signature.length !== SIGNATURE_BYTES) return false;
-  // The proof itself carries no identity field. The hello carries the
-  // announced identityPublicKey, and the invite carries what was
-  // promised; the comparison lives in the verification handler that has
-  // both. expectedIdentity is plumbed for the case where a future
-  // refactor moves the identity comparison into the verifier itself.
+  // The proof carries no identity field; that comparison lives in the
+  // verification handler. expectedIdentity is unused today, reserved for a
+  // future refactor that moves it here.
   if (expectedIdentity != null && msg.devicePublicKey !== expectedIdentity) return false;
   try {
     return hypercoreCrypto.verify(

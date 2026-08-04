@@ -1,11 +1,8 @@
 'use strict';
 
-// Per-discovery-key sliding-window limiter for the peer paths. The window
-// is a list of timestamps, pruned on read so nothing accumulates for a peer
-// that went away. The interface is intentionally narrow: the caller passes
-// the op name and a key (discovery-key hex for per-peer ops, a constant
-// sentinel for global ones), and gets back whether to proceed. The clock
-// is injectable so the tests do not have to sleep a minute.
+// Per-discovery-key sliding-window limiter for the peer paths. The window is a
+// list of timestamps, pruned on read so nothing accumulates for a peer that
+// went away. The clock is injectable so the tests do not have to sleep a minute.
 
 const test = require('brittle');
 
@@ -42,7 +39,6 @@ test('rate-limit - past the window the count rolls', (t) => {
     now += 1;
   }
   t.is(isAllowed(op, key, now), false, 'over budget now');
-  // Advance past the 60_000 ms window.
   now += 60_001;
   t.is(isAllowed(op, key, now), true, 'after a full window the budget refills');
 });
@@ -60,8 +56,7 @@ test('rate-limit - global pairing bound shares one budget across invites', (t) =
   _resetAllForTests();
   const op = 'pairing:attempt';
   let now = 1_000_000;
-  // Global ceiling: every invite draws from one window. 60 per minute
-  // (raised from 20 once the per-invite code gate moved ahead of it).
+  // Every invite draws from one shared window, not a per-invite one.
   for (let i = 0; i < 60; i++) isAllowed(op, '__pairing__', now);
   t.is(isAllowed(op, '__pairing__', now), false, 'the budget is shared globally');
 });
@@ -94,8 +89,7 @@ test('rate-limit - pruning: a peer that left and came back starts fresh', (t) =>
   t.is(isAllowed(op, key, now), true, 'pruned and admitted');
 });
 
-// Pin the table itself so a future edit to the limits is a deliberate change,
-// not a silent one. The plan documents each row and its reason.
+// Pins the table itself so a future edit to the limits is a deliberate change, not a silent one.
 test('rate-limit - limits table matches the documented rows', (t) => {
   t.alike(LIMITS['exec:request'],    { max: 10,  windowMs: 60_000 });
   t.alike(LIMITS['pairing:attempt'], { max: 60,  windowMs: 60_000 });
@@ -103,9 +97,7 @@ test('rate-limit - limits table matches the documented rows', (t) => {
   t.alike(LIMITS['rpc:command'],     { max: 600, windowMs: 60_000 });
 });
 
-// Per-key window tables should not retain an empty list for a key that
-// went away. The header of rate-limit.cjs makes the same promise; this
-// pins it.
+// Per-key window tables should not retain an empty list for a key that went away.
 test('rate-limit - prune drops the key once its window empties', (t) => {
   const { isAllowed, prune, _resetAllForTests } = require('../../workers/peer/rate-limit.cjs');
   _resetAllForTests();
@@ -113,11 +105,7 @@ test('rate-limit - prune drops the key once its window empties', (t) => {
   const key = 'peer-prune';
   let now = 1_000_000;
   isAllowed(op, key, now);
-  // Advance past the window and prune: the per-key list is empty, and
-  // because the key is not the global one, the table no longer names it.
   now += 60_001;
   prune(op, key, now);
-  // isAllowed from a clean slate: the per-peer slot was reset, so the
-  // next call is admitted (rather than still capped on the old list).
   t.is(isAllowed(op, key, now), true, 'a fresh window admits after prune');
 });

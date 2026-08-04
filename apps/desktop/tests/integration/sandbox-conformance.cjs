@@ -1,12 +1,10 @@
 'use strict';
 
-// Runs the capability-to-enforcement matrix against a real kernel. Every other
-// sandbox test checks what the profile says; this one checks what the OS does
-// with it, row by row. The first run of it found a profile macOS had been
-// rejecting outright, which every string-level test had passed.
-//
-// Skipped on Windows, where peer-exec is refused and there is nothing to
-// verify. On Linux without a working bwrap the whole file skips, because a
+// Runs the capability-to-enforcement matrix against a real kernel; every other
+// sandbox test checks what the profile says, this one checks what the OS does
+// with it, row by row. The first run found a profile macOS had been rejecting
+// outright, which every string-level test had passed. Skipped on Windows
+// (peer-exec refused) and on Linux without a working bwrap, where a
 // passthrough wrap would report every row as leaked and say nothing useful.
 
 const test = require('brittle');
@@ -93,8 +91,7 @@ for (const row of CONFORMANCE) {
   });
 }
 
-// A row whose platform column says nothing is a claim nobody wrote down, which
-// is the state this matrix exists to end.
+// A row whose platform column says nothing is a claim nobody wrote down.
 test('conformance - every row states an outcome for every platform', (t) => {
   const outcomes = ['denied', 'allowed', 'not-claimed'];
   for (const row of CONFORMANCE) {

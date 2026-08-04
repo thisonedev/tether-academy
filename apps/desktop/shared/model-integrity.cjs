@@ -1,13 +1,11 @@
 'use strict';
 
-// Integrity record for the QVAC model cache. A local run hands these weights to
-// a native parser with no sandbox around it, so a swapped file is worth
-// noticing.
+// Integrity record for the QVAC model cache: local runs hand these weights to
+// an unsandboxed native parser, so a swapped file is worth noticing.
 //
-// Per file: size+mtime, which every run checks, and a sha256, which reads every
-// byte and so is computed for a chosen set. verifyModels does it for the models
-// one run names; verifyAll does it for the whole cache, on request. The manifest
-// lives in the app state directory, which no sandbox profile grants.
+// Per file: size+mtime (checked every run) and a sha256 (reads every byte, so
+// computed only for a chosen set). verifyModels covers the models one run
+// names; verifyAll covers the whole cache, on request.
 
 const fs = require('fs');
 const os = require('os');
@@ -18,9 +16,8 @@ const { appStateDir } = require('../workers/sandbox/capabilities.cjs');
 
 const MANIFEST_FILE = 'model-integrity.json';
 const MANIFEST_VERSION = 1;
-// Whole seconds, compared with a second of slack. Electron and the Bare worker
-// both read and write this manifest, and they report mtimes for the same file a
-// millisecond apart.
+// A second of slack: Electron and the Bare worker both write this manifest and
+// can report mtimes for the same file a millisecond apart.
 const MTIME_SLACK_SEC = 1;
 
 function modelsRoot(home = os.homedir()) {
@@ -43,9 +40,8 @@ function readManifest(stateDir = appStateDir()) {
   return { version: MANIFEST_VERSION, files: {} };
 }
 
-// The tmp name carries the pid because the state directory is per-machine, not
-// per-instance: two app instances sharing it would otherwise write the same
-// tmp file and the loser's rename would fail with ENOENT.
+// The tmp name carries the pid since the state directory is shared across app
+// instances, which would otherwise race on the same tmp file.
 function writeManifest(stateDir, manifest) {
   fs.mkdirSync(stateDir, { recursive: true });
   const tmp = `${manifestPath(stateDir)}.${process.pid}.tmp`;
@@ -106,8 +102,7 @@ function sha256File(abs) {
 }
 
 // setImmediate yields to the loop without draining microtasks first, so the
-// swarm breathes between chunks. queueMicrotask drains microtasks before I/O
-// runs, which is the starvation this exists to avoid.
+// swarm breathes between chunks; queueMicrotask would starve it.
 function yieldToLoop() {
   return new Promise((resolve) => setImmediate(resolve));
 }
@@ -139,9 +134,8 @@ function sameStat(known, stat) {
 }
 
 /**
- * Stat-only comparison against the manifest. A file seen for the first time is
- * recorded as it stands, since there is nothing yet to compare it against.
- * Files whose size or mtime moved are reported.
+ * Stat-only comparison against the manifest. A file seen for the first time
+ * is recorded as-is; files whose size or mtime moved are reported.
  * @param {string} stateDir
  * @param {string} [root]
  * @returns {{ changed: string[], added: string[] }}
@@ -163,8 +157,7 @@ function syncFast(stateDir = appStateDir(), root = modelsRoot()) {
     }
     if (!sameStat(known, stat)) changed.push(rel);
   }
-  // An empty scan is more likely a cache that moved than one that emptied, and
-  // forgetting every record would let the next rewrite pass as a new file.
+  // An empty scan is more likely a moved cache than an emptied one; don't drop every record.
   if (seen.size > 0) {
     for (const rel of Object.keys(manifest.files)) {
       if (!seen.has(rel)) {
@@ -185,10 +178,8 @@ function syncFast(stateDir = appStateDir(), root = modelsRoot()) {
 
 /**
  * Remove model files that appeared since `before`, for a run that failed.
- *
- * The SDK streams a download to its final path, so a run killed partway leaves
- * a truncated file that the next run's profile then freezes, and the SDK can
- * never replace it. A completed download gets removed too and simply refetched.
+ * The SDK streams a download to its final path, so a run killed partway
+ * leaves a truncated file the manifest would otherwise freeze in place.
  * @param {Set<string>|string[]} before Relative paths present before the run.
  * @param {string} [root]
  * @returns {string[]}
@@ -209,9 +200,8 @@ function removeAddedSince(before, root = modelsRoot()) {
 }
 
 /**
- * Take the cache as it stands as the new baseline, which a local run does after
- * it finishes: it may have downloaded a model, and without this that download
- * would read as tampering and leave every later run reporting it.
+ * Record the current cache as the new baseline after a local run finishes so
+ * a freshly downloaded model doesn't read as tampering later.
  * @param {string} [stateDir]
  * @param {string} [root]
  */
@@ -240,17 +230,10 @@ function acceptAll(stateDir = appStateDir(), root = modelsRoot()) {
 const CACHE_HASH_PREFIX = /^[0-9a-f]{16}_/;
 
 /**
- * Content-verify the cached files a run is about to hand to a native parser.
- *
- * The fast path compares size and mtime, and `touch -r` restores both, so a
- * local attacker who bothers walks through it. For a file that will be parsed,
- * the hash is the answer that counts.
- *
- * Only the named models are read, so the cost is the one model a lesson loads
- * instead of the whole cache. A file with no hash on record gets one here, on
- * the reasoning that first sight is the best evidence available; from then on
- * it is the hash that decides.
- *
+ * Content-verify the cached files a run is about to hand to a native parser,
+ * by hash rather than the size/mtime fast path. Only the named models are
+ * read, keeping cost to what a lesson loads. A file with no hash on record
+ * gets one here as its first-sight baseline.
  * @param {string[]} modelIds file names as the SDK's registry publishes them
  * @returns {{ verified: string[], mismatched: string[], recorded: string[] }}
  */
@@ -293,9 +276,9 @@ function verifyModels(modelIds, stateDir = appStateDir(), root = modelsRoot()) {
 }
 
 /**
- * Async version of verifyModels. Same logic, hash loop yields between chunks.
- * The peer worker uses this on the run path; main keeps the sync version for
- * academy:models:verify, which a user asks for and is not on any event loop.
+ * Async version of verifyModels; hash loop yields between chunks. Used on the
+ * peer worker's run path, unlike the sync version main uses for the
+ * user-triggered academy:models:verify.
  * @param {string[]} modelIds
  * @param {string} [stateDir]
  * @param {string} [root]
@@ -340,8 +323,8 @@ async function verifyModelsAsync(modelIds, stateDir = appStateDir(), root = mode
 
 /**
  * Hash every cached file and compare with the manifest, filling in hashes for
- * entries that only carry size and mtime. Reads every byte in the cache: 67 GB
- * took 27s on an M-series laptop. Keep it off the run path.
+ * entries that only carry size and mtime. Reads every byte (67 GB took 27s on
+ * an M-series laptop); keep it off the run path.
  * @param {string} stateDir
  * @param {string} [root]
  * @returns {{ verified: string[], mismatched: string[], recorded: string[] }}
@@ -374,8 +357,7 @@ function verifyAll(stateDir = appStateDir(), root = modelsRoot()) {
 }
 
 /**
- * Async version of verifyAll, for callers on a live event loop. Same logic,
- * hash loop yields between chunks.
+ * Async version of verifyAll, for callers on a live event loop.
  * @param {string} [stateDir]
  * @param {string} [root]
  */
@@ -412,13 +394,9 @@ let _lastScheduledAt = 0;
 let _inFlight = null;
 
 /**
- * Run a full verify in the background on a cooldown. Main calls this after
- * each model download and once on idle at startup. The next call within the
- * cooldown returns the in-flight promise, so a burst of downloads still only
- * walks the cache once.
- *
- * Uses the yielding hash: this runs on the process that owns the window, which
- * the sync one freezes for as long as the whole cache takes to read.
+ * Run a full verify in the background on a cooldown, so a burst of downloads
+ * still only walks the cache once. Uses the yielding hash since this runs on
+ * the process that owns the window.
  * @param {string} stateDir
  * @param {string} [root]
  */

@@ -1,9 +1,7 @@
 // @ts-check
 'use strict';
 
-// Host-resolved Node/npm/npx paths for sandboxed MCP lesson children.
-// Lessons spawn `npx -y @…` via StdioClientTransport; seatbelt only allows
-// process-exec of absolute paths we inject at wrap time.
+// Host-resolved Node/npm/npx paths; seatbelt only allows process-exec of absolute paths injected at wrap time.
 
 const fs = require('fs');
 const path = require('path');
@@ -15,8 +13,7 @@ const { resolveExecName } = require('./capabilities.cjs');
 let cached = null;
 
 /**
- * Same resolver as a capability's `exec` list, so the two cannot drift on
- * PATH or symlink handling.
+ * Same resolver as a capability's `exec` list, so PATH/symlink handling can't drift between them.
  * @returns {{ node: string | null, npm: string | null, npx: string | null }}
  */
 function resolveMcpBins() {
@@ -38,7 +35,6 @@ function resolveMcpBins() {
 }
 
 /**
- * Absolute paths to allow on process-exec (and bind-read on Linux).
  * @returns {string[]}
  */
 function mcpExecPaths() {

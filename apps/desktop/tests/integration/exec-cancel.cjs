@@ -1,15 +1,13 @@
 'use strict';
 
-// Cancel is a security property: it is how a host stops remote code it has
-// already agreed to run. These were known-failing until the SIGKILL escalation
-// was fixed; see isAlive() in workers/peer/exec-host.cjs for the cause.
+// Cancel is a security property: it's how a host stops remote code it has
+// already agreed to run. These were known-failing until the SIGKILL escalation was fixed.
 
 const test = require('brittle');
 
 const { bareRequires, pairForExec, runExec } = require('../helpers/index.cjs');
 
-// A cancel that never arrives shows up as a timeout, so it becomes a value
-// rather than a rejection that would abort the rest of the file.
+// A cancel that never arrives shows up as a timeout, so it becomes a value rather than a rejection that would abort the rest of the file.
 const settled = (promise) =>
   promise.then(
     (result) => ({ result, timedOut: false }),
@@ -59,8 +57,7 @@ test('exec-cancel - escalates to SIGKILL when the child ignores SIGTERM', async 
   );
 });
 
-// A cancel that kills the child but leaves exec state behind would block the
-// peer from ever running anything again, which is worse than the hang itself.
+// A cancel that kills the child but leaves exec state behind would block the peer from ever running anything again.
 test('exec-cancel - the peer accepts a fresh exec afterwards', async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'cancel-then-run');
 

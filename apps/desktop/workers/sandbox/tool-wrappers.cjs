@@ -1,9 +1,7 @@
 // @ts-check
 'use strict';
 
-// Host-written shims put first on PATH for sandboxed lesson children.
-// MCP StdioClientTransport only inherits HOME/PATH/USER/… — not npm_config_* —
-// so `npx -y …` would still hit ~/.npm without these wrappers.
+// Host-written PATH shims for sandboxed lesson children, since MCP's transport doesn't inherit npm_config_* and npx would otherwise hit ~/.npm.
 
 const fs = require('fs');
 const os = require('os');
@@ -34,7 +32,6 @@ function createToolWrappers(opts) {
       `export NPM_CONFIG_CACHE=${shellQuote(cacheDir)}`,
       'export npm_config_update_notifier=false',
       'export npm_config_fund=false',
-      // Hide deprecation/warn noise (e.g. whatwg-encoding) in lesson UI.
       'export npm_config_loglevel=error',
       'export NPM_CONFIG_LOGLEVEL=error',
       `exec ${shellQuote(target)} "$@"`,
@@ -74,7 +71,6 @@ function createToolWrappers(opts) {
     writeUnixShim('npx', bins.npx);
   }
 
-  // Also allow any other resolved mcp paths (e.g. realpath variants).
   for (const p of mcpExecPaths()) {
     if (p && !paths.includes(p)) paths.push(p);
   }

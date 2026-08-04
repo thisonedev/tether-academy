@@ -1,8 +1,7 @@
 'use strict';
 
 // Recording hardware is off in the base capability and turned on for one run
-// via wrapSpawn's `grants`. peer-exec shares this capability, and a denied
-// macOS capture returns silence rather than an error, so the default matters.
+// via wrapSpawn's `grants`; a denied macOS capture returns silence rather than an error, so the default matters.
 
 const test = require('brittle');
 const fs = require('fs');
@@ -30,9 +29,7 @@ test('device-grants - outbound network is a grant like any other', { skip: proce
   t.ok(denied.includes('(allow network-outbound (remote unix-socket))'), 'the QVAC worker socket survives');
 
   const loopback = read(wrap({ grants: ['network-loopback'] }));
-  // Only `*` and `localhost` are accepted as the host part. A literal address
-  // makes sandbox-exec reject the profile outright, which killed every
-  // loopback run until integration/sandbox-conformance.cjs ran one.
+  // Only `*` and `localhost` are accepted as the host part; a literal address makes sandbox-exec reject the profile outright.
   t.ok(loopback.includes('(allow network-outbound (remote ip "localhost:*"))'));
   t.absent(/remote ip "(?:127\.0\.0\.1|::1)/.test(loopback), 'no literal address');
   t.absent(loopback.includes('(remote ip "*:*")'), 'loopback is not egress');
@@ -54,8 +51,7 @@ test('device-grants - macOS emits the rule only when granted', { skip: process.p
   );
 });
 
-// bwrap has no address filter, so a loopback ask there comes out as full
-// egress. The caller compares the two and refuses the run.
+// bwrap has no address filter, so a loopback ask there comes out as full egress; the caller compares the two and refuses the run.
 test('network-scope - Linux cannot narrow a run to loopback', (t) => {
   const { enforcedNetworkScope } = sandbox;
 
@@ -88,8 +84,7 @@ test('device-grants - Linux binds the capture device only when granted', (t) => 
   t.ok(warnings.some((w) => /microphone access granted/.test(w)));
 });
 
-// Why this matters is on assertRunAsNode; what matters here is that a caller
-// cannot skip it.
+// A caller cannot skip assertRunAsNode.
 test('run-grants - a node child cannot be built without RUN_AS_NODE', (t) => {
   const { assertRunAsNode } = sandbox;
 

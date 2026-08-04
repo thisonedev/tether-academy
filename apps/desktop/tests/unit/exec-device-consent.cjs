@@ -35,9 +35,7 @@ test('device-consent - non-strings are not a prompt', (t) => {
   t.alike(detectDeviceNeeds(undefined), []);
 });
 
-// A dependency's own requires are out of buildLesson's reach, so a lesson that
-// pulls one in is refused up front instead of dying with a module error from
-// inside node_modules.
+// A dependency's own requires are out of buildLesson's reach, so a lesson that pulls one in is refused up front.
 test('exec-validate - a lesson with a node-only dependency is refused', (t) => {
   const mcp = require('node:fs').readFileSync(
     require('node:path').resolve(

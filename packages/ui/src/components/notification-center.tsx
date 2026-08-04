@@ -28,10 +28,7 @@ export function NotificationCenter() {
   const deviceRequests = useDeviceRequests();
   const pairRequests = usePairRequests();
   const runs = useRunNotices();
-  // The top strip carries only incoming runs. Outgoing runs (a guest's
-  // remote execution) render inside the output panel of the lesson
-  // workspace, so the work-in-progress lives next to the bytes it is
-  // producing rather than at the top of the page.
+  // Outgoing runs render inside the lesson workspace's output panel instead.
   const topRuns = runs.items.filter((run) => run.direction === 'incoming');
 
   if (
@@ -79,7 +76,7 @@ function useDeviceRequests() {
         const list = (await window.academy?.peer?.deviceRequests?.()) ?? [];
         if (!cancelled) setItems(list);
       } catch {
-        // silent; the prompt simply does not appear
+        // Keep request lookup failures silent; no prompt appears.
       }
     };
     refresh();
@@ -168,9 +165,7 @@ function usePairRequests() {
       }
     };
     refresh();
-    // Only the events that change the pending list. 'peer:audit' fires for
-    // every audited action, so reloading on those costs one IPC call per
-    // audit entry.
+    // Only the events that change the pending list; 'peer:audit' fires per audited action.
     const off = window.academy.peer.onEvent((msg) => {
       if (
         msg.event === 'peer:pending' ||
@@ -442,8 +437,7 @@ function useElapsedTick(active: boolean): number {
   return now;
 }
 
-// The same three colours the activity list uses, so a run reads the same in
-// both places.
+// The same three colours the activity list uses, so a run reads the same in both places.
 function runToneClass(tone: RunTone): string {
   switch (tone) {
     case 'running':

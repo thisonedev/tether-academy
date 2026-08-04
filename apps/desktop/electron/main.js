@@ -13,8 +13,7 @@ protocol.registerSchemesAsPrivileged([
   {
     scheme: 'academy',
     privileges: {
-      // standard gives the renderer a stable origin; secure puts the editor's
-      // workers and any crypto API in a secure context.
+      // standard gives the renderer a stable origin; secure enables crypto APIs.
       standard: true,
       secure: true,
       supportFetchAPI: true,
@@ -31,10 +30,8 @@ const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
 const IPC_CHANNELS = require('../shared/ipc-channels.cjs');
 
-// Single registry, single wrapper. A channel that is not in IPC_CHANNELS
-// throws at startup, so a 44th handler cannot inherit nothing. The dynamic
-// `pear:worker:writeIPC:*` channel falls back to a longest-prefix match in
-// the same table.
+// A channel not in IPC_CHANNELS throws at startup. The dynamic
+// `pear:worker:writeIPC:*` channel falls back to a longest-prefix match.
 function handle(channel, fn) {
   const exact = Object.hasOwn(IPC_CHANNELS, channel) ? IPC_CHANNELS[channel] : undefined;
   const schemaName =
@@ -176,14 +173,12 @@ async function runAcademy(parsed, evt) {
   await ensureQVACSeed();
   const sender = evt.sender;
   const sendChunk = (chunk) => {
-    // Chunks are always plain text; UI must never interpret them as HTML.
     if (!sender.isDestroyed()) sender.send('academy:run:chunk', chunk);
   };
 
   if (parsed.peerId) {
-    // The host picks its interpreter from the same source, so the build has to
-    // match: a Bare build rewrites node: imports to Bare packages, which a Node
-    // child cannot load, and vice versa.
+    // Runtime must match the host: a Bare build rewrites node: imports to Bare
+    // packages, which a Node child cannot load, and vice versa.
     const { nodeOnlyImports } = await loadIpcValidation();
     const runtime = nodeOnlyImports(parsed.source).length > 0 ? 'node' : 'bare';
     const wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime });
@@ -201,13 +196,10 @@ async function runAcademy(parsed, evt) {
     } catch (err) {
       return { ok: false, output: `[peer-exec] ${err.message}` };
     }
-    // Capped so a run that prints in a loop cannot grow main-process memory
-    // without bound. The renderer has already seen every chunk through sendChunk;
-    // this only feeds the final { ok, output } the IPC handler returns.
+    // Capped so a run that prints in a loop cannot grow main-process memory unbounded.
     const collected = createAccumulator();
-    // Measured from the last output, since a first run downloads the model and
-    // streams progress for as long as that takes. The old deadline counted from
-    // the start and cut off runs that were plainly alive.
+    // Measured from the last output, not the start: a first run downloads the model
+    // and streams progress for as long as that takes.
     let noteActivity = () => {};
     emitter.on('stdout', (data) => {
       collected.append('stdout', data);
@@ -230,8 +222,8 @@ async function runAcademy(parsed, evt) {
         noteActivity = () => {
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = setTimeout(() => {
-            // Giving up here leaves the run going on the host, holding the
-            // registry lock every other model load on that machine needs.
+            // Leaving the run going on the host holds the registry lock every
+            // other model load on that machine needs.
             pearEnd.peer.cancelExec(parsed.peerId).catch(() => {});
             settle({
               ok: false,
@@ -295,21 +287,16 @@ function getSafeStorage() {
   return null;
 }
 
-// Pear-end: identity, state (Corestore under userData/corestore), and
-// peer/mesh. See pear-end/index.cjs.
+// Pear-end: identity, state (Corestore under userData/corestore), and peer/mesh.
 const pearEnd = createPearEnd(app.getPath('userData'), { getSafeStorage });
 
-// Derived from the device identity, which is the only identity this app has.
-// It used to come from a second ed25519 keypair in its own Corestore core,
-// kept alive by this function alone.
-//
-// A device with no identity yet leaves the variable unset and the SDK decides
-// what to do about that. Minting a key here to avoid the question is how the
-// second implementation grew in the first place.
+// Derived from the device identity, the only identity this app has. A device
+// with no identity yet leaves the variable unset and the SDK decides what to
+// do about that, rather than minting a standalone key here.
 async function ensureQVACSeed() {
   const device = pearEnd.identity().getDeviceIdentity();
   if (!device?.privateKey) return;
-  // Private-material HKDF with a QVAC domain, distinct from the mesh swarm seed.
+  // HKDF with a QVAC domain, distinct from the mesh swarm seed.
   const { deriveSwarmSeedHex, QVAC_SWARM_INFO } = require('../workers/peer/swarm-seed.cjs');
   const seedHex = deriveSwarmSeedHex(device.privateKey, QVAC_SWARM_INFO);
   if (process.env.QVAC_HYPERSWARM_SEED !== seedHex) {
@@ -352,16 +339,12 @@ handle('academy:window:close', (_args, evt) => {
   BrowserWindow.fromWebContents(evt.sender)?.close();
 });
 
-// The pairing code is the shared secret that gates pairing, and a clipboard
-// outlives the panel that filled it. Keeping the timer in the main process is
-// what makes closing the window stop cancelling the scrub.
-//
-// Only clears when the clipboard still holds what we put there, so an earlier
-// scrub cannot take whatever the user has copied since.
+// Timer lives in the main process so closing the panel doesn't cancel the scrub.
 handle('academy:clipboard:copy', async ({ text, scrubAfterMs }) => {
   clipboard.writeText(text);
   if (scrubAfterMs > 0) {
     const timer = setTimeout(() => {
+      // Only clear if the clipboard still holds what we put there.
       if (clipboard.readText() === text) clipboard.clear();
     }, scrubAfterMs);
     // A pending scrub is not a reason to keep the app alive.
@@ -389,7 +372,6 @@ handle('academy:peer:identity', async () => {
   const idm = pearEnd.identity();
   const view = idm.publicView();
   if (view.ready) {
-    // Prefer root identity for display; fall back to mesh device key.
     return {
       publicKey: view.devicePublicKey,
       identityPublicKey: view.identityPublicKey,
@@ -418,7 +400,7 @@ handle('academy:identity:status', () => pearEnd.identity().publicView());
 
 handle('academy:identity:create', async () => {
   const result = await pearEnd.identity().createNew();
-  // mnemonic returned once for backup UI — not logged.
+  // Mnemonic returned once for backup UI; not logged.
   return result;
 });
 
@@ -434,9 +416,8 @@ handle('academy:identity:recover', async (mnemonic) => {
   return view;
 });
 
-// No begin-link / complete-link handlers. The device-link flow was removed
-// along with the manager code behind it, because the proof it accepted was
-// never bound to the challenge it handed out. It comes back with that binding.
+// No begin-link / complete-link handlers: the device-link flow was removed because
+// its proof wasn't bound to the challenge it handed out. It returns once fixed.
 
 handle('academy:identity:begin-attest', async (payload) => {
   return pearEnd.identity().beginAttestSession(payload.devicePublicKey, { label: payload.label ?? null });
@@ -476,8 +457,7 @@ handle('academy:peer:take-deeplink', () => {
   return payload;
 });
 
-// Invite from the renderer: only userData. autoApprove/code are not forwarded;
-// tests require peer.cjs directly when they need those options.
+// Invite from the renderer: only userData. autoApprove/code aren't forwarded.
 handle('academy:peer:invite', async (opts) => {
   if (!(await pearEnd.ensureReady())) {
     throw new Error('Complete identity onboarding before pairing devices');
@@ -555,10 +535,8 @@ function installNavigationHardening(win, allowedOrigins) {
     return { action: 'deny' };
   });
 
-  // Compare scheme and host for academy://: Node's URL serialises every
-  // non-special scheme to origin 'null', so an origin comparison would let
-  // academy://evil/ pass alongside academy://app/. http(s) keeps origin
-  // equality. The academy:protocol.cjs unit test pins the trap.
+  // Node's URL serialises non-special schemes to origin 'null', so academy://
+  // is compared by scheme+host directly instead of by origin.
   win.webContents.on('will-navigate', (event, url) => {
     let allowed = false;
     try {
@@ -595,17 +573,13 @@ async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
-    // 720 so two windows fit side by side on a 1512pt laptop screen, which is
-    // how a paired run gets watched from both ends. The lesson layout stacks
-    // below 1024, so a narrow window reads top-to-bottom instead of splitting.
+    // 720 so two windows fit side by side on a 1512pt laptop screen for a paired run.
     minWidth: 720,
     minHeight: 600,
     backgroundColor: '#0a0a0a',
     title: 'Tether Academy',
-    // No native title bar. The web header is the title bar; drag it
-    // via -webkit-app-region: drag. Close the window via Cmd+W, Cmd+Q,
-    // or the macOS menu bar. On non-macOS keep the default frame so
-    // the OS window controls stay usable.
+    // No native title bar on macOS; the web header doubles as one. Other
+    // platforms keep the default frame so the OS window controls stay usable.
     frame: !isMac,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -618,8 +592,7 @@ async function createWindow() {
     win.webContents.openDevTools({ mode: 'detach' });
   }
   win.webContents.on('console-message', (_e, level, message, line, source) => {
-    // pnpm closes stdout once the launcher exits; writing then throws EPIPE
-    // and Electron surfaces it as an uncaught exception. Drop it silently.
+    // pnpm closes stdout once the launcher exits; a later write throws EPIPE.
     try {
       console.log(`[renderer ${level}] ${source}:${line} ${message}`);
     } catch (err) {
@@ -655,16 +628,10 @@ function fsSync() {
   return require('node:fs');
 }
 
-// Monaco is served from /monaco/vs by the app itself, copied at build time.
-// No remote origin in script-src: a CDN compromise, a TLS intercept, or a
-// pinned-range mistake cannot run code in the same origin that holds the IPC
-// bridge. 'unsafe-eval' is still required by the AMD loader's language workers
-// and is the smaller half of this item (item 15). 'unsafe-inline' is here
-// because the static export has no server to mint nonces for the inline
-// bootstrap Next emits.
-//
-// The full policy lives in security-headers.cjs so the web export's <meta>
-// and the Electron main-process header cannot drift apart.
+// Monaco's AMD loader is served locally from /monaco/vs; no remote script origin.
+// 'unsafe-eval' is required by the AMD loader's language workers; 'unsafe-inline'
+// is needed because the static export has no server to mint nonces for Next's
+// inline bootstrap. Policy lives in security-headers.cjs, shared with the <meta> tag.
 const { SECURITY_HEADERS } = require('./security-headers.cjs');
 
 function mimeFor(p) {
@@ -679,8 +646,7 @@ function mimeFor(p) {
 }
 
 function resolveStaticPath(pathname, root) {
-  // trailingSlash: true, so a directory request and an extensionless request
-  // both have to land on index.html.
+  // trailingSlash: true, so directory and extensionless requests land on index.html.
   let p = decodeURIComponent(pathname || '/');
   const basePrefix = '/tether-academy';
   if (p === basePrefix || p.startsWith(`${basePrefix}/`)) {
@@ -709,8 +675,7 @@ function registerAcademyProtocol(staticDir) {
         return new Response('not found', { status: 404, headers: SECURITY_HEADERS });
       }
     }
-    // net.fetch streams, so model files and bundles the editor pulls come
-    // through without buffering. pathToFileURL handles spaces and # in paths.
+    // net.fetch streams so model files and bundles aren't buffered in full.
     const res = await net.fetch(pathToFileURL(finalPath).toString());
     return new Response(res.body, {
       status: res.status,
@@ -724,22 +689,16 @@ function registerAcademyProtocol(staticDir) {
 }
 
 
-// Protocol scheme must start with an ASCII letter; `pkg.name` is scoped
-// (`@tether-academy/desktop`) so derive a letter-led scheme from productName.
+// Protocol scheme must start with an ASCII letter, so derive it from productName
+// rather than the scoped `pkg.name`.
 const deeplinkProtocol = (productName || name).toLowerCase().replace(/[^a-z0-9-]/g, '-');
 app.setAsDefaultProtocolClient(deeplinkProtocol);
 
 function parsePairUrl(url) {
   if (typeof url !== 'string') return null;
   if (!url.startsWith(`${deeplinkProtocol}://pair`)) return null;
-  // Bound the URL at parse time. The renderer reads these fields with
-  // textContent today, so a control character or HTML in the query is
-  // not a live attack; rejecting here means the defense does not depend
-  // on the renderer. Raw (`%01`) and decoded (`\x01`) forms both trip.
-  // Bound the URL at parse time. The renderer reads these fields with
-  // textContent today, so a control character or HTML in the query is
-  // not a live attack; rejecting here means the defense does not depend
-  // on the renderer. Raw (`%01`) and decoded (`\x01`) forms both trip.
+  // Rejected here rather than relying on the renderer's textContent handling.
+  // Both raw (`%01`) and decoded (`\x01`) control-character forms are checked.
   if (url.length > 4096) return null;
   let parsed;
   try {
@@ -759,7 +718,6 @@ let pendingDeeplink = null;
 function handlePairDeepLink(url) {
   const parsed = parsePairUrl(url);
   if (!parsed) return;
-  // Queue for the UI; pairing still needs the out-of-band code.
   const payload = {
     invite: parsed.invite,
     hostIdentity: parsed.hostIdentity,
@@ -793,22 +751,17 @@ if (!lock) {
       .finally(() => app.quit());
   });
   app.whenReady().then(async () => {
-    // academy:// serves the packaged renderer. SECURITY_HEADERS travel on the
-    // protocol response now that no HTTP server exists. PEAR_DEV_URL still
-    // loads over HTTP with devtools open, which keeps its own headers.
     const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
     if (fsSync().existsSync(path.join(staticDir, 'index.html'))) {
       registerAcademyProtocol(staticDir);
     }
 
     // Warm the model manifest in the background so a peer-exec usually lands
-    // with hashes already on file. Main is off the DHT path; a long sync
-    // read here starves nothing.
+    // with hashes already on file.
     const { scheduleVerifyAll } = require('../shared/model-integrity.cjs');
     setImmediate(() => scheduleVerifyAll());
 
-    // Show the window first. Peer/DHT bootstrap can take several seconds (or
-    // hang offline) and must not block the dock icon from opening a window.
+    // Show the window first; peer/DHT bootstrap can take several seconds or hang offline.
     createWindow().catch((err) => {
       console.error(err);
       app.quit();

@@ -1,9 +1,8 @@
 'use strict';
 
 // Regression: approving the instant peer:pending arrived sent the response
-// before the guest's channel was open, costing a 30-minute hang. The response is
-// now buffered and flushed. Repeats because a race is intermittent, sharing one
-// testnet across iterations since repetition is the point.
+// before the guest's channel was open, costing a 30-minute hang; the response
+// is now buffered and flushed. Repeats since a race is intermittent.
 
 const test = require('brittle');
 const os = require('node:os');
@@ -13,13 +12,11 @@ const { createPeers, createTestnetFor, waitFor } = require('../helpers/index.cjs
 const ITERATIONS = 10;
 // The host is local, so its own event should be immediate.
 const HOST_BUDGET_MS = 1000;
-// The guest is remote. Still far below the 30s DHT poll, so staying under this
-// proves the response did not arrive by polling.
+// Still far below the 30s DHT poll, so staying under this proves the response did not arrive by polling.
 const GUEST_BUDGET_MS = 5000;
 
-// Stamps its own resolution time so host and guest are measured independently
-// rather than both reading the clock after Promise.all. Must be called before
-// approve(), because the host's own peer:paired can fire during that call.
+// Stamps its own resolution time so host and guest are measured independently. Must be called before
+// approve(), since the host's own peer:paired can fire during that call.
 function stampedWait(emitter, eventName, timeoutMs) {
   return waitFor(emitter, eventName, null, timeoutMs).then((payload) => ({
     payload,
@@ -92,9 +89,7 @@ test('pairing-race - immediate approve pairs reliably with every path available'
   t.ok(maxGuest < GUEST_BUDGET_MS, `guest paired within ${GUEST_BUDGET_MS}ms every time`);
 });
 
-// With the DHT and the blind-pairing channel both cut, the buffered exec-channel
-// flush is the only thing that can deliver the response. A DHT poll could not
-// land inside the budget, so passing here means the fast path really ran.
+// With the DHT and the blind-pairing channel both cut, only the buffered exec-channel flush can deliver the response.
 test('pairing-race - immediate approve pairs reliably over the exec channel alone', async (t) => {
   const { maxHost, maxGuest } = await runScenario(t, 'exec-only', (host) => {
     host._testHooks.setSkipDhtPut(true);

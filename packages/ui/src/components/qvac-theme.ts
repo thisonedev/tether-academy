@@ -1,8 +1,5 @@
-// oneDark palette (atom-one-dark), ported to Monaco. The previous
-// CodeMirror setup used @codemirror/theme-one-dark; this keeps the
-// same look now that we're on Monaco. Colors are stored without the
-// leading `#` so they can be reused for token rules (which take
-// hex without `#`) and the colors map (which takes full hex).
+// oneDark palette (atom-one-dark), ported from the previous CodeMirror setup. Colors are
+// stored without the leading `#` so they work for both token rules and the colors map.
 
 export const QVAC_THEME_NAME = 'qvac-dark';
 

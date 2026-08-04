@@ -31,9 +31,7 @@ export function HelpPanel({ hints, answer, onReveal, disabled = false }: HelpPan
     return () => mq.removeEventListener('change', update);
   }, []);
 
-  // Recompute the popover's fixed position while open on desktop so the popover
-  // tracks the trigger button on scroll and resize. Portal-rendered so the
-  // Runner's overflow-hidden doesn't clip the top of the dialog.
+  // Portal-rendered and repositioned on scroll/resize so the Runner's overflow-hidden doesn't clip the dialog.
   useLayoutEffect(() => {
     if (!open || !isDesktop) return;
     const update = () => {
@@ -53,7 +51,6 @@ export function HelpPanel({ hints, answer, onReveal, disabled = false }: HelpPan
     };
   }, [open, isDesktop]);
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -70,7 +67,6 @@ export function HelpPanel({ hints, answer, onReveal, disabled = false }: HelpPan
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -80,7 +76,6 @@ export function HelpPanel({ hints, answer, onReveal, disabled = false }: HelpPan
     return () => document.removeEventListener('keydown', handler);
   }, [open]);
 
-  // Reset hint state when the lesson changes
   useEffect(() => {
     setHintsRevealed(0);
     setOpen(false);
@@ -95,7 +90,6 @@ export function HelpPanel({ hints, answer, onReveal, disabled = false }: HelpPan
 
   const popover = (
     <>
-      {/* Backdrop — only on mobile, where the sheet covers the editor. */}
       <button
         type="button"
         aria-label="Close help"
@@ -198,8 +192,6 @@ export function HelpPanel({ hints, answer, onReveal, disabled = false }: HelpPan
           </div>
         ) : null}
 
-        {/* Mobile "Back to editor" CTA — sits at the bottom of the sheet so
-          the user has a clear way to dismiss and get back to typing. */}
         <button
           type="button"
           onClick={() => setOpen(false)}

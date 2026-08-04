@@ -28,12 +28,12 @@ const identityHandshake = require('./identity-handshake.cjs');
 const { createVerification, createRevocation } = require('./verification.cjs');
 
 const AUDIT_CAP = 1000;
-// Self-reported peer string for compatibility display only — not a trust check.
+// Self-reported peer string for compatibility display only; not a trust check.
 const BUILD_ID = 'tether-academy-desktop';
 const EXEC_PROTOCOL = 'academy-exec';
 
 // Re-derive the reply keypair manually: blind-pairing's poll adds the peer to
-// its skip cache before approve, so the response would never land on the DHT.
+// its skip cache before approve, so the DHT put would never fire on its own.
 const [BLIND_NS_EPHEMERAL, BLIND_NS_REPLY] = hypercoreCrypto.namespace('blind-pairing/dht', 3);
 function deriveReplyKeyPair(token) {
   return hypercoreCrypto.keyPair(hypercoreCrypto.hash([BLIND_NS_REPLY, token]));
@@ -59,24 +59,21 @@ function defaultDeviceName() {
 let swarm = null;
 let pairing = null;
 // Covers the whole of init(). `pairing` is only assigned at the end, so a call
-// arriving before that would build a second swarm on the same seed and leave
-// the first one announcing.
+// arriving before that would build a second swarm on the same seed.
 let initPromise = null;
 let identity = null;
-// The two interpreters an exec child can run on. Both resolved by main and
-// passed through init(): a Bare worker has neither process.execPath nor
-// createRequire to find them with.
+// The two interpreters an exec child can run on, resolved by main: a Bare
+// worker has neither process.execPath nor createRequire to find them with.
 let execPath = null;
 let bareRuntimeBinPath = null;
 let userData = null;
 // How main seals the identity record at rest. Null until init() reports one.
 let secretScheme = null;
-// Device keypair used to answer a peer's identity challenge, plus what this
-// device announces about itself. Both derived in init().
+// Device keypair for answering identity challenges, plus what this device
+// announces about itself. Both derived in init().
 let signingKeyPair = null;
 let localClaim = null;
-// Trust-decision collaborators, instantiated in init() once we have the
-// collaborators to hand them (peers, identitySessions, …).
+// Trust-decision collaborators, instantiated in init() once their collaborators exist.
 let revocation = null;
 let verification = null;
 
@@ -112,8 +109,7 @@ function appendAudit(type, payload) {
   const entry = { type, timestamp: Date.now(), ...payload };
   auditLog.push(entry);
   if (auditLog.length > AUDIT_CAP) auditLog.shift();
-  // Fire-and-forget: a pairing must never wait on disk. The in-memory ring
-  // is the renderer-visible view; the file is the durable record.
+  // Fire-and-forget: a pairing must never wait on disk.
   try { auditStore.append(entry); } catch { /* logged in audit-store */ }
   emit('peer:audit', entry);
 }
@@ -133,9 +129,8 @@ const execHost = createExecHost({
   getPeerUserData: (discoveryKeyHex) => peers.get(discoveryKeyHex)?.userData ?? null,
   getExecPath: () => execPath,
   getBareRuntimeBinPath: () => bareRuntimeBinPath,
-  // Resolved userData from the host. The capability profile's deny list
-  // names this path; without the override, the default disagrees with the
-  // real location whenever the app was launched with `--storage`.
+  // Override needed because the default path disagrees with reality when the
+  // app was launched with `--storage`, and the capability deny list names this path.
   getUserData: () => userData,
   getSecretScheme: () => secretScheme,
   getRevokedDeviceKey: (discoveryKeyHex) => {
@@ -189,8 +184,7 @@ async function initOnce({
   });
   if (Array.isArray(revokedOpt)) revocation.setRevokedDevices(revokedOpt);
   if (typeof auditPathOpt === 'string' && auditPathOpt) {
-    // Seed the ring from the durable file so a post-restart view is honest
-    // about what the previous run recorded.
+    // Seed the ring from the durable file so a post-restart view is honest.
     auditStore.init(auditPathOpt);
     try {
       const seeded = auditStore.readTail(AUDIT_CAP);
@@ -234,9 +228,8 @@ async function initOnce({
   const seed = deriveSwarmSeed(identity.privateKey, PEER_SWARM_INFO);
   swarm = bootstrap ? new Hyperswarm({ seed, bootstrap }) : new Hyperswarm({ seed });
 
-  // Bootstrap runs in the background: the DHT queues announces and lookups
-  // until it completes. Awaiting it here delayed every IPC call behind init(),
-  // and offline that was the full 8 seconds before the UI could paint.
+  // Bootstrap runs in the background rather than being awaited: doing so
+  // delayed every IPC call behind init(), 8s offline before the UI could paint.
   const BOOTSTRAP_MS = 8_000;
   Promise.race([
     swarm.dht.fullyBootstrapped(),
@@ -335,13 +328,10 @@ function routeExecMessage(discoveryKeyHex, buf) {
       }
     } catch {}
   }
-  // Also before peers.get: the handshake starts with the channel, which can
-  // open ahead of the peer entry on either side.
+  // Also before peers.get: the handshake channel can open ahead of the peer entry.
   if (identityHandshake.isIdentityFrame(buf)) {
-    // Rate-limit the wire side, not the verifier. Without this, an unpaired
-    // peer can drive unbounded IdentityKey.verify + ed25519 sign calls on
-    // the worker's single event loop. The discovery key is the same
-    // identifier dropPeer resets at, so teardown needs no change here.
+    // Rate-limit the wire side, not the verifier; dropPeer resets this same
+    // discovery-key identifier, so teardown needs no separate handling.
     if (!rateAllow('identity:frame', discoveryKeyHex)) return;
     try {
       const msg = JSON.parse(Buffer.from(buf).toString('utf8'));
@@ -438,8 +428,8 @@ function sendIdentityFrame(discoveryKeyHex, frame) {
   }
 }
 
-// Runs on channel open rather than on pairing completion: the two orderings
-// differ between host and guest, and a nonce costs nothing to hold.
+// Runs on channel open, not pairing completion: the ordering differs between
+// host and guest, and a nonce costs nothing to hold.
 function startIdentityHandshake(discoveryKeyHex) {
   if (!localClaim || identitySessions.has(discoveryKeyHex)) return;
   const session = {
@@ -457,7 +447,7 @@ function ensureReady() {
   if (!pairing) throw new Error('peer not initialized; call peer.init first');
 }
 
-// Public fields only — never expose privateKey / seed to renderer IPC.
+// Public fields only; never expose privateKey / seed to renderer IPC.
 function getIdentity() {
   if (!identity) return null;
   return {
@@ -509,10 +499,8 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
   const member = pairing.addMember({
     discoveryKey,
     async onadd(candidate) {
-      // Cheaper check first: a closed or invalidated invite stays closed.
-      // The code gate is per-invite and is what actually stops the wrong
-      // code flood; charging the global budget only on attempts that got
-      // past it keeps one attacker from spending everyone else's window.
+      // Cheap check first: an invalidated invite stays closed without
+      // touching the global rate-limit budget.
       if (codeGate.invalidated) {
         candidate._denied = true;
         return;
@@ -566,10 +554,9 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
         return;
       }
 
-      // After the code gate so a wrong code is still counted as a wrong code.
-      // Self-reported, so a revoked device can omit it; the check that
-      // counts runs once the handshake proves which key is on the wire. This one
-      // keeps the honest case away from a human's approve button.
+      // Self-reported, so a revoked device can omit it; the check that counts
+      // runs once the handshake proves which key is on the wire. This one just
+      // keeps the honest case off a human's approve button.
       const claimedDeviceKey = remoteUserData && typeof remoteUserData === 'object'
         ? (remoteUserData.devicePublicKey ?? null)
         : null;
@@ -654,11 +641,10 @@ async function approve(requestId) {
   const pending = pendingRequests.get(requestId);
   if (!pending) return false;
   pendingRequests.delete(requestId);
-  // Keep dedupe entries after approve so the guest's continuous candidate
-  // retries don't create a second pending request. Cleared on drop.
+  // Dedupe entries stay past approve, cleared on drop, so the guest's
+  // continuous candidate retries don't create a second pending request.
   pending.candidate.confirm({ key: pending.autobaseKey });
 
-  // Direct send on the blind-pairing channel; bypasses DHT propagation.
   const response = pending.candidate?.response;
   if (response && !_testSkipBlindPairingChannel) {
     const ref = pairing?.active?.get(pending.discoveryKey);
@@ -736,9 +722,7 @@ function getAudit({ since = 0, limit = 200 } = {}) {
 }
 
 function clearAudit() {
-  // The clear itself is appended before the ring wipes, so the durable
-  // record names who removed what. A button that silently erases the
-  // forensic record is worse than not having the record at all.
+  // Clear is appended before the ring wipes, so the durable record names what was removed.
   const removed = auditLog.length;
   auditStore.recordClear('clear-audit', removed);
   auditLog.length = 0;
@@ -797,8 +781,7 @@ async function acceptInvite(inviteB64, { userData = null, code = null, hostIdent
     },
   });
   candidates.set(discoveryKeyHex, candidate);
-  // Attach the exec protocol to current connections before awaiting pairing
-  // so the host's pairing-wake has somewhere to land. No-op if no connection.
+  // Attach before awaiting pairing so the host's pairing-wake has somewhere to land.
   attachExecToAllConnections(discoveryKey);
 
   appendAudit('peer:pair:sent', { discoveryKey: discoveryKeyHex });
@@ -866,11 +849,9 @@ async function dropPeer(discoveryKeyHex) {
   if (peer.inviteId) pendingByInvite.delete(peer.inviteId);
   pendingPairingResponses.delete(discoveryKeyHex);
   identitySessions.delete(discoveryKeyHex);
-  // Settle any in-flight guest-side run on this discovery key. The handler
-  // tree for exit/error is the only path that clears activeGuestExec; a
-  // mid-run disconnect left the entry behind, which wedged the guest
-  // until the next pairing. Emit before deleting so main's promise can
-  // settle on a real event rather than a five-minute idle.
+  // A mid-run disconnect otherwise leaves this entry behind and wedges the
+  // guest until the next pairing; emit before deleting so main's promise
+  // settles on a real event rather than a timeout.
   const guestRun = activeGuestExec.get(discoveryKeyHex);
   if (guestRun) {
     guestRun.emitter.emit('error', new Error('peer disconnected'));
@@ -878,8 +859,7 @@ async function dropPeer(discoveryKeyHex) {
     activeGuestExec.delete(discoveryKeyHex);
   }
   verification.settleVerificationWaiters(discoveryKeyHex);
-  // Per-peer rate-limit windows are keyed off the discovery key; without this
-  // a re-pair inherits the previous peer's identity:frame or exec:request tally.
+  // Without this a re-pair inherits the previous peer's rate-limit tally.
   rateReset(discoveryKeyHex);
   appendAudit('peer:dropped', { discoveryKey: discoveryKeyHex, role: peer.role });
   emit('peer:dropped', { discoveryKey: discoveryKeyHex });
@@ -919,9 +899,8 @@ function handleExecReply(discoveryKeyHex, buf) {
       fileName: payload.fileName ?? null,
     });
   } else if (payload.kind === 'chunk') {
-    // The stream name comes off the wire; only the two values the host
-    // actually sends are events to forward. Anything else is a protocol
-    // violation, not an emitter key.
+    // The stream name comes off the wire; only forward the two values the
+    // host actually sends, not an arbitrary emitter key.
     if (payload.stream !== 'stdout' && payload.stream !== 'stderr') return;
     active.emitter.emit(payload.stream, payload.data);
   } else if (payload.kind === 'exit') {
@@ -989,9 +968,8 @@ function exec({ peerId, code, mode = 'inline', argv = [], fileName = 'snippet.mt
   const emitter = new EventEmitter();
   activeGuestExec.set(peerId, { emitter });
   try {
-    // The wire does not carry a cwd. The host recomputes it from the
-    // lesson path; a renderer-supplied value would be dead and the next
-    // reader would assume the host honoured it.
+    // No cwd on the wire: the host recomputes it from the lesson path,
+    // since a renderer-supplied value would be dead by the time it lands.
     msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, mode, argv, fileName, label, declared }), 'utf8'));
   } catch (err) {
     activeGuestExec.delete(peerId);
@@ -1048,8 +1026,7 @@ async function close() {
   }
   members.clear();
   candidates.clear();
-  // Snapshot peer keys before clear() so the per-peer rate-limit reset still
-  // has the discovery keys to walk over.
+  // Snapshot before clear() so the rate-limit reset below still has the keys.
   const peerKeys = Array.from(peers.keys());
   peers.clear();
   verification?.settleAllWaiters();
@@ -1057,8 +1034,7 @@ async function close() {
   execChannels.clear();
   activeGuestExec.clear();
   identitySessions.clear();
-  // Wipe per-peer rate-limit windows; the global windows (rpc:command,
-  // pairing:attempt) keep their state because main owns their budget.
+  // Global windows (rpc:command, pairing:attempt) keep their state.
   for (const key of peerKeys) rateReset(key);
   auditLog.length = 0;
   listeners.clear();
@@ -1089,8 +1065,7 @@ module.exports = {
   listPeers,
   dropPeer,
   setRevokedDevices: (keys) => revocation.setRevokedDevices(keys),
-  // Pure helpers, kept on the module so existing tests don't have to import
-  // the extracted file. The logic lives in verification.cjs.
+  // Kept on the module so existing tests don't have to import verification.cjs directly.
   claimMatches: (claimed, remote) => verification.claimMatches(claimed, remote),
   peerVerification: (discoveryKeyHex) => verification.peerVerification(discoveryKeyHex),
   lockdown,

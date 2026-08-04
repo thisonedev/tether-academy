@@ -66,8 +66,7 @@ test('nested-spawn - a sandboxed exec child can spawn allowlisted binaries by na
   const npx = await probe('npx', ['--version']);
   t.ok(npx.includes('"status":0'), `nested npx spawn must succeed inside the sandbox; got: ${npx}`);
 
-  // ffmpeg may be absent on a dev machine. Where it exists Homebrew installs
-  // it as a symlink, which is the case that broke.
+  // Where ffmpeg exists, Homebrew installs it as a symlink, which is the case that broke.
   if (!resolveExecName('ffmpeg')) {
     t.comment('ffmpeg not installed; skipping the symlinked-tool probe');
     return;

@@ -1,11 +1,10 @@
 'use strict';
 
-// The seccomp program bwrap installs on the Linux child. bwrap flags are
-// per-path and per-namespace, so this is the only thing standing between a run
-// and ptrace or a remount of the bind layout the sandbox is made of.
-//
-// The kernel that would enforce the program is not the one running these
-// tests, so the program is decoded and read instruction by instruction.
+// The seccomp program bwrap installs on the Linux child; bwrap flags are
+// per-path and per-namespace, so this is the only thing standing between a
+// run and ptrace or a remount of the sandbox's bind layout. The kernel that
+// would enforce it isn't the one running these tests, so it's decoded and
+// read instruction by instruction.
 
 const test = require('brittle');
 
@@ -50,8 +49,7 @@ for (const arch of ['x64', 'arm64']) {
 }
 
 test('seccomp - the syscall numbers are the per-arch ones', (t) => {
-  // Wrong numbers deny an unrelated call and let the intended one through, and
-  // nothing else in the tree would notice.
+  // Wrong numbers deny an unrelated call and let the intended one through, unnoticed elsewhere in the tree.
   t.is(seccomp.SYSCALLS.x64.ptrace, 101);
   t.is(seccomp.SYSCALLS.arm64.ptrace, 117);
   t.is(seccomp.SYSCALLS.x64.mount, 165);
@@ -64,9 +62,7 @@ test('seccomp - the syscall numbers are the per-arch ones', (t) => {
   t.is(seccomp.SYSCALLS.x64.fsopen, seccomp.SYSCALLS.arm64.fsopen);
 });
 
-// bwrap enforces per mount, so nothing stops a link planted inside a writable
-// bind from being followed back out of it. This is the counterpart of the
-// macOS profile's (deny file-write-create (vnode-type SYMLINK)).
+// bwrap enforces per mount; this is the Linux counterpart of the macOS profile's (deny file-write-create (vnode-type SYMLINK)).
 test('seccomp - a run can create files in its writable binds but not links', (t) => {
   for (const arch of ['x64', 'arm64']) {
     const denied = seccomp.blockedCalls(arch);

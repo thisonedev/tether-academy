@@ -1,8 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Declared, not cast: a `@type` assertion around the literal would silence
-// mismatches instead of reporting them. As a typed declaration, a missing or
-// wrong-signature method fails `pnpm typecheck`.
+// Declared, not cast: a `@type` assertion would silence mismatches instead
+// of failing `pnpm typecheck`.
 /** @type {import('@academy/validation').AcademyAPI} */
 const academy = {
   pkg: () => ipcRenderer.sendSync('pkg'),

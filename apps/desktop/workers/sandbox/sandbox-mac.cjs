@@ -1,21 +1,17 @@
 // @ts-check
 'use strict';
 
-// macOS per-spawn sandbox via sandbox-exec(1). Profile format: sandbox(7).
-// Writes are allowlisted by subpath. Reads cannot be pure-allowlisted, since
-// dyld and the runtime need broad filesystem visibility to start, so we allow
-// file-read* and then deny back, entry by entry, from what is on disk.
-// Per-domain network filtering is not available; see network.mode.
+// macOS per-spawn sandbox via sandbox-exec(1) (profile format: sandbox(7)).
+// Writes are allowlisted by subpath; reads allow file-read* broadly (dyld
+// needs it to start) then deny back, entry by entry, from what's on disk.
+// Per-domain network filtering isn't available; see network.mode.
 //
-// sandbox-exec(1) is deprecated and is the whole boundary here. Nothing
-// replaces it yet: App Sandbox is entitlement-based and applies to the app
-// itself, not to a per-spawn profile, and Endpoint Security is an observation
-// API needing a distribution entitlement. Until one of those covers this,
-// buildWrap reports a missing binary and callers refuse the spawn.
+// sandbox-exec(1) is deprecated and is the whole boundary here; nothing
+// replaces it yet. buildWrap reports a missing binary and callers refuse
+// the spawn.
 //
-// What denying back leaves readable is written down in the desktop README
-// under "What macOS read confinement does not cover". Those are limits of the
-// mechanism, so a change here that closes one belongs in that list too.
+// Read-confinement gaps are tracked in the desktop README; keep that in
+// sync with changes here.
 
 const fs = require('fs');
 const os = require('os');
@@ -77,15 +73,13 @@ const DEFAULT_READ_DENY_RELATIVE = [
   'Library/Application Support/com.apple.TCC',
 ];
 
-// Top-level home entries no run may be denied. `Library` holds the dyld and
-// font caches the runtime starts from, so it keeps the named denies above
-// instead. Denying the CoreFoundation encoding file hangs the process silently.
+// Top-level home entries kept readable: `Library` holds the dyld/font caches
+// the runtime starts from (named denies above cover it instead), and denying
+// the CoreFoundation encoding file hangs the process silently.
 const HOME_KEEP = ['Library', '.CFUserTextEncoding'];
 
-// Credential stores outside $HOME. Named one by one, because the directories
-// holding them also hold files the runtime starts from: /etc has resolv.conf
-// and the TLS roots, /var/db has the dyld cache. Realpathed at use, since
-// seatbelt matches what the kernel resolved and /etc is a symlink.
+// Credential stores outside $HOME, named individually because their parent
+// dirs (/etc, /var/db) also hold files the runtime needs to start from.
 const SYSTEM_READ_DENY = [
   '/etc/ssh',
   '/etc/sudoers',
@@ -105,8 +99,7 @@ const SYSTEM_READ_DENY = [
   '/usr/local/etc',
 ];
 
-// Where sibling accounts live. Denying every entry but this run's own home is
-// what stops a lesson reading another user's files.
+// Sibling-account home directories; every entry but this run's own home is denied.
 const HOME_PARENT = '/Users';
 
 function isUnder(parent, child) {
@@ -117,21 +110,17 @@ function isUnder(parent, child) {
 const MAX_DENY_DEPTH = 5;
 
 // sandbox-exec compiles the profile on every spawn and the cost climbs faster
-// than the rule count: 3k denies cost 2s, 11k cost 30s, 19k never finish. A
-// directory holding thousands of entries is ordinary, so without a ceiling one
-// crowded directory stops every run from starting, and a child that never
-// starts produces no error to explain itself. Past the ceiling the rest of
-// that directory stays readable and the profile warns.
+// than the rule count (3k denies ~2s, 11k ~30s, 19k never finish), so an
+// ordinary crowded directory could otherwise stop every run from starting
+// with no error to explain why. Past the ceiling the rest stays readable
+// and the profile warns.
 const MAX_GENERATED_DENIES = 4000;
 
 /**
- * Deny every entry of `dir` no needed path touches, descending into the ones
- * that merely contain one so a sibling is not kept along with it.
- *
- * `unresolved` collects directories that could not be listed — TCC blocks
- * ~/Documents and ~/Desktop unless the user grants access. Their contents stay
- * readable, and the caller warns about each.
- *
+ * Deny every entry of `dir` no needed path touches, descending into ones
+ * that merely contain a needed path so a sibling isn't kept along with it.
+ * `unresolved` collects directories TCC blocks from listing (~/Documents,
+ * ~/Desktop); their contents stay readable and the caller warns about each.
  * @param {string} dir
  * @param {string[]} needed absolute paths the child must still read
  * @param {Set<string>} out
@@ -186,24 +175,16 @@ function reachablePaths(cap, command) {
 }
 
 /**
- * Everything the child has no business reading, generated from what is on disk
- * rather than a fixed list, so a directory added later is still covered.
- *
- * A synthetic $HOME is not an option either: it makes every model look missing,
- * since the SDK resolves its cache from it.
- *
- * The complement is generated under $HOME, under its parent so that sibling
- * accounts are covered, and under /tmp. Credential stores outside all three are
- * listed in SYSTEM_READ_DENY, since the directories around those hold files the
- * runtime starts from. What the walk generates is capped: see
- * MAX_GENERATED_DENIES for what a profile past that size costs.
- *
+ * Everything the child has no business reading, generated from what's on disk
+ * rather than a fixed list so a directory added later is still covered. A
+ * synthetic $HOME isn't an option: it makes every model look missing, since
+ * the SDK resolves its cache from it. Generated under $HOME, its parent
+ * (sibling accounts), and /tmp; capped, see MAX_GENERATED_DENIES.
  * @param {import('@academy/sandbox-types').Capability} cap
  * @param {string} command
  * @returns {{ paths: Set<string>, generated: number, unresolved: string[], truncated: boolean }}
  */
 function sensitiveReadDenyPaths(cap, command) {
-  // Resolved, because seatbelt matches the path the kernel arrived at.
   const home = realpathSafe(os.homedir());
   const paths = new Set();
   for (const rel of DEFAULT_READ_DENY_RELATIVE) {
@@ -249,7 +230,7 @@ function sensitiveReadDenyPaths(cap, command) {
 function allowRules(cap, { warnings = [], command = process.execPath, runtime = 'bare' } = {}) {
   const rules = [];
 
-  // Broad read required for dyld and the runtime; $HOME denied below.
+  // dyld needs broad read to start; $HOME is denied below.
   rules.push('(allow file-read*)');
   const { paths: denyRead, generated, unresolved, truncated } = sensitiveReadDenyPaths(cap, command);
   for (const p of denyRead) {
@@ -283,9 +264,8 @@ function allowRules(cap, { warnings = [], command = process.execPath, runtime = 
   for (const p of platformFilter(cap.fs?.readOnly ?? [], 'darwin')) {
     rules.push(`(deny file-write* file-write-create (subpath ${sbString(realpathSafe(p))}))`);
   }
-  // A run may create files it needs, but not links. Without this a run could
-  // drop a symlink where a model is about to be downloaded and have the write
-  // land wherever it points, with whatever privileges the writer holds.
+  // Writes may create files, never links, so a write always lands at the
+  // named path rather than wherever a planted symlink points.
   rules.push('(deny file-write-create (vnode-type SYMLINK))');
   rules.push('(allow file-write* (literal "/dev/null"))');
 
@@ -309,8 +289,7 @@ function allowRules(cap, { warnings = [], command = process.execPath, runtime = 
   for (const p of macOv.extraExecPaths ?? []) {
     if (p) execPaths.add(p);
   }
-  // Both forms. The kernel matches the resolved path, so a rule naming a
-  // symlink (Homebrew bin/, .app helper stubs) never fires.
+  // Both forms: the kernel matches the resolved path, not a symlink.
   for (const p of [...execPaths]) {
     if (p) execPaths.add(realpathSafe(p));
   }
@@ -338,16 +317,15 @@ function allowRules(cap, { warnings = [], command = process.execPath, runtime = 
     // No outbound IP. Local unix sockets still allowed for QVAC workers.
     warnings.push('mac sandbox: network.mode=none (no outbound IP)');
   } else if (netMode === 'localhost') {
-    // Only `*` and `localhost` are accepted as the host part. A literal address
-    // makes sandbox-exec reject the whole profile, so the spawn dies instead of
-    // being narrowed. `localhost` is the loopback interface here, not a name to
-    // resolve, so it covers 127.0.0.1 and ::1 both.
+    // Only `*` or `localhost` are valid as the host part; a literal address
+    // makes sandbox-exec reject the whole profile. `localhost` here is the
+    // loopback interface, covering both 127.0.0.1 and ::1.
     rules.push('(allow network-outbound (remote ip "localhost:*"))');
     warnings.push(
       'mac sandbox: network.mode=localhost (loopback only; hosts[] not used)',
     );
   } else {
-    // mode 'all' — full outbound. hosts[] is documentation only.
+    // Mode 'all' permits full outbound access. hosts[] is documentation only.
     if (Array.isArray(cap.network?.hosts) && cap.network.hosts.length > 0) {
       warnings.push(
         'mac sandbox: network.mode=all; hosts[] is documentation only ' +
@@ -361,9 +339,7 @@ function allowRules(cap, { warnings = [], command = process.execPath, runtime = 
   rules.push('(allow network-bind (local unix-socket))');
   rules.push('(allow network-inbound (local unix-socket))');
   rules.push('(allow network-outbound (local unix-socket))');
-  // startQVACProvider binds a port before any model loads, so the lessons that
-  // call it fail with EPERM without this. Loopback only: a run may listen for
-  // its own inference server, never on an address another machine can reach.
+  // startQVACProvider binds a port before any model loads; loopback only.
   rules.push('(allow network-bind (local ip "localhost:*"))');
 
   // Node's os module and QVAC read many sysctls; a fixed name list is
@@ -414,9 +390,7 @@ function buildProfile(capabilityName = 'qvac') {
  * @returns {string}
  */
 function writeProfile(profile, { tmpdir = os.tmpdir() } = {}) {
-  // 0600: the container is per-user, so any other process running as the
-  // user (including the very peer run the profile confines) is the
-  // practical reader.
+  // 0600: any process running as this user is a practical reader otherwise.
   const name = `academy-sandbox-${crypto.randomBytes(6).toString('hex')}.sb`;
   const profilePath = path.join(tmpdir, name);
   fs.writeFileSync(profilePath, profile, { mode: 0o600 });
@@ -430,9 +404,8 @@ function writeProfile(profile, { tmpdir = os.tmpdir() } = {}) {
  * @returns {MacWrap}
  */
 function buildWrap(profilePath, command, args = []) {
-  // A wrap naming a binary that is not there would be announced as sandboxed
-  // and fail later, as a spawn error indistinguishable from a bad command. See
-  // the deprecation note at the top of this file.
+  // Fail before wrapping rather than reporting sandboxed and failing later
+  // as a spawn error indistinguishable from a bad command.
   if (!fs.existsSync(SANDBOX_EXEC)) {
     return {
       command,

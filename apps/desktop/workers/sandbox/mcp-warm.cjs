@@ -1,13 +1,7 @@
 // @ts-check
 'use strict';
 
-// Pre-installs the MCP servers course lessons spawn.
-//
-// `npx -y <pkg>` writes the package into the exec cache and then runs it, and
-// the profile keeps that subtree read-only so a run cannot execute what it just
-// wrote. Installing from here keeps the split: the host writes, the child reads.
-//
-// The list comes from course-allowlist.json, never from the code being run.
+// Pre-installs the MCP servers course lessons spawn, from the host; the package list comes from course-allowlist.json, never the running code.
 
 const fs = require('fs');
 const path = require('path');
@@ -18,7 +12,6 @@ const { resolveMcpBins } = require('./mcp-bins.cjs');
 // A cold install pulls a whole dependency tree.
 const WARM_TIMEOUT_MS = 4 * 60_000;
 
-// Skips the install, which still costs seconds when the package is present.
 /** npx unpacks into `_npx/<hash>/node_modules/<pkg>`; the hash is npm's own. */
 function isWarm(cacheDir, pkg) {
   const root = path.join(cacheDir, '_npx');
@@ -38,9 +31,8 @@ function isWarm(cacheDir, pkg) {
 }
 
 /**
- * Install `pkg` into the child's npm cache, from this process rather than the
- * sandbox. `--package … -- node -e 0` because an MCP server given no arguments
- * starts serving on stdio and never exits.
+ * Installs `pkg` into the child's npm cache from this process. The package-only
+ * invocation avoids leaving an MCP server on stdio forever.
  * @param {string} cacheDir
  * @param {string} pkg
  * @returns {{ ok: boolean, error?: string }}

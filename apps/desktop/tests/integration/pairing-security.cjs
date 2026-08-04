@@ -33,9 +33,7 @@ test('security - rejecting a request leaves no pending and no peer', async (t) =
   t.ok(host.getAudit().map((e) => e.type).includes('peer:rejected'), 'audit records the rejection');
 });
 
-// A wrong code must not tell the attacker anything: no pending entry appears
-// (so the user is not prompted), and the codes never reach the event stream,
-// which the renderer can read.
+// A wrong code must raise no pending entry, and the codes must never reach the renderer-readable event stream.
 test('security - a wrong pairing code is refused without leaking the code', async (t) => {
   const { peers: [host, guest] } = await createPeers(t, 2, { label: 'sec-mismatch' });
 
@@ -53,8 +51,7 @@ test('security - a wrong pairing code is refused without leaking the code', asyn
   t.is(host.listPeers().length, 0, 'nothing paired');
 });
 
-// Attempts are counted so an invite can be invalidated after repeated guesses;
-// the count itself is safe to expose, the codes are not.
+// Attempts are counted so an invite can be invalidated after repeated guesses; the count is safe to expose, the codes are not.
 test('security - a failed attempt is counted', async (t) => {
   const { peers: [host, guest] } = await createPeers(t, 2, { label: 'sec-attempts' });
 
@@ -68,9 +65,7 @@ test('security - a failed attempt is counted', async (t) => {
   t.is((await mismatch).attempts, 1, 'first failure recorded as attempt 1');
 });
 
-// buildId tells peers whether they are running compatible builds. It is a
-// compatibility hint, not an authentication factor. Treating a mismatch as
-// grounds for refusal would let anyone lock a peer out by claiming a version.
+// buildId is a compatibility hint, not an authentication factor; treating a mismatch as grounds for refusal would let anyone lock a peer out by claiming a version.
 test('security - buildId is a compatibility hint, not a trust gate', async (t) => {
   const { peers: [host, guest] } = await createPeers(t, 2, { label: 'sec-buildid' });
 
@@ -106,8 +101,7 @@ test('security - lockdown drops every paired peer', async (t) => {
   t.is(entry?.dropped, 1, 'audit records how many were dropped');
 });
 
-// Lockdown is a panic button, so an un-approved request in flight has to go too
-// Otherwise approving it afterwards would quietly re-open access.
+// Lockdown is a panic button; an un-approved request in flight has to go too, or approving it later would quietly re-open access.
 test('security - lockdown also drops requests awaiting approval', async (t) => {
   const { peers: [host, guest] } = await createPeers(t, 2, { label: 'sec-lockdown-pending' });
 

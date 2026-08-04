@@ -3,8 +3,7 @@
 // Declared capabilities widening. The host's detector stays the trust
 // boundary; a lesson's frontmatter declaration can only widen the consent
 // prompt, never narrow it. A network union takes the wider of (declared,
-// detected) on the ordered scale none < localhost < all. A device union
-// concatenates unique entries.
+// detected) on the scale none < localhost < all; a device union concatenates unique entries.
 
 const test = require('brittle');
 const { detectNetworkNeed, referencedModels } = require('../../workers/peer/exec-network.cjs');
@@ -42,7 +41,6 @@ test('declared - declaration widens network', (t) => {
 });
 
 test('declared - declaration cannot narrow network', (t) => {
-  // A lesson that fetches cannot pretend to need no network.
   const detected = detectNetworkNeed(SOURCE_FETCH);
   t.is(detected.mode, 'all');
   t.is(unionNetwork(detected, { network: 'none' }), 'all');

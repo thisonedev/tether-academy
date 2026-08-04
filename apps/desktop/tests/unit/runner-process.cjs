@@ -1,9 +1,7 @@
 'use strict';
 
-// Containment of the buildLesson fixture-path rewrite. The local runner
-// executes the rewritten source without a sandbox, so a lesson that
-// escapes the courses directory can read whatever the user account can
-// see.
+// Containment of the buildLesson fixture-path rewrite; the local runner
+// executes the rewritten source without a sandbox, so an escape from the courses directory reaches whatever the user account can see.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -26,8 +24,7 @@ test('buildLesson - a normal examples/ rewrite stays under coursesDir', (t) => {
 });
 
 test('buildLesson - a traversal in the rewrite is refused, not silently joined', (t) => {
-  // path.join would collapse `..` outside coursesDir; the rewrite
-  // refuses instead, so a hostile lesson cannot read ~/.ssh or similar.
+  // path.join would collapse `..` outside coursesDir; the rewrite refuses instead.
   t.exception(() => {
     buildLesson({
       source: "import x from 'examples/../../../../etc/passwd';\n",
@@ -36,9 +33,7 @@ test('buildLesson - a traversal in the rewrite is refused, not silently joined',
   }, /refused path outside coursesDir/);
 });
 
-// An earlier parser sliced the wrong characters when the handler body ran on
-// to a second line and rebuilt the call from the pieces. This one moves the
-// text as it stands, so the handler has to come through byte for byte.
+// An earlier parser sliced the wrong characters when the handler body ran onto a second line and rebuilt the call from the pieces.
 test('buildLesson - wrapping the entry call leaves its handler intact', (t) => {
   t.teardown(() => fs.rmSync(COURSES, { recursive: true, force: true }));
   const source = "async function main() {}\nmain().catch((err) => \\\n  console.error(err));\n";

@@ -41,9 +41,7 @@ test('exec - stderr and a non-zero exit code propagate', async (t) => {
   t.ok(result.stderr.includes('boom'));
 });
 
-// File mode writes the snippet to a real .mts file, so lessons can use imports
-// and get sensible stack traces. argv reaches the script: anything before the
-// filename would be read as a flag to bare.
+// File mode writes the snippet to a real .mts file so lessons can use imports and get sensible stack traces.
 test('exec - file mode runs a real script with argv passed through', async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'exec-file');
 

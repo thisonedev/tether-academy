@@ -1,10 +1,7 @@
-// Main-process proxy for the pear-end Bare worker. Drop-in match for
-// peer.cjs's old exported shape (init, getIdentity, createInvite, ...,
-// exec, on, close) so pear-end/index.cjs's `peer` swap is one line.
-// Plus shutdownWorker(), new here: killing the actual worker process is a
-// distinct operation from close()/CMD.CLOSE (mesh teardown only, matching
-// peer.cjs's original close() semantics, used by academy:identity:reset,
-// where the worker should stay alive for a future re-init).
+// Main-process proxy for the pear-end Bare worker. Matches peer.cjs's old
+// exported shape so pear-end/index.cjs's `peer` swap is one line.
+// shutdownWorker() is new: killing the worker process is distinct from
+// close()/CMD.CLOSE, which only tears down the mesh.
 const path = require('path');
 const PearRuntime = require('pear-runtime');
 const RPC = require('bare-rpc');
@@ -166,11 +163,9 @@ async function clearPeerAudit(discoveryKey) {
   return call(CMD.CLEAR_PEER_AUDIT, { discoveryKey });
 }
 
-// Synchronous-return contract matches peer.cjs's original exec(): returns
-// an EventEmitter immediately (or throws). Since the real call is now async
-// RPC, dispatch-time failures are delivered as a deferred 'error' event
-// instead of a synchronous throw; main.js's academy:run handler already
-// treats both identically (resolves {ok:false, output:...}).
+// Matches peer.cjs's synchronous exec() contract: returns an EventEmitter
+// immediately. Since the real call is async RPC, dispatch-time failures
+// arrive as a deferred 'error' event instead of a synchronous throw.
 function exec(args) {
   const emitter = new EventEmitter();
   const { peerId } = args;
@@ -203,16 +198,13 @@ function on(listener) {
   return () => listeners.delete(listener);
 }
 
-// Mesh teardown only, mirrors peer.cjs's original close(). Worker process
-// stays alive so a later init() can re-init in place (academy:identity:reset).
+// Mesh teardown only; worker process stays alive so a later init() can re-init in place.
 async function close() {
   if (!rpc) return;
   await call(CMD.CLOSE, {});
 }
 
-// Full worker-process termination, for app quit. Not part of peer.cjs's
-// original surface; pear-end/index.cjs's shutdown() calls this instead of
-// close() so the worker OS process actually exits, not just the mesh state.
+// App quit requires OS process termination; close() only tears down mesh state.
 async function shutdownWorker() {
   if (!rpc || !worker) return;
   const w = worker;
@@ -224,8 +216,7 @@ async function shutdownWorker() {
   } catch (err) {
     console.warn('[worker-client] graceful shutdown failed, force-killing:', err?.message ?? err);
   }
-  // Always force-kill too: cheap and idempotent (destroy() on an already-
-  // dead process no-ops), and the graceful path above may have timed out.
+  // Always force-kill too: destroy() on an already-dead process is a no-op.
   try {
     w.destroy();
   } catch {

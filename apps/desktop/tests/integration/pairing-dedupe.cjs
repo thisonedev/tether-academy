@@ -1,8 +1,7 @@
 'use strict';
 
 // A host must surface exactly one pending request per invite, however many
-// candidates arrive. blind-pairing can deliver onadd more than once, and each
-// duplicate would otherwise be another approval prompt to dismiss.
+// candidates arrive: blind-pairing can deliver onadd more than once.
 
 const test = require('brittle');
 

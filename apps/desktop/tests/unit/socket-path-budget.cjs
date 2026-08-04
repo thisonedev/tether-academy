@@ -1,12 +1,10 @@
 'use strict';
 
-// QVAC opens its worker socket in the child's TMPDIR, which is the run
-// directory, and sun_path caps the whole path at 104 bytes. The two lengths
-// compete: a run directory named `academy-exec-XXXXXX` left 7 spare bytes and
-// every paired lesson that loaded a model died with EINVAL.
-//
-// The canary reads the SDK's dist so an upgrade that lengthens the socket name
-// fails here rather than in a lesson.
+// QVAC opens its worker socket in the child's TMPDIR (the run directory), and
+// sun_path caps the whole path at 104 bytes; a run directory named
+// `academy-exec-XXXXXX` once left only 7 spare bytes, and every paired lesson
+// that loaded a model died with EINVAL. This canary reads the SDK's dist so an
+// upgrade that lengthens the socket name fails here rather than in a lesson.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -66,8 +64,7 @@ test('socket-budget - a run directory with no room is refused up front', { skip:
   );
 });
 
-// Reads the SDK rather than trusting our copy of its behaviour. If this fails
-// after an upgrade, measure the new name and move SOCKET_NAME_RESERVE.
+// Reads the SDK rather than trusting our copy of its behaviour; if this fails after an upgrade, remeasure and move SOCKET_NAME_RESERVE.
 test('socket-budget - the installed SDK still builds the socket name we reserved for', (t) => {
   const src = sdkRpcSource();
 

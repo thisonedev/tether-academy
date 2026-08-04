@@ -1,10 +1,7 @@
 // @ts-check
 'use strict';
 
-// Public API: wrapSpawn(command, args, options, capabilities) returns
-// the platform-sandboxed child invocation. Mac: sandbox-exec; Linux:
-// bwrap; Windows: unavailable until AppContainer. Callers must refuse
-// the spawn when sandboxed is false.
+// Public API: wrapSpawn(...) returns the platform-sandboxed invocation; callers must refuse the spawn when sandboxed is false.
 
 const fs = require('fs');
 const os = require('os');
@@ -38,26 +35,21 @@ const COURSE_ALLOWLIST_PATH = path.join(__dirname, 'course-allowlist.json');
 
 const ALLOWLIST_FILE = 'sandbox-allowlist.json';
 
-// The child's TMPDIR is its run directory, and QVAC opens its worker RPC socket
-// there (`os.tmpdir()` + `qvac-worker-<pid>-<ts>-<rand>.sock`, no override).
-// sun_path caps that path at 104 bytes, so every byte the run directory spends
-// is one the SDK's name cannot have. Hence the shortest root available.
+// QVAC's worker RPC socket lives under the child's TMPDIR; sun_path caps
+// that path at 104 bytes, so the run dir must leave room for the name.
 const SOCKET_PATH_MAX = 104;
 const SOCKET_NAME_RESERVE = 44;
 const RUN_DIR_PREFIX = 'ta-';
 
-// Shortest first. macOS resolves /tmp to /private/tmp, but bind() measures the
-// path it is handed, and the profile resolves the rule separately.
+// Shortest first; macOS resolves /tmp to /private/tmp but bind() measures the path as given.
 const TEMP_ROOTS = process.platform === 'win32' ? [os.tmpdir()] : ['/tmp', os.tmpdir()];
 
-// The shells and coreutils the profile allowlists by name. Last on the PATH.
 const SYSTEM_BIN_DIRS = process.platform === 'win32'
   ? []
   : ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
 /**
- * Per-run scratch directory: the child's only writable temp, and the one that
- * has to hold a unix socket.
+ * Per-run scratch directory: the child's only writable temp, holding a unix socket.
  * @returns {string}
  */
 function makeRunDir() {
@@ -73,14 +65,8 @@ function makeRunDir() {
 }
 
 /**
- * Every model file worth freezing, so the profile can make them immutable.
- *
- * Empty ones are skipped: the SDK streams a download to its final path, so an
- * interrupted one leaves a husk, and freezing that stops the SDK replacing it.
- *
- * A snapshot, so a model downloaded during the run stays writable until it
- * exits. The SDK's sha256 check on load covers that where the registry
- * publishes a checksum; closing it properly means the host doing the download.
+ * Model files to freeze read-only, skipping empty interrupted-download files
+ * so the SDK can still replace them; a snapshot taken before expansion.
  * @returns {string[]}
  */
 function cachedModelFiles() {
@@ -96,9 +82,7 @@ function cachedModelFiles() {
 }
 
 /**
- * Refuse a run directory that cannot hold a unix socket. Without this the
- * failure surfaces as EINVAL from inside the SDK, which says nothing about
- * which path was too long.
+ * Refuse a run directory too short for a unix socket, for a clear error here rather than an opaque EINVAL from the SDK.
  * @param {string} runDir
  */
 function assertSocketRoom(runDir) {
@@ -113,9 +97,8 @@ function assertSocketRoom(runDir) {
 }
 
 /**
- * Default path for the dynamic capability JSON. Under the app state directory,
- * which confinedPaths() denies in every profile — a file that decides what the
- * sandbox allows cannot be one the sandboxed child can write.
+ * Default path for the dynamic capability JSON, under the state directory
+ * that confinedPaths() denies. The child must never write its own allowlist.
  * @returns {string}
  */
 function defaultDynamicPath() {
@@ -123,21 +106,18 @@ function defaultDynamicPath() {
 }
 
 /**
- * Where the allowlist used to live, back when the whole state directory was
- * child-writable. Never read: a file at this path may be the child's own work.
+ * Legacy allowlist path from before the state dir was locked down; never read.
  * @returns {string}
  */
 function legacyDynamicPath() {
   return path.join(appStateDir(), ALLOWLIST_FILE);
 }
 
-/** Where the child's npm cache lives. Read-only under _npx; see wrapSpawn. */
 function npmCacheDir() {
   return path.join(defaultTemplateVars().tmpDir, 'academy-npm-cache');
 }
 
 /**
- * MCP servers the shipped course allowlist permits.
  * @returns {string[]}
  */
 function allowedMcpPackages(options = {}) {
@@ -146,7 +126,6 @@ function allowedMcpPackages(options = {}) {
   return Array.isArray(list) ? list.filter((p) => typeof p === 'string') : [];
 }
 
-/** Course-shipped allowlist + optional user file (user wins on conflicts). */
 function loadAllowlists(options = {}) {
   let merged = null;
   const warnings = [];
@@ -170,10 +149,7 @@ function loadAllowlists(options = {}) {
 }
 
 /**
- * Drop read and write grants that reach the app's own state or keys, whatever
- * the merged allowlist asked for. macOS also emits explicit denies. Linux has
- * no deny form, only binds, so dropping the grant is the whole enforcement
- * there; Windows refuses peer-exec outright.
+ * Drop read/write grants that reach the app's own state or keys (macOS also emits explicit denies; Linux has no deny form, so dropping here is it).
  * @param {Capability} cap
  * @param {string[]} [warnings]
  * @returns {Capability}
@@ -216,7 +192,6 @@ function realpathSafe(p) {
   }
 }
 
-/** Turn bare command names in cap.exec into absolute paths for process-exec. */
 function resolveCapExecPaths(cap) {
   const { found } = resolveExecNames(cap.exec ?? []);
   return found;
@@ -224,13 +199,6 @@ function resolveCapExecPaths(cap) {
 
 /**
  * Refuse a Node child that could reach Electron's own APIs.
- *
- * The Node runtime is the app's own Electron binary. Without
- * ELECTRON_RUN_AS_NODE it boots as Electron, and `require('electron')` hands
- * the run `safeStorage`, which decrypts the identity record. No sandbox rule
- * covers that: it is a library call inside a process the profile already
- * allows. So the guarantee has to be that the child never starts without it.
- *
  * @param {'bare' | 'node'} runtime
  * @param {Record<string, string>} env
  */
@@ -260,7 +228,7 @@ function buildEnv(parentEnv, capEnv) {
     if (!passThrough.has(key)) continue;
     out[key] = parentEnv[key];
   }
-  // Capability-forced vars win (e.g. the TMPDIR pointing at this run's scratch).
+  // Capability-forced vars always win over passThrough.
   const force = capEnv?.force;
   if (force && typeof force === 'object') {
     for (const [key, value] of Object.entries(force)) {
@@ -277,10 +245,7 @@ function pathToExecRegex(dir) {
   let real = dir;
   try {
     real = fs.realpathSync(dir);
-  } catch {
-    // use as-is
-  }
-  // Escape for Scheme/sandbox regex; allow any file under the directory.
+  } catch {}
   const escaped = String(real).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return `^${escaped}/.*`;
 }
@@ -296,9 +261,7 @@ function appendExtraExec(cap, paths, regexes = []) {
       readExtra.push(variant);
       try {
         readExtra.push(path.dirname(variant));
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
   }
   return {
@@ -325,7 +288,6 @@ function appendExtraExec(cap, paths, regexes = []) {
 }
 
 /**
- * Add the resolved bare runtime binary to the capability's exec allowlist.
  * @param {Capability} cap
  * @param {{ bareRuntimeBinPath?: string | null }} [options]
  * @returns {{ cap: Capability, bareBin: string | null }}
@@ -338,28 +300,11 @@ function injectBareExec(cap, options = {}) {
 }
 
 /**
- * Wrap a child spawn with a platform-specific sandbox.
- *
  * @param {string} command
  * @param {string[]} args
  * @param {WrapOptions} options
  * @param {ProductName | Capability} capabilities
  * @returns {WrapResult}
- * @example
- *   const r = wrapSpawn(process.execPath, ['-e', '...'], {}, 'qvac');
- *   spawn(r.command, r.args, { env: { ...process.env, ...r.env } });
- */
-/**
- * Wrap a child spawn with a platform-specific sandbox.
- *
- * @param {string} command
- * @param {string[]} args
- * @param {WrapOptions} options
- * @param {ProductName | Capability} capabilities
- * @returns {WrapResult}
- * @example
- *   const r = wrapSpawn(process.execPath, ['-e', '...'], {}, 'qvac');
- *   spawn(r.command, r.args, { env: { ...process.env, ...r.env } });
  */
 function wrapSpawn(command, args, options, capabilities) {
   options = options || {};
@@ -375,14 +320,11 @@ function wrapSpawn(command, args, options, capabilities) {
   const warnings = [];
 
   let cap = base;
-  // Always merge course allowlist + user allowlist (user overrides).
   const { merged: allowlist, warnings: allowlistWarnings } = loadAllowlists(options);
   if (allowlist) cap = mergeCapabilities(cap, allowlist);
   warnings.push(...allowlistWarnings);
 
-  // Per-run grants. Deliberately not readable from an allowlist file; the caller
-  // names what a human approved. A network grant replaces the capability's mode
-  // outright, so a file cannot leave more open than was asked for.
+  // Per-run grants: not readable from an allowlist file (the caller names what a human approved); a network grant replaces the mode outright.
   const grants = Array.isArray(options.grants) ? options.grants : [];
   if (grants.length > 0) {
     const device = { ...(cap.device ?? {}) };
@@ -404,38 +346,28 @@ function wrapSpawn(command, args, options, capabilities) {
     options.includeBare === true ||
     cap === CAPABILITIES.qvac;
 
-  // The caller owns the run directory when it passes one, so it can put the
-  // snippet there and delete the lot afterwards.
+  // The caller owns the run directory when it passes one.
   const runDir = options.runDir || makeRunDir();
   assertSocketRoom(runDir);
   const templateVars = defaultTemplateVars({
     execPath: command,
     runDir,
-    // The host resolved userData from app.getPath('userData'); that is the
-    // real state directory, not the home-default that the capability would
-    // otherwise name. The profile denies this path; without it, the
-    // capability's default could disagree with where the data lives.
+    // Host-resolved userData (app.getPath('userData')) is the real state dir.
     userData: options.userData,
   });
   const cacheDir = npmCacheDir();
-  // Where npx extracts package bins: the one part of the cache the child may
-  // execute from, and so the one part it may not write.
+  // Where npx extracts package bins: the one part of the cache the child may execute from, so the one part it may not write.
   const npxDir = path.join(cacheDir, '_npx');
   let bareBin = null;
   let toolWrapperDir = null;
 
-  // cap.exec is final after the allowlist merge. Resolved here so the child's
-  // PATH can carry these directories; a process-exec rule is useless if
-  // `spawn('ffmpeg')` cannot find the binary.
   const resolvedExec = resolveCapExecPaths(cap);
   const execDirs = [];
   for (const p of resolvedExec) {
     const dir = path.dirname(p);
     if (dir && !execDirs.includes(dir)) execDirs.push(dir);
   }
-  // Only directories the profile allowlists, never the parent's PATH: execvp
-  // walks PATH in order and gives up the moment an entry returns EPERM, so one
-  // unreadable directory ahead of the right one breaks `spawn('ffmpeg')`.
+  // Never the parent's PATH: execvp stops at the first EPERM, so one unreadable dir ahead breaks spawn('ffmpeg').
   const childPath = (prefix) =>
     [prefix, ...execDirs, ...SYSTEM_BIN_DIRS].filter(Boolean).join(path.delimiter);
 
@@ -459,12 +391,9 @@ function wrapSpawn(command, args, options, capabilities) {
       toolWrapperDir = wrappers.dir;
       try {
         fs.mkdirSync(cacheDir, { recursive: true });
-      } catch {
-        // best-effort; npm creates it too
-      }
-      // npm picks the bin paths, so exec has to be a regex over a tree, which
-      // only holds while the child cannot write it. npm still needs the rest of
-      // the cache (it opens _cacache/tmp even when fully cached), hence the split.
+      } catch {}
+      // npm picks the bin paths, so exec has to be a regex over a tree that
+      // holds only while the child can't write it; npm still opens _cacache/tmp even when cached.
       const execRegex = [
         pathToExecRegex(wrappers.dir),
         pathToExecRegex(npxDir),
@@ -505,8 +434,7 @@ function wrapSpawn(command, args, options, capabilities) {
   }
 
   const expanded = stripConfinedPaths(expandDeep(cap, templateVars), warnings);
-  // Freeze the models already on disk. After expansion, since these are real
-  // paths that change between runs.
+  // Freeze the models already on disk. After expansion, since these are real paths that change between runs.
   expanded.fs = {
     ...(expanded.fs ?? {}),
     readOnly: [...(expanded.fs?.readOnly ?? []), ...cachedModelFiles()],
@@ -523,8 +451,7 @@ function wrapSpawn(command, args, options, capabilities) {
       expanded.env.force.PATH = childPath(toolWrapperDir);
     }
   }
-  // os.tmpdir() reads these, so the child's idea of "temp" is the one directory
-  // it can write.
+  // os.tmpdir() reads these, so the child's idea of "temp" is the one directory it can write.
   if (expanded.env) {
     expanded.env.force = {
       ...(expanded.env.force ?? {}),
@@ -540,7 +467,6 @@ function wrapSpawn(command, args, options, capabilities) {
   const env = buildEnv(process.env, expanded.env);
   assertRunAsNode(runtime, env);
   const platform = process.platform;
-  // The scope the child ends up with, for callers that record it.
   const networkScope = enforcedNetworkScope(expanded.network?.mode, platform);
 
   if (platform === 'darwin') {
@@ -550,8 +476,7 @@ function wrapSpawn(command, args, options, capabilities) {
       '(deny default)',
       ...mac._allowRules(expanded, { warnings, command, runtime }),
     ].join('\n') + '\n';
-    // Run dir is 0700 and torn down by finishRun; this keeps the profile
-    // off the shared tmp container and ties its lifetime to its consumer.
+    // Run dir is 0700 and torn down by finishRun, so the profile's lifetime ties to its consumer.
     const profilePath = mac.writeProfile(profileBody, { tmpdir: runDir });
     const wrap = mac.buildWrap(profilePath, command, args);
     return {
@@ -572,8 +497,7 @@ function wrapSpawn(command, args, options, capabilities) {
   if (platform === 'linux') {
     const linux = require('./sandbox-linux.cjs');
     const wrap = linux.buildWrap(expanded, command, args);
-    // A bwrap that cannot open a namespace confines nothing. Reported apart
-    // from a missing bwrap, because the user fixes each one differently.
+    // A bwrap that cannot open a namespace confines nothing; reported apart from a missing bwrap since each is fixed differently.
     const linuxMode = wrap.bwrapMissing
       ? 'linux-passthrough'
       : wrap.namespacesUnavailable

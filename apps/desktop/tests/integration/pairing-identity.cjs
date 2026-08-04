@@ -1,8 +1,7 @@
 'use strict';
 
 // What a pair knows about who is on the other end, over a real in-process DHT
-// testnet. The pairing code and the approval dialog gate who gets in; these
-// cover the part that says which key got in.
+// testnet. The pairing code and approval dialog gate who gets in; these cover which key got in.
 
 const test = require('brittle');
 
@@ -53,8 +52,7 @@ test('pairing-identity - both sides prove which identity they are', async (t) =>
   t.is(hostPeer.verifiedIdentityPublicKey, guestId.attestation.identityPublicKey);
 });
 
-// The invite says whose identity the guest is about to pair with, and anyone
-// who relays the link can rewrite that field.
+// The invite says whose identity the guest is about to pair with; a relayed link can have that field rewritten.
 test('pairing-identity - a host that is not the identity the link claimed is dropped', async (t) => {
   const { host, guest } = await createAttestedPeers(t, 'mismatch');
   const impostor = (await attestedIdentity()).attestation.identityPublicKey;
@@ -76,8 +74,7 @@ test('pairing-identity - a host that is not the identity the link claimed is dro
 });
 
 test('pairing-identity - a peer with no identity to prove pairs as unverified', async (t) => {
-  // A device key with no attestation chain behind it, which is what a device
-  // that never finished identity setup looks like on the wire.
+  // A device key with no attestation chain, as a device that never finished identity setup looks on the wire.
   const { peers: [host, guest] } = await createPeers(t, 2, {
     label: 'unattested',
     initFor: (i) => (i === 1 ? { attestation: null } : {}),
@@ -96,8 +93,7 @@ test('pairing-identity - a peer with no identity to prove pairs as unverified', 
   t.is(host.listPeers().length, 1, 'and the pair still works');
 });
 
-// Revocation has to cover the device trying to pair now and the one that is
-// already paired.
+// Revocation has to cover the device trying to pair now and the one that is already paired.
 test('pairing-identity - a revoked device is turned away at the invite', async (t) => {
   const identities = [await attestedIdentity(), await attestedIdentity()];
   const { peers: [host, guest] } = await createPeers(t, 2, {

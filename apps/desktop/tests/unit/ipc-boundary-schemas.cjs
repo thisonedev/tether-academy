@@ -1,14 +1,12 @@
 'use strict';
 
 // The three ipcMain.handle calls that used to take a renderer payload and
-// check nothing. None had a reachable exploit, since each is covered by a
-// second check further in, but a boundary where most handlers validate and a
-// few do not is how the next one gets missed.
+// check nothing. None had a reachable exploit (each is covered by a second
+// check further in), but a boundary where most handlers validate and a few don't is how the next one gets missed.
 
 const test = require('brittle');
 
-// @academy/validation is ESM, so require() cannot load it. Memoised so each
-// test can await it independently of run order.
+// @academy/validation is ESM, so require() cannot load it; memoised so each test can await it independently of run order.
 let pending;
 const validation = () => (pending ||= import('@academy/validation'));
 
@@ -28,8 +26,7 @@ test('boundary-schemas - modelId stays under the models root', async (t) => {
   t.exception(() => v.modelIdSchema.parse(42), 'not a string');
 });
 
-// The scrub delay comes from the renderer, so a caller could otherwise park it
-// so far out that the pairing code stays on the clipboard for the session.
+// The scrub delay comes from the renderer, so a caller could otherwise park it so far out the pairing code stays on the clipboard for the session.
 test('boundary-schemas - the clipboard scrub delay is bounded', async (t) => {
   const v = await validation();
 

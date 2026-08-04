@@ -1,7 +1,6 @@
 'use strict';
 
-// What a run may reach, decided from the code before it starts. The default is
-// nothing, so the cases that matter are the ones that raise it.
+// What a run may reach, decided from the code before it starts; the default is nothing, so the cases that matter raise it.
 
 const test = require('brittle');
 
@@ -11,8 +10,7 @@ const {
   modelRegistry,
 } = require('../../workers/peer/exec-network.cjs');
 
-// Resolved through the SDK's own table, so a rename there fails here rather
-// than quietly turning every run into a prompt.
+// Resolved through the SDK's own table, so a rename there fails here rather than quietly turning every run into a prompt.
 const registry = modelRegistry();
 const cached = 'QWEN3_600M_INST_Q4';
 const huge = 'WAN2_1_T2V_14B_Q8_0';

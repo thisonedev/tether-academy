@@ -1,10 +1,8 @@
 // @ts-check
 'use strict';
 
-// Capability configs for sandboxed child processes. Each entry lists
-// the OS resources its runner needs; everything else is denied by the
-// platform module. Add a new product by adding a key to CAPABILITIES
-// and passing it to wrapSpawn() in peer.cjs.
+// Capability configs for sandboxed child processes; anything not listed
+// here is denied by the platform module.
 
 const os = require('os');
 const path = require('path');
@@ -64,8 +62,8 @@ function appStateDir(home = os.homedir()) {
 }
 
 /**
- * Local encryption keys, kept outside appStateDir so that a write grant which
- * reappears on the state directory does not also hand over the keys.
+ * Encryption keys, kept outside appStateDir so a write grant on the state
+ * dir doesn't also hand over the keys.
  * @param {string} [home]
  * @returns {string}
  */
@@ -74,19 +72,14 @@ function secretsDir(home = os.homedir()) {
 }
 
 /**
- * Directories every platform profile must refuse, whatever an allowlist asks
- * for. Nothing a lesson does needs the app's own state or keys.
- * @param {string} [userData] Resolved userData from the host, used when the
- *   app was launched with `--storage <dir>` or any other userData override.
- *   Falls back to `appStateDir(home)` so the default-path story still holds.
+ * Directories every platform profile must refuse, whatever an allowlist asks for.
+ * @param {string} [userData] Resolved userData; falls back to appStateDir(home).
  * @param {string} [home]
  * @returns {string[]}
  */
 function confinedPaths(userData, home = os.homedir()) {
   const state = userData || appStateDir(home);
-  // The keys directory moves with `--storage` in the sense that the secrets
-  // sit next to the userData, not under $HOME/.tether-academy. A user that
-  // chooses an alternate state dir gets the matching keys dir denied too.
+  // keys dir follows --storage so an alternate state dir denies its own keys too
   const keys = userData ? path.join(userData, 'keys') : secretsDir(home);
   return [state, keys];
 }
@@ -112,15 +105,10 @@ function defaultTemplateVars(overrides = {}) {
     coursesDir,
     homeDir: home,
     tmpDir,
-    // wrapSpawn passes a fresh one per spawn. The fallback exists so callers
-    // that only want a profile can still expand the template.
     runDir: overrides.runDir || path.join(tmpDir, 'academy-run'),
     lessonDir: require('../../shared/lesson-output.cjs').lessonHomeDir(home),
     execDir: overrides.execDir || (overrides.execPath ? path.dirname(overrides.execPath) : path.dirname(process.execPath)),
     execPath: overrides.execPath || process.execPath,
-    // The app's real state directory, not the home-default. `--storage` and
-    // any future userData override flow through this override; the default
-    // path is the `appStateDir(home)` computation that the docs describe.
     userData: overrides.userData || appStateDir(home),
   };
 }
@@ -197,9 +185,7 @@ function lookupInFallbackDirs(binName) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
-    } catch {
-      // next dir
-    }
+    } catch {}
   }
   return null;
 }
@@ -219,13 +205,9 @@ function resolveExecName(binName) {
 }
 
 /**
- * Absolute paths to allowlist for a capability's `exec` names.
- *
- * Returns the located path and its realpath. Seatbelt matches process-exec
- * against the resolved path, so a rule naming /opt/homebrew/bin/ffmpeg (a
- * symlink into ../Cellar) never fires and the child gets EPERM. The
- * unresolved path stays because that is the one PATH lookup finds.
- *
+ * Absolute paths to allowlist for a capability's `exec` names: the located
+ * path and its realpath, since seatbelt matches process-exec against the
+ * kernel-resolved path.
  * @param {string[] | undefined} execList
  * @returns {{ found: string[], missing: string[] }}
  */
@@ -268,8 +250,7 @@ function mergeCapabilities(base, dynamic) {
   return out;
 }
 
-// 0o022: group-write or world-write. Either lets a second account decide what
-// the sandbox allows.
+// 0o022: group-write or world-write; either lets a second account edit the allowlist.
 const UNSAFE_ALLOWLIST_MODE = 0o022;
 
 /**
@@ -287,10 +268,9 @@ function assertOwnerOnly(filePath) {
   );
 }
 
-// The dynamic file is trusted only because it lives in a path the
-// sandboxed child cannot write to (see defaultDynamicPath in
-// index.cjs). Throws on parse error so the parent fails loudly
-// rather than silently running with a truncated allowlist.
+// Trusted only because it lives where the sandboxed child cannot write.
+// Throws on parse error so the parent fails loudly rather than running
+// with a silently truncated allowlist.
 /**
  * @param {string} filePath
  * @returns {DynamicCapabilityFile | null}
@@ -326,10 +306,7 @@ const CAPABILITIES = {
         '<%= coursesDir %>',
         '<%= homeDir %>/.qvac',
         '<%= execDir %>',
-        // Public macOS system paths. /private/var/folders etc. are
-        // symlinks that the kernel can't traverse under default-deny;
-        // tmpDir resolves to the public /var/folders/... form.
-        // System libs / dyld so Node and Electron can start under constrained reads.
+        // System libs / dyld, needed for Node and Electron to start under constrained reads.
         'MAC:/System/Library',
         'MAC:/System/Volumes/Preboot',
         'MAC:/Library/Apple/usr/lib',
@@ -366,31 +343,21 @@ const CAPABILITIES = {
         'WIN:C:\\Program Files (x86)',
       ],
       write: [
-        // Not all of /tmp, which on Linux is shared with every other account.
-        '<%= runDir %>',
-        // Lesson output. A named folder only, never all of Documents.
-        '<%= lessonDir %>',
-        // The SDK's own state: the registry corestore updates on any model
-        // load, and lessons write the KV cache and the RAG database. Weights
-        // are carved back out by readOnly below.
+        '<%= runDir %>', // not all of /tmp, which on Linux is shared with every other account
+        '<%= lessonDir %>', // named lesson-output folder only, never all of Documents
+        // SDK state: registry corestore, KV cache, RAG database. Weights are
+        // carved back out by readOnly below.
         '<%= homeDir %>/.qvac',
       ],
-      // Writable by a parent rule, then taken back. wrapSpawn adds each
-      // non-empty model file already on disk, so a run can fetch a model it
-      // needs and still not touch one the user has: peer code that rewrites a
-      // cached GGUF picks what a later local run feeds to a native parser.
+      // Writable by a parent rule, then taken back per-file by wrapSpawn for
+      // whatever model is already on disk, so a run can fetch a missing model
+      // without being able to overwrite one the user already has.
       readOnly: [],
     },
     network: {
-      // mode is what the platform enforces:
-      //   'all'       — full outbound (mac/linux today; hosts is documentation only)
-      //   'localhost' — loopback only (mac)
-      //   'none'      — no outbound IP
-      // hosts[] documents intended peers when mode is 'all'; it is not a filter.
-      //
-      // Denied by default and raised per run via wrapSpawn's `grants`, like the
-      // microphone. A run with its models already downloaded needs nothing here,
-      // so only the runs that leave the machine reach a human.
+      // mode: 'all' full outbound (mac/linux; hosts is documentation only),
+      // 'localhost' loopback only (mac), 'none' no outbound IP.
+      // Denied by default, raised per run via wrapSpawn's `grants`.
       mode: 'none',
       hosts: [
         'bootstrap.hyperdht.org',
@@ -403,9 +370,8 @@ const CAPABILITIES = {
       ],
     },
     exec: ['ffmpeg', 'ffplay'],
-    // Off by default, granted per run via wrapSpawn's `grants`: peer-exec
-    // shares this capability. A denied macOS capture returns silence rather
-    // than an error, so a wrong default here is invisible.
+    // Off by default, granted per run. A denied macOS capture returns
+    // silence rather than an error, so a wrong default here is invisible.
     device: {
       microphone: false,
       camera: false,
@@ -455,8 +421,8 @@ const CAPABILITIES = {
       mac: {},
       linux: {},
       windows: {
-        // Best-effort: child inherits the host token. AppContainer
-        // is the real answer but needs PowerShell provisioning.
+        // Best-effort: inherits the host token. AppContainer is the real
+        // answer but needs PowerShell provisioning.
         fallback: 'restricted-token',
         appContainerName: 'tether-academy-sandbox',
       },
@@ -468,17 +434,15 @@ const PRODUCT_NAMES = Object.keys(CAPABILITIES);
 
 // Grantable for a single run. wrapSpawn throws on anything else.
 const DEVICE_GRANTS = ['microphone', 'camera'];
-// Network is a run grant too, so one consent path covers everything a run asks
-// for. Loopback is its own grant because it is a narrower ask; it still
-// reaches every service bound on this machine, so it is still asked.
+// Loopback is its own grant, narrower than 'all' but still reaching every
+// service bound on this machine, so it is still asked.
 const NETWORK_GRANTS = { network: 'all', 'network-loopback': 'localhost' };
 const RUN_GRANTS = [...DEVICE_GRANTS, ...Object.keys(NETWORK_GRANTS)];
 
 /**
- * The scope the platform's sandbox will hold a run to, which can be wider than
- * the mode requested. Seatbelt filters by address; bwrap has no address filter,
- * so on Linux every mode above 'none' is full egress. Callers compare the two
- * and refuse when this is wider.
+ * The scope the platform's sandbox actually holds a run to, which can be
+ * wider than requested: bwrap has no address filter, so on Linux every mode
+ * above 'none' is full egress. Callers compare the two and refuse when wider.
  * @param {'all' | 'localhost' | 'none' | undefined} mode
  * @param {NodeJS.Platform} [platform]
  * @returns {'all' | 'localhost' | 'none'}

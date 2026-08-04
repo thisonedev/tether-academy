@@ -1,17 +1,11 @@
 // Runs each test file in its own process and aggregates the results.
 //
-// brittle-node can take several files at once, but the integration tests spin
-// up DHT testnets and Bare worker processes, and sharing one process across
-// every file made results depend on file order — worker-client timed out only
+// brittle-node can take several files at once, but sharing one process across
+// every file made results depend on file order; worker-client timed out only
 // when ~48 tests had already run ahead of it. A process per file removes that
 // coupling; the extra startup cost is noise next to a testnet handshake.
 //
 // Usage: node scripts/run-tests.mjs <dir> [...more dirs] [--filter <substring>]
-//
-// Each run prints PASS/FAIL + duration per file; the slowest files are
-// summarised at the end. --filter narrows the run to files whose relative
-// path matches the substring, so a single area can be exercised without
-// running the whole suite.
 
 import { spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';

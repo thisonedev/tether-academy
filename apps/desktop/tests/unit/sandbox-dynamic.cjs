@@ -1,8 +1,7 @@
 'use strict';
 
 // The dynamic allowlist: a JSON file the parent reads at spawn time to extend
-// the static baseline. This is how a new QVAC SDK or model opts into extra
-// paths without a code change.
+// the static baseline, letting a new QVAC SDK or model opt into extra paths without a code change.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -41,8 +40,7 @@ test('dynamic-allowlist - valid JSON round-trips', (t) => {
   t.alike(loadDynamicCapabilities(file), FIXTURE);
 });
 
-// Must throw rather than silently fall back to the baseline: a corrupt
-// allowlist that quietly disappears would be a confusing way to lose access.
+// Must throw rather than silently fall back to the baseline; a corrupt allowlist that quietly disappears is a confusing way to lose access.
 test('dynamic-allowlist - invalid JSON throws', (t) => {
   const file = path.join(tmpDir(t, 'sb-dynamic'), 'bad.json');
   fs.writeFileSync(file, '{ not valid');
@@ -89,9 +87,8 @@ function writeGrants(profile) {
   return [...profile.matchAll(/\(allow file-write\*[^(]*\(subpath "([^"]+)"\)\)/g)].map((m) => m[1]);
 }
 
-// The old comment above defaultDynamicPath() claimed the path was unwritable.
-// It was not, and one file write bought a permanent sandbox escape, so this
-// asserts against a real generated profile.
+// A stale comment above defaultDynamicPath() claimed the path was unwritable; it was not, and one file write bought a
+// permanent sandbox escape. This asserts against a real generated profile instead.
 test('dynamic-allowlist - no write rule covers the allowlist path', (t) => {
   const dp = defaultDynamicPath();
   t.ok(typeof dp === 'string' && dp.length > 0);
@@ -106,8 +103,7 @@ test('dynamic-allowlist - no write rule covers the allowlist path', (t) => {
   }
 });
 
-// The escalation the audit reproduced: an allowlist that grants write on its
-// own directory, so the next run's policy is whatever the last run wrote.
+// An allowlist that grants write on its own directory makes the next run's policy whatever the last run wrote.
 test('dynamic-allowlist - an allowlist cannot grant write on itself', (t) => {
   const file = path.join(tmpDir(t, 'sb-dynamic'), 'allowlist.json');
   const stateDir = path.dirname(path.dirname(defaultDynamicPath()));

@@ -1,20 +1,10 @@
-// Who is on the other end of a pair, after the handshake, and which device
-// keys the identity owner has revoked.
-//
-// `createVerification` owns the in-flight handshake sessions, the verification
-// waiters, and the claim-matching rule. `createRevocation` owns the revoked-
-// devices set and the bookkeeping that has to fire when it changes. Both are
-// plain factories; they take their collaborators explicitly so `index.cjs`
-// stays the one place that wires transport, exec, and pairing.
-//
-// The dependency runs one way: this file never imports `index.cjs`.
+// Handshake verification and device revocation as plain factories; collaborators
+// are passed in explicitly and this file never imports index.cjs.
 'use strict';
 
 function createVerification({
   identityHandshake,
-  // A getter, because the keypair is derived after this factory runs and is
-  // dropped again by close(). Capturing the value once meant signing every
-  // proof reply with whatever was there at wiring time.
+  // Getter, not a value: capturing the keypair once would sign with stale material.
   getSigningKeyPair,
   peers,
   identitySessions,
@@ -31,10 +21,8 @@ function createVerification({
     if (!session) return;
 
     if (msg.kind === identityHandshake.HELLO_KIND) {
-      // The first hello carries the device and identity keys the sender will
-      // prove possession of. A second hello is rejected wholesale: the proof
-      // is bound to the nonce, so allowing more than one would let a peer
-      // rebind an already-verified session to a key it has not proven.
+      // A second hello is rejected wholesale, since the proof is bound to the
+      // nonce and would rebind a verified session to an unproven key.
       if (session.remote) return;
       const remote = identityHandshake.readHello(msg);
       if (!remote) return;
@@ -47,9 +35,6 @@ function createVerification({
       );
     } else if (msg.kind === identityHandshake.PROOF_KIND) {
       if (!session.remote) return;
-      // Store the key the signature actually covered, not a boolean. A later
-      // hello cannot reach this field, and applyIdentityResult reads from
-      // here rather than from session.remote.
       session.verifiedDevicePublicKey = identityHandshake.verifyProofReply(msg, {
         discoveryKeyHex,
         nonce: session.nonce,
@@ -57,9 +42,6 @@ function createVerification({
       })
         ? session.remote.devicePublicKey
         : null;
-      // Same pinning for the identity half: only set if the same proof also
-      // attests the identity key. Both come from the same hello, so a
-      // different key on the wire cannot move this value either.
       session.verifiedIdentityPublicKey =
         session.remote.identityProven && session.verifiedDevicePublicKey
           ? session.remote.identityPublicKey
@@ -68,11 +50,7 @@ function createVerification({
     applyIdentityResult(discoveryKeyHex);
   }
 
-  /**
-   * Fold a completed handshake into the peer record. Both halves have to be in
-   * before anything is stored: the announced keys, and the signature showing the
-   * sender holds the device key it announced.
-   */
+  // Requires both the announced keys and a signature proving the device key.
   function applyIdentityResult(discoveryKeyHex) {
     const session = identitySessions.get(discoveryKeyHex);
     const peer = peers.get(discoveryKeyHex);
@@ -80,7 +58,6 @@ function createVerification({
     if (!session.remote || !session.verifiedDevicePublicKey) return;
     session.applied = true;
 
-    // Read the proven keys, not the announced ones. A second hello can no
     const devicePublicKey = session.verifiedDevicePublicKey;
     const identityPublicKey = session.verifiedIdentityPublicKey;
     const identityVerified = !!identityPublicKey;
@@ -109,8 +86,7 @@ function createVerification({
       return;
     }
 
-    // The guest took the host's identity from the invite link, which anyone can
-    // rewrite. Now that the host has proven one, the two have to agree.
+    // Invite links carry a host identity anyone can rewrite; the two must now agree.
     if (
       peer.role === 'guest' &&
       peer.hostIdentity &&
@@ -126,22 +102,18 @@ function createVerification({
       return;
     }
 
-    // Last: a result that ends in a drop wakes its waiters from dropPeer
-    // instead, once the peer entry is already gone.
+    // A result that ends in a drop wakes its waiters from dropPeer instead.
     settleVerificationWaiters(discoveryKeyHex);
   }
 
-  // Invite links have carried either key depending on whether the host had a
-  // root identity when it made the invite, so either is a match.
+  // Either key matches: invites have carried either depending on host identity.
   function claimMatches(claimed, remote) {
     if (claimed === remote.devicePublicKey) return true;
     return remote.identityProven && claimed === remote.identityPublicKey;
   }
 
   /**
-   * Whether the handshake has proven who is on the wire for this peer, and
-   * whether what it proved is what the peer claimed when it paired. A
-   * `pending` reason is not a failure: the proof reply may still be in flight.
+   * `pending` is not a failure because the reply may still be in flight.
    * @returns {{ ok: boolean, reason: string | null }}
    */
   function peerVerification(discoveryKeyHex) {
@@ -149,10 +121,7 @@ function createVerification({
     if (!peer) return { ok: false, reason: 'no-peer' };
     if (!peer.verifiedDevicePublicKey) return { ok: false, reason: 'pending' };
 
-    // userData is what the peer said about itself at pairing time, and a
-    // revoked device can put anything there. Once a key is proven the two
-    // have to agree, so a device cannot clear the pre-approval checks under
-    // a borrowed key.
+    // userData is self-reported; once proven, it must agree with the key.
     const claimedDevice = peer.userData?.devicePublicKey ?? null;
     if (typeof claimedDevice === 'string' && claimedDevice !== peer.verifiedDevicePublicKey) {
       return { ok: false, reason: 'device-key-mismatch' };
@@ -183,10 +152,7 @@ function createVerification({
     }
   }
 
-  /**
-   * Resolve once this peer's handshake has settled either way. A timeout
-   * counts as unverified, so a peer that never answers never runs.
-   */
+  /** Resolve once this peer's handshake has settled either way; a timeout counts as unverified. */
   function awaitPeerVerification(discoveryKeyHex, timeoutMs) {
     const current = peerVerification(discoveryKeyHex);
     if (current.reason !== 'pending') return Promise.resolve(current);
@@ -230,12 +196,7 @@ function createVerification({
 function createRevocation({ peers, pendingRequests, appendAudit, dropPeer, reject }) {
   let revokedDevices = new Set();
 
-  /**
-   * Replace the revoked-device set and act on it. Revoking a device the user
-   * is already paired with has to end that pairing, and withdraw any request
-   * from it still sitting on the approval screen. Otherwise revocation only
-   * applies to devices that were not going to be a problem anyway.
-   */
+  // Ends any pairing already using a revoked device and withdraws its pending requests.
   function setRevokedDevices(keys) {
     revokedDevices = new Set(Array.isArray(keys) ? keys : []);
     let dropped = 0;
@@ -266,9 +227,7 @@ function createRevocation({ peers, pendingRequests, appendAudit, dropPeer, rejec
     return typeof devicePublicKey === 'string' && revokedDevices.has(devicePublicKey);
   }
 
-  // Used by the exec-host closure to decide, on every run, whether a paired
-  // device has since been revoked. Reads `peers` fresh each call so the
-  // closure never pins a stale key.
+  // Reads `peers` fresh each call so the exec-host closure never pins a stale key.
   function getRevokedDeviceKey(discoveryKeyHex) {
     const device = peers.get(discoveryKeyHex)?.verifiedDevicePublicKey ?? null;
     return device && revokedDevices.has(device) ? device : null;

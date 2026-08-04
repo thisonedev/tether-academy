@@ -8,9 +8,7 @@ interface CodeBlockProps {
   title?: string;
 }
 
-// Files live in the shared courses package, not the web app. Walk up
-// from the web's cwd (apps/web) to the workspace root, then into
-// packages/courses/ before the relative path.
+// Files live in the shared courses package; walk up from the web's cwd (apps/web) to the workspace root, then into packages/courses/.
 const COURSES_ROOT = path.resolve(process.cwd(), '..', '..', 'packages', 'courses');
 
 export async function CodeBlock({ file, mode = 'answer', title }: CodeBlockProps) {

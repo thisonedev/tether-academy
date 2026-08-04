@@ -1,13 +1,9 @@
 // Pair-and-exec soak. Holds one pairing open and runs repeated execs for a
 // configurable duration, reporting sent / received / errors. Run before any
-// release that touches pairing or exec.
+// release that touches pairing or exec; watches a long-lived connection for
+// issues that only show up over time.
 //
 // Usage: node scripts/soak.mjs [--duration <ms>] [--interval <ms>]
-//
-// Default duration is 30s and the default interval is 250ms (so ~120 execs
-// against one pair). The integration suite already pins race scenarios at
-// the pairing level; this script exists to watch a long-lived connection
-// for issues that only show up over time.
 
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
@@ -32,8 +28,7 @@ const helpers = await import(
   path.join(desktopRoot, 'tests/helpers/index.cjs')
 );
 
-// Pair with autoApprove so this script can run unattended. Tests already
-// cover the approval path; a soak runs in the success case.
+// autoApprove so this script can run unattended; tests already cover the approval path.
 const { host, guest, testnet, discoveryKey } = await helpers.pairForExec(
   { teardown() { /* no brittle teardown here */ } },
   'soak',

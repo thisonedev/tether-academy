@@ -14,10 +14,9 @@ export function getLevel(points: number): number {
   return Math.floor(points / XP_PER_LEVEL) + 1;
 }
 
-// localStorage key. Rename only when changing the persistence schema; old keys hold old data.
+// Rename only when changing the persistence schema; old keys hold old data.
 const STORAGE_KEY = 'tether-academy-user';
 
-// Lesson key in the form `<chapterSlug>-<lessonSlug>`, e.g. "getting-started-load-model".
 function lessonKey(chapterSlug: string, lessonSlug: string): string {
   return `${chapterSlug}-${lessonSlug}`;
 }
@@ -45,14 +44,12 @@ export const useUserStore = create<UserState>()(
       signInPromptOpen: false,
       setUsername: (name) => set({ username: name, signInPromptOpen: false }),
       markLessonComplete: (chapterSlug, lessonSlug) => {
-        // Guest completions are silently dropped: progress requires an identity.
+        // Guest completions are dropped: progress requires an identity.
         if (!get().username) return;
         const key = lessonKey(chapterSlug, lessonSlug);
-        // Per-lesson XP, deduped: re-runs on the same lesson are no-ops.
         if (get().completedLessons.includes(key)) return;
         const newLessons = [...get().completedLessons, key];
         let nextPoints = get().points + POINTS_PER_LESSON;
-        // Chapter bonus fires when this lesson completes the chapter.
         const chapter = getCurriculumChapterBySlug(chapterSlug);
         const allDone =
           !!chapter &&
@@ -95,7 +92,6 @@ export const useUserStore = create<UserState>()(
   ),
 );
 
-// Returns true once the persisted state has rehydrated from storage.
 export function useUserHydrated(): boolean {
   return useSyncExternalStore(
     (onChange) => useUserStore.persist.onFinishHydration(onChange),

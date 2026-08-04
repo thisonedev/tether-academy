@@ -1,17 +1,9 @@
 // @ts-check
 'use strict';
 
-// Linux per-spawn sandbox via bubblewrap (bwrap). Creates a new user
-// + mount + PID namespace; per-path enforcement works because the
-// mount namespace only sees what we bind in. Needs unprivileged user
-// namespaces, and buildWrap probes for one before it promises any. If
-// bwrap is missing or the namespace is refused, buildWrap says so and
-// callers refuse the spawn.
-//
-// Per-syscall rules come from seccomp-filter.cjs and reach bwrap as a
-// descriptor, which is why buildWrap returns a filter for the spawning
-// side to open. Which binaries the child may execve is still not
-// restricted; that needs argument inspection this filter does not do.
+// Linux per-spawn sandbox via bubblewrap (bwrap): new user + mount + PID
+// namespace. buildWrap probes for unprivileged userns first; per-syscall
+// rules come from seccomp-filter.cjs. Execve is not restricted by binary name.
 
 const { execFileSyncCompat: execFileSync } = require('./exec-file-sync.cjs');
 const fs = require('fs');
@@ -21,8 +13,7 @@ const process = require('process');
 
 const seccomp = require('./seccomp-filter.cjs');
 
-// Where the child sees the compiled filter. The spawning side puts it at this
-// slot; index 0-2 are the child's stdio.
+// FD slot the child sees the compiled filter at; 0-2 are stdio.
 const SECCOMP_FD = 3;
 
 /**
@@ -40,16 +31,13 @@ const {
 
 const DEFAULT_BWRAP = '/usr/bin/bwrap';
 
-// A namespace either comes up in milliseconds or the kernel has refused it.
 const PROBE_TIMEOUT_MS = 5_000;
 
 // One probe per binary path, since the answer is a kernel setting.
 const probeCache = new Map();
 
 /**
- * The filter as a file descriptor, the only form bwrap takes it in. Written to
- * a temp file that is unlinked before it is used, so no path is left for
- * anything to rewrite between the write and bwrap's read.
+ * Writes the filter to a temp file, opens it, then unlinks it before use.
  * @param {Buffer} filter
  * @returns {number}
  */
@@ -63,18 +51,14 @@ function openSeccompFd(filter) {
   try {
     fs.unlinkSync(file);
   } catch {
-    // the descriptor is already open; the name is all that leaks
+    // fd is already open
   }
   return fd;
 }
 
 /**
- * Spawn bwrap once and see whether the namespace comes up with the filter on.
- * Distributions can ship bubblewrap with `kernel.unprivileged_userns_clone`
- * off, and the binary then exists while failing at the one step the whole
- * Linux boundary rests on. Trusting the file to be there reports confinement
- * the child never gets. The filter rides along because a bwrap too old for
- * `--seccomp` fails the same way and wants the same refusal.
+ * Probes whether bwrap can create a filtered namespace; some distros disable
+ * unprivileged userns, so the binary's presence alone doesn't guarantee it.
  * @param {string} bwrapPath
  * @param {Buffer} filter
  * @returns {{ ok: boolean, error: string | null }}
@@ -104,7 +88,7 @@ function probeNamespaces(bwrapPath, filter) {
       try {
         fs.closeSync(fd);
       } catch {
-        // already gone
+        // ignore
       }
     }
   }
@@ -132,16 +116,13 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
   args.push('--die-with-parent');
   args.push('--new-session');
 
-  // Scratch tmpfs so writes don't persist past the child. Before the binds,
-  // not after: bwrap applies operations in order, and a tmpfs mounted last
-  // would hide the per-run directory the host just wrote the snippet into.
+  // Scratch tmpfs so writes don't persist past the child; must precede the binds (bwrap applies ops in order).
   args.push('--tmpfs', '/tmp');
   args.push('--tmpfs', '/home');
 
   for (const p of platformFilter(cap.fs?.read ?? [], 'linux')) {
     if (!p) continue;
-    // Device nodes can't be bind-mounted. --dev-bind-try so
-    // missing ones don't fail the spawn.
+    // Device nodes can't be bind-mounted; --dev-bind-try so a missing one doesn't fail the spawn.
     if (p === '/dev/null') args.push('--dev-bind', p, p);
     else if (p === '/dev/urandom' || p === '/dev/random') {
       args.push('--dev-bind-try', p, p);
@@ -155,18 +136,13 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     args.push('--bind-try', p, p);
   }
 
-  // After the writable binds, since bwrap applies operations in order. Mostly
-  // the already-cached model files, one bind each.
-  //
-  // Unverified: nothing here has run against a real bwrap, and there is no
-  // bwrap equivalent of the macOS symlink-creation deny.
+  // After the writable binds since bwrap applies ops in order; untested against a real bwrap.
   for (const p of platformFilter(cap.fs?.readOnly ?? [], 'linux')) {
     if (!p) continue;
     args.push('--ro-bind-try', p, p);
   }
 
-  // With no /dev/snd bound there is no capture device, so the child gets an
-  // open error rather than the silence macOS returns.
+  // No /dev/snd bound means an open error here rather than macOS's silent fail.
   if (cap.device?.microphone) {
     args.push('--dev-bind-try', '/dev/snd', '/dev/snd');
     warnings.push('linux sandbox: microphone access granted to this run');
@@ -176,8 +152,8 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     warnings.push('linux sandbox: camera access granted to this run');
   }
 
-  // Network: unshare-all drops net; share only when mode is not 'none'.
-  // bwrap cannot filter by domain — mode 'all' / 'localhost' both share the host net.
+  // unshare-all drops net; share only when mode isn't 'none'. bwrap can't
+  // filter by domain, so 'all'/'localhost' both share the host net.
   const netMode = cap.network?.mode || 'all';
   if (netMode === 'none') {
     warnings.push('linux sandbox: network.mode=none (no --share-net)');
@@ -240,8 +216,7 @@ function buildWrap(cap, command, childArgs = [], { bwrapPath = DEFAULT_BWRAP } =
       seccompUnavailable: false,
     };
   }
-  // No table for this architecture means no filter, and an unfiltered child
-  // keeps ptrace and the mount calls. Refuse instead.
+  // No syscall table for this arch means no filter, so refuse rather than run unfiltered.
   const filter = seccomp.buildFilter();
   if (!filter) {
     warnings.push(

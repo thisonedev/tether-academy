@@ -1,8 +1,7 @@
 'use strict';
 
 // Lessons write plain relative paths ("output/image-gen/cat.png"), so the
-// child's cwd decides where they land. Not the app directory: peer-exec must
-// never modify the app or course content.
+// child's cwd decides where they land; never the app directory or course content.
 
 const fs = require('fs');
 const os = require('os');
@@ -29,8 +28,7 @@ function lessonOutputDir(homeDir) {
   return path.join(lessonHomeDir(homeDir), 'output');
 }
 
-// writeFileSync fails with ENOENT on a missing parent, so the host creates
-// these first. Read from the source, which covers user-edited paths too.
+// writeFileSync fails with ENOENT on a missing parent, so the host precreates these.
 function precreateOutputDirs(src, cwd) {
   const patterns = [
     /(outputParametersDir|checkpointSaveDir)\s*:\s*['"]([^'"]+)['"]/g,
@@ -55,11 +53,8 @@ function precreateOutputDirs(src, cwd) {
   }
 }
 
-// A lesson that hands a directory to the SDK gets its bytes written by the
-// native side, which never passes through the snippet's writeFileSync and so
-// never prints a [saved] line. A finetune writes adapter weights plus optimizer
-// state to a static path that nothing prunes, so diff the folder across the run
-// and name it in the output.
+// Native-side writes (e.g. finetune checkpoints) never pass through the
+// snippet's writeFileSync, so the output folder is diffed across the run instead.
 const NOTE_MIN_BYTES = 32 * 1024 * 1024;
 
 /** Every file under the output folder, keyed by path relative to it. */
@@ -98,9 +93,9 @@ function formatBytes(bytes) {
 }
 
 /**
- * What the run added, grouped by the folder each lesson owns, and only past a
- * size a person would care about. Growth counts as well as new files: a
- * resumed finetune rewrites a checkpoint in place.
+ * What the run added, grouped by folder, past a size worth mentioning.
+ * Growth and new files both count because a resumed finetune rewrites a
+ * checkpoint in place.
  * @param {Map<string, number>} before From snapshotOutputs, taken pre-run.
  * @returns {string} Chunk text to print, empty when there is nothing to report.
  */

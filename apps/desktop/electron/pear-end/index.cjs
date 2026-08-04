@@ -1,6 +1,6 @@
-// Facade owning identity/state/peer lifecycle. Wraps, doesn't absorb:
-// identity/manager.cjs and state-store.cjs stay directly requirable.
-// peer.cjs runs inside a Bare worker; worker-client.cjs proxies to it.
+// Facade owning identity/state/peer lifecycle. identity/manager.cjs and
+// state-store.cjs stay directly requirable; peer.cjs runs inside a Bare
+// worker, proxied via worker-client.cjs.
 const { createManager } = require('../identity/manager.cjs');
 const { createStore } = require('../state-store.cjs');
 const peer = require('./worker-client.cjs');
@@ -47,23 +47,19 @@ function createPearEnd(userDataDir, opts = {}) {
       attestation: idm.attestation(),
       revokedDevices: idm.revokedDeviceKeys(),
       auditPath,
-      // The app's resolved state directory. The capability profile's deny
-      // list names this path; without it, the profile's default disagrees
-      // with the actual location whenever the app was launched with
-      // `--storage` (the dev:host script, or any future userData override).
+      // The capability profile's deny list names this path; it must match
+      // the actual location even when launched with a `--storage` override.
       userData: userDataDir,
     });
     return true;
   }
 
-  // One init for every caller. The renderer's mount awaits this from several
-  // handlers at once, and an INIT per handler gave the worker a swarm and an
-  // event listener per handler.
+  // One init shared by every caller; an init per handler gave the worker a
+  // swarm and an event listener per handler.
   async function ensureReady(opts = {}) {
     if (!readyPromise) {
       readyPromise = initMesh(opts);
-      // Only success is worth keeping: identity may still be mid-onboarding,
-      // and a failed init should be retried by the next caller.
+      // Only success is cached; a failed init is retried by the next caller.
       readyPromise.then(
         (ok) => {
           if (!ok) readyPromise = null;
@@ -76,8 +72,7 @@ function createPearEnd(userDataDir, opts = {}) {
     return readyPromise;
   }
 
-  // Revocation only bites once the mesh knows about it. No-op before the worker
-  // is up: ensureReady() passes the current list at init.
+  // No-op before the worker is up: ensureReady() passes the current list at init.
   async function syncRevocations() {
     try {
       return await peer.setRevokedDevices(identity().revokedDeviceKeys());
@@ -87,16 +82,14 @@ function createPearEnd(userDataDir, opts = {}) {
     }
   }
 
-  // Mesh teardown for academy:identity:reset. The worker process stays alive
-  // for a future re-init, and dropping the cached promise sends the next
-  // ensureReady() through a real init instead of a torn-down swarm.
+  // Worker process stays alive for a future re-init; dropping the cached
+  // promise sends the next ensureReady() through a real init.
   async function closeMesh() {
     readyPromise = null;
     return peer.close();
   }
 
-  // Worker process termination before storage close. shutdownWorker() (not
-  // close()) actually kills the worker OS process.
+  // shutdownWorker() (not close()) actually kills the worker OS process.
   async function shutdown() {
     readyPromise = null;
     await peer.shutdownWorker().catch(() => {});

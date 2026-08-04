@@ -1,12 +1,8 @@
 'use strict';
 
-// Pins the renderer Content-Security-Policy. The same directives are emitted
-// in two places: the Electron main-process header and the web export's
-// <meta>. Both must name only the same origins and the same source-list, or
-// the renderer is parsing the wrong one. A remote origin in script-src is the
-// failure mode this guards: a CDN compromise, a TLS intercept, or a pinned-
-// range mistake would otherwise run code in the same origin that holds
-// window.academy.
+// Pins the renderer Content-Security-Policy, emitted in two places (the
+// Electron main-process header and the web export's <meta>) that must agree.
+// A remote origin in script-src is the failure mode this guards against.
 
 const test = require('brittle');
 const fs = require('node:fs');
@@ -19,8 +15,6 @@ const META_ONLY_POLICY = CSP_DIRECTIVES.join('; ');
 
 test('csp - script-src does not name any remote origin', (t) => {
   const csp = CONTENT_SECURITY_POLICY;
-  // Every directive with a source list. The regex stops at the first ';' or
-  // end of string, which is what the CSP grammar asks for.
   const directives = {};
   for (const d of csp.split(';').map((s) => s.trim()).filter(Boolean)) {
     const idx = d.indexOf(' ');
@@ -31,28 +25,23 @@ test('csp - script-src does not name any remote origin', (t) => {
     directives[d.slice(0, idx)] = d.slice(idx + 1);
   }
   for (const [name, value] of Object.entries(directives)) {
-    // frame-ancestors does not load code, but the same rule still applies:
-    // every named origin is an attack surface.
+    // frame-ancestors does not load code, but every named origin is still an attack surface.
     const hosts = value.match(/https?:\/\/[^\s]+/g) ?? [];
     t.alike(hosts, [], `${name} names no remote origin`);
   }
 });
 
 test('csp - the electron header and the web <meta> agree on the policy', (t) => {
-  // The Electron header is CONTENT_SECURITY_POLICY; the web <meta> is every
-  // directive except frame-ancestors, which a <meta> tag ignores anyway.
+  // The Electron header is CONTENT_SECURITY_POLICY; the web <meta> is every directive except frame-ancestors, which a <meta> tag ignores.
   const source = fs.readFileSync(WEB_LAYOUT, 'utf8');
-  // Extract just the string-literal entries from the contentSecurityPolicy
-  // array. Comments between them are fine; the policy is the concatenation.
-  // Each entry is a quoted directive like "default-src 'self'".
+  // Extracts the quoted directive string literals from the contentSecurityPolicy array.
   const directives = [];
   const re = /"((?:default|script|style|img|font|worker|connect|object|base|form)[^"]*)"/g;
   let m;
   while ((m = re.exec(source)) !== null) {
     directives.push(m[1]);
   }
-  // The web layout must include every directive the electron module exports
-  // (frame-ancestors excepted).
+  // The web layout must include every directive the electron module exports (frame-ancestors excepted).
   for (const directive of CSP_DIRECTIVES) {
     t.ok(directives.includes(directive), `${directive} is in both policies`);
   }

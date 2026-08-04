@@ -112,8 +112,7 @@ test('lesson-output - a lesson cannot mkdir its way out of the workspace', (t) =
   t.absent(fs.existsSync(path.join(path.dirname(path.dirname(dir)), 'escaped')));
 });
 
-// The lesson code only ever says `output/cat.png`, so the run has to announce
-// the real location or nobody can find the file.
+// The lesson code only ever says `output/cat.png`, so the run has to announce the real location or nobody can find the file.
 test('lesson-output - each write announces its absolute path', (t) => {
   const built = buildLesson({ source: 'fs.writeFileSync("output/cat.png", x);\n', cwd: COURSES });
   t.ok(built.includes('console.log("[saved] " + __academyResolve(p))'), 'path is absolute');
@@ -129,8 +128,7 @@ test('lesson-output - output lands in a named folder a person can find', (t) => 
   t.is(lessonOutputDir(home), path.join(home, 'Documents', 'Tether Academy', 'output'));
 });
 
-// Checkpoints are written by the addon, so no [saved] line announces them and
-// nothing deletes them. The run has to say where the bytes went.
+// Checkpoints are written by the addon, so no [saved] line announces them and nothing deletes them.
 function writeOutput(cwd, rel, bytes) {
   const abs = path.join(cwd, 'output', rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });

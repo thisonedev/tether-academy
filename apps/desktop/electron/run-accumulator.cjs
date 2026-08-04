@@ -1,12 +1,7 @@
-// Bounded accumulator for the stdout/stderr chunks a peer run emits. The
-// renderer has already seen every chunk live through sendChunk; this buffer
-// exists only to build the final { ok, output } string. Without a cap, a run
-// that prints in a loop grows main-process memory until the process dies —
-// the defect this caps.
-//
-// 1 MiB per stream; on overflow, keep the first HEAD_BYTES and the last
-// TAIL_BYTES and drop the middle, inserting one marker line naming how many
-// bytes were dropped.
+// Bounded accumulator for the stdout/stderr chunks a peer run emits, used to
+// build the final { ok, output } string without growing main-process memory
+// unbounded. 1 MiB per stream; on overflow, keeps the first HEAD_BYTES and
+// last TAIL_BYTES, dropping the middle behind one marker line.
 'use strict';
 
 const BUDGET_BYTES = 1024 * 1024;
@@ -33,11 +28,9 @@ function createAccumulator({ budgetBytes = BUDGET_BYTES } = {}) {
     if (typeof chunk !== 'string' || chunk.length === 0) return;
     const entry = ensure(stream);
     entry.tail += chunk;
-    // The tail itself cannot grow past the tail budget.
     if (entry.tail.length > tailBudget) {
       const overflow = entry.tail.length - tailBudget;
-      // Before head fills, fill it with the front of the stream we are
-      // about to slide off the tail; after head fills, count as dropped.
+      // Before head fills, use it to catch what's sliding off the tail; after, count as dropped.
       if (entry.head.length < headBudget) {
         const take = Math.min(headBudget - entry.head.length, overflow);
         entry.head += entry.tail.slice(0, take);

@@ -39,30 +39,22 @@ const DOCK_HIDE_SHIM = path.resolve(__dirname, '..', '..', 'electron', 'dock-hid
 
 // No answer is a denial. The prompt can be missed.
 const DEVICE_CONSENT_TIMEOUT_MS = 2 * 60_000;
-// How long a request waits for the identity handshake it raced. One round trip
-// on an already-open channel, so a wait this long means no answer is coming.
+// One round trip on an already-open channel; a wait this long means no answer is coming.
 const IDENTITY_WAIT_MS = 10_000;
-// Grace between SIGTERM and SIGKILL. Native inference ignores SIGTERM.
+// Native inference ignores SIGTERM, hence the grace before SIGKILL.
 const SIGKILL_GRACE_MS = 3_000;
-// A run alive this long has outlived any cancel sent to it. Force-kill it so
-// the slot frees on exit; the request that found it still gets refused.
+// A run alive this long has outlived any cancel sent to it; force-kill so the slot frees.
 const STALE_RUN_MS = 5 * 60_000;
-// After the host has received at least one chunk of output and then sees no
-// new bytes for this long, treat the run as substantively complete and
-// close it. SDK model workers can keep the child process alive past the
-// lesson's main flow, so a renderer waiting on child.on('exit') would
-// otherwise stay in Running. The BCI lessons hit this; the limit is set
-// above any quiet compute phase a real lesson can hit.
+// No new output for this long after the first chunk closes the run. SDK model
+// workers can keep the child alive past the lesson's main flow (BCI lessons
+// hit this), so waiting on child.on('exit') alone would stay stuck in Running.
 const RUN_FINAL_IDLE_MS = 30_000;
-// Fallback sealing: the key that decrypts the identity record is a file on the
-// same disk rather than a keychain entry. Running a peer's code on a device in
-// that state puts the device secret key and the root seed one bug away.
+// Fallback sealing: the identity record's decrypt key is a file on disk
+// rather than a keychain entry, one bug away from the device secret key.
 const UNSEALED_STORAGE_SCHEME = 'aes-gcm-local';
 
-// What a refused peer is told, keyed by the code sent alongside it. Fixed text,
-// so a failure carries nothing the host knows about its own disk, account, or
-// tooling. The entries that vary are built from the peer's own request, which
-// it already has.
+// What a refused peer is told, keyed by the code sent alongside it. Fixed
+// text: a failure carries nothing about the host's own disk, account, or tooling.
 const PEER_ERROR_TEXT = {
   'unsealed-storage':
     'Peer exec refused: this device has no OS keychain, so the identity record '
@@ -99,9 +91,8 @@ const PEER_ERROR_TEXT = {
   'rate-limited': 'Peer exec refused: too many requests from this device. Try again later.',
 };
 
-// Meta fields a peer may see. Each is either the peer's own input or a host
-// constant. Everything else, warnings and changed model names in particular,
-// names paths and stays in the local trail.
+// Meta fields a peer may see: each is either the peer's own input or a host
+// constant. Everything else (warnings, changed model names) stays local.
 const WIRE_SAFE_META = [
   'mode',
   'fileName',
@@ -124,9 +115,6 @@ function peerErrorText(code, meta) {
   return entry ?? 'Peer exec failed on this device.';
 }
 
-// Compose the reason text for a network prompt from detection plus any
-// declaration. Detection drives the wording; the declaration is appended
-// so the human answering sees both.
 function detectedNetReason(detectedNet, declared) {
   const parts = [];
   if (detectedNet.reason) parts.push(detectedNet.reason);
@@ -146,21 +134,17 @@ function wireSafeMeta(meta) {
 
 /**
  * A child is alive until it reports an exit. `child.killed` is not that check:
- * Node sets it once a signal has been *sent*, so a process that ignores
- * SIGTERM still reads as `killed`. Guarding escalation on `killed` is why
- * cancel used to report success while the workload kept running.
+ * Node sets it once a signal has been *sent*, so a process ignoring SIGTERM
+ * still reads as `killed`.
  */
 function isAlive(child) {
   return !!child && child.exitCode === null && child.signalCode === null;
 }
 
 /**
- * Signal the child's whole process group. Children are spawned detached, so the
- * group id is the child pid.
- *
- * The QVAC worker is a grandchild, and one left orphaned keeps its lock on the
- * registry corestore. That lock is per machine, so every later model download
- * fails with "File descriptor could not be locked" until someone kills it.
+ * Signal the child's whole process group (children spawn detached, so the
+ * group id is the child pid). An orphaned QVAC worker grandchild keeps its
+ * lock on the registry corestore, failing every later model download until killed.
  */
 function killGroup(child, signal) {
   if (!child?.pid) return false;
@@ -181,9 +165,7 @@ function removeDir(dir) {
   if (!dir) return;
   try {
     fs.rmSync(dir, { recursive: true, force: true });
-  } catch {
-    // best effort; it is under the OS temp dir either way
-  }
+  } catch {}
 }
 
 /**
@@ -214,22 +196,16 @@ function createExecHost(ctx) {
     awaitDeviceVerified = async () => ({ ok: false, reason: 'no-handshake' }),
   } = ctx;
 
-  // discoveryKey -> in-flight run. Present from the moment a request is
-  // accepted, including while it is parked on a human's device answer, so a
-  // peer cannot queue up N concurrent runs during the consent window.
+  // discoveryKey -> in-flight run, set from the moment a request is accepted
+  // (including while parked on a device answer), so one peer holds one slot.
   const runs = new Map();
   // Runs parked at the sandbox boundary awaiting a human answer.
   const deviceRequests = new Map();
 
   /**
-   * Refuse a run. The peer gets a stable `code` and the fixed text for it; the
-   * message the host actually produced stays in the local audit trail.
-   *
-   * A raw host error is reconnaissance. Sandbox setup failures carry the path
-   * they failed on, package preparation failures carry npm's output, and both
-   * name the account, its home directory layout, and which tools are installed
-   * where. One failed run hands a peer all of it without running anything.
-   *
+   * Refuse a run. The peer gets a stable `code` and fixed text for it; the
+   * message the host actually produced (which can name local paths and
+   * account details) stays in the local audit trail only.
    * @param {string} discoveryKeyHex
    * @param {keyof PEER_ERROR_TEXT} code
    * @param {string} localMessage what the host saw, for the audit trail only
@@ -333,8 +309,7 @@ function createExecHost(ctx) {
 
   /**
    * Report how a run ended, once. Whoever gets here first owns the outcome:
-   * finishRun sweeps the process group, so every later exit belongs to that
-   * sweep and not to the lesson.
+   * finishRun sweeps the process group, so every later exit belongs to that sweep.
    * @param {string} discoveryKeyHex
    * @param {object} run
    * @param {{ code: number | null, signal: string | null, source: string }} outcome
@@ -361,10 +336,9 @@ function createExecHost(ctx) {
   }
 
   /**
-   * Park the run on a human. One prompt covers everything the run asked for, so
-   * `network` rides alongside `devices`. `declared` carries through to the
-   * audit event so post-incident review can see what the lesson frontmatter
-   * said vs what the host's detector found.
+   * Park the run on a human. One prompt covers everything the run asked for.
+   * `declared` carries through to the audit event so it's clear what the
+   * lesson frontmatter said vs what the host's detector found.
    * @param {string} discoveryKeyHex
    * @param {{ devices: string[], network: string | null, declared?: { network?: string, device?: string[] } }} asks
    * @param {string | null} label
@@ -447,9 +421,8 @@ function createExecHost(ctx) {
   }
 
   /**
-   * Stop the run on this peer, whichever phase it is in. A run parked on a
-   * device prompt has no child yet, so it is cancelled by denying its own
-   * consent request; spawnRun then unwinds before wrapping anything.
+   * Stop the run on this peer, whichever phase it's in. A run parked on a
+   * device prompt has no child yet, so it's cancelled via its consent request.
    */
   function cancel(discoveryKeyHex, reason = 'cancelled') {
     const run = runs.get(discoveryKeyHex);
@@ -474,8 +447,6 @@ function createExecHost(ctx) {
   }
 
   function handleRequest(discoveryKeyHex, msg) {
-    // The cheapest refusal first: a peer that is already over its budget
-    // gets a stable code and the run never starts.
     if (!rateAllow('exec:request', discoveryKeyHex)) {
       fail(discoveryKeyHex, 'rate-limited', 'exec:request over budget for this peer', {
         mode: msg?.mode ?? null,
@@ -491,8 +462,6 @@ function createExecHost(ctx) {
       return;
     }
 
-    // Revocation drops the pairing, so reaching here means the drop is still in
-    // flight. Checked again anyway: this is the gate the run passes through.
     if (refusedAsRevoked(discoveryKeyHex)) return;
 
     const existing = runs.get(discoveryKeyHex);
@@ -510,11 +479,8 @@ function createExecHost(ctx) {
       return;
     }
     spawnRun(discoveryKeyHex, msg).catch((err) => {
-      // A throw from inside spawnRun is what makes the silent failure
-      // (peer exec returns nothing, run directory leaks). Run the same
-      // cleanup fail() / finishRun() take on a deliberate refusal, so the
-      // peer gets a stable code, the audit event lands, and the run
-      // directory is removed.
+      // Run the same cleanup a deliberate refusal takes, so an unhandled
+      // throw doesn't leave a silent failure with a leaked run directory.
       console.warn('[peer] spawnRun failed:', err?.message ?? err);
       const run = runs.get(discoveryKeyHex);
       fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), {
@@ -526,8 +492,7 @@ function createExecHost(ctx) {
     });
   }
 
-  // Peer-exec always requires a real kernel sandbox. Never fall open to naked
-  // spawn. Async because a device request waits on a human.
+  // Async because a device request waits on a human.
   async function spawnRun(discoveryKeyHex, msg) {
     const {
       code: rawCode,
@@ -546,7 +511,7 @@ function createExecHost(ctx) {
       if (mode !== 'inline' && mode !== 'file') {
         throw new Error(`exec: mode must be 'inline' or 'file', got ${mode}`);
       }
-      // Basename on the host — never trust remote path segments.
+      // Basename on the host; never trust remote path segments.
       fileName = sanitizeExecFileName(path.basename(String(rawFileName || 'snippet.mts')));
     } catch (err) {
       fail(discoveryKeyHex, 'invalid-request', err?.message ?? String(err), {
@@ -573,10 +538,9 @@ function createExecHost(ctx) {
     // Before the first await, so the slot covers the waits below.
     runs.set(discoveryKeyHex, run);
 
-    // Pairing gets a human's approval. The handshake is what proves which
-    // device key is on the wire, and a guest that pipelines a request on
-    // channel open reaches here ahead of its own proof reply. Everything below
-    // that reads a device key needs this wait to have happened.
+    // A guest pipelining a request on channel open can reach here ahead of
+    // its own identity proof; everything below that reads a device key needs
+    // this wait to have happened first.
     run.phase = 'awaiting-identity';
     const verified = await Promise.race([
       awaitDeviceVerified(discoveryKeyHex, IDENTITY_WAIT_MS),
@@ -597,7 +561,6 @@ function createExecHost(ctx) {
       finishRun(discoveryKeyHex, run);
       return;
     }
-    // The first read of the revocation list against a key nobody self-reported.
     if (refusedAsRevoked(discoveryKeyHex)) {
       finishRun(discoveryKeyHex, run);
       return;
@@ -636,19 +599,15 @@ function createExecHost(ctx) {
       appendAudit('peer:exec:mcp-warmed', { discoveryKey: discoveryKeyHex, packages: wanted });
     }
 
-    // A lesson whose dependency needs Node builtins runs on the app's own
-    // Electron binary instead. Same sandbox profile either way — the kernel
-    // rules come from the capability, not from which interpreter is spawned —
-    // so this widens the child's standard library, not its permissions.
+    // A lesson needing Node builtins runs on Electron's own binary instead;
+    // same sandbox profile either way, so this widens the standard library,
+    // not the permissions.
     const nodeOnly = detectNodeOnly(code);
     const runtime = nodeOnly ? 'node' : 'bare';
     run.runtime = runtime;
 
-    // Both decided host-side from the code, not from the peer's claim. A denial
-    // refuses the run: a muted mic and a download that waits on a socket that
-    // never opens both look like a lesson that does not work. The declared
-    // frontmatter widens the union but never narrows it; the host's detector
-    // stays the trust boundary.
+    // Decided host-side from the code, not the peer's claim. Declared
+    // frontmatter can only widen this union, never narrow it.
     const detectedDevices = detectDeviceNeeds(code);
     const detectedNet = detectNetworkNeed(code);
     const declared = msg.declared ?? {};
@@ -663,8 +622,8 @@ function createExecHost(ctx) {
     const netReason = detectedNetReason(detectedNet, declared);
     const wantedDevices = Array.from(new Set([...detectedDevices, ...declaredDevices]));
 
-    // A loopback ask under bwrap comes out as full egress, and the human who
-    // approved "this machine only" did not approve that. So refuse it.
+    // A loopback ask under bwrap comes out as full egress, wider than what
+    // was approved, so refuse rather than silently widen it.
     const netScope = sandbox.enforcedNetworkScope(netMode);
     if (netScope !== netMode) {
       fail(
@@ -717,11 +676,8 @@ function createExecHost(ctx) {
       return;
     }
 
-    // A cached model the app did not download is one this run's inference
-    // engine would parse anyway. Stat plus recorded hash is the steady-state
-    // path: a hash-on-record costs one stat, no read. The first read for an
-    // unrecorded file happens here, off the swarm path, with setImmediate
-    // yielding so the DHT can breathe while the bytes stream.
+    // Stat plus recorded hash is the steady-state path (one stat, no read);
+    // an unrecorded file gets its first read here instead, off the swarm path.
     const wantedModels = referencedModels(code);
     let changedModels = [];
     let mismatchedModels = [];
@@ -809,9 +765,8 @@ function createExecHost(ctx) {
           grants,
           runDir: run.fileDir,
           runtime,
-          // The host's resolved userData, so the capability profile denies
-          // the real state directory rather than the home-default. Without
-          // this, `--storage` makes the two diverge.
+          // Real resolved userData, so the profile denies the actual state
+          // dir even under a `--storage` override.
           userData: getUserData(),
         },
         'qvac',
@@ -822,8 +777,6 @@ function createExecHost(ctx) {
     }
 
     if (!wrap || !wrap.sandboxed) {
-      // sandboxRefusalMessage names paths and platform detail, and the
-      // warnings carry more of both, so both stay on this side of the wire.
       const message = sandboxRefusalMessage(wrap, wrapErr);
       fail(discoveryKeyHex, 'sandbox-unavailable', message, {
         mode,
@@ -860,7 +813,6 @@ function createExecHost(ctx) {
       warnings: wrap.warnings ?? [],
     });
 
-    // What the cache held before the run, so a failure can undo what it added.
     try {
       run.modelsBefore = new Set(scan().keys());
     } catch {
@@ -892,9 +844,7 @@ function createExecHost(ctx) {
       if (seccompFd !== null) {
         try {
           fs.closeSync(seccompFd);
-        } catch {
-          // spawn may have consumed it already
-        }
+        } catch {}
       }
     }
     run.child = child;
@@ -909,10 +859,6 @@ function createExecHost(ctx) {
     sendReply(discoveryKeyHex, { kind: 'started', mode, fileName, label });
 
     const stderrFilter = createNoiseFilter();
-    // When the child is alive but has not produced output for RUN_FINAL_IDLE_MS
-    // after the first chunk, the SDK's model worker is keeping the process
-    // alive past the lesson's main flow. Force the run closed so the
-    // renderer returns to idle.
     let firstChunkAt = 0;
     let finalIdleTimer = null;
     const armFinalIdle = () => {
@@ -949,20 +895,16 @@ function createExecHost(ctx) {
     });
     child.on('exit', (exitCode, signal) => {
       if (finalIdleTimer) clearTimeout(finalIdleTimer);
-      // Whatever already reported this run also killed the group on its way
-      // out, so this exit is the host's own SIGKILL rather than the lesson's
-      // result. Reporting it turned a finished run into a stopped one.
+      // A run already reported also already swept the group, so a later
+      // exit event here belongs to that sweep, not to the lesson.
       if (!isCurrent(discoveryKeyHex, run)) return;
       const tail = stderrFilter.end();
       if (tail) sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data: tail });
 
-      // Not through stderrFilter: the host wrote this, not the child.
       try {
         const note = describeNewOutputs(run.outputsBefore ?? new Map(), lessonCwd());
         if (note) sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data: note });
-      } catch {
-        // advisory only
-      }
+      } catch {}
 
       // Fail closed on SIGTRAP: do not re-run unsandboxed.
       if (signal === 'SIGTRAP' && run.useKernelSandbox && !run.cancelled) {

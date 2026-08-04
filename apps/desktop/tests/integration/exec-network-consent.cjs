@@ -16,9 +16,7 @@ const {
 
 const PAIR_TIMEOUT_MS = 45_000;
 
-// A raw TCP connect: the socket is what the profile permits or refuses, and it
-// needs nothing the Bare child lacks. Reports a definite outcome either way. The
-// address is assembled at runtime, so the source itself names no host.
+// A raw TCP connect, reporting a definite outcome either way; the address is assembled at runtime, so the source itself names no host.
 const REACH_PROBE = `
   ${bareRequires('process', 'net')}
   const done = (o) => { console.log('PROBE:' + JSON.stringify(o)); process.exit(0); };
