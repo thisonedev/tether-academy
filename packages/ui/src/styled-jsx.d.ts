@@ -1,5 +1,4 @@
-// Augment React's JSX to include the `jsx` prop on <style>, which
-// styled-jsx adds at compile time but is not in the standard React types.
+// Adds the `jsx` prop on <style>, which styled-jsx injects at compile time but standard React types lack.
 import 'react';
 
 declare module 'react' {

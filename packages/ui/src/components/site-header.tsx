@@ -8,7 +8,6 @@ import { WindowControls } from './window-controls.js';
 import { useUserStore } from '@academy/core';
 
 export function SiteHeader() {
-  // Skip rendering the auth control until after mount
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 

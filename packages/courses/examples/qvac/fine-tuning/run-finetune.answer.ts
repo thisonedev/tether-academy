@@ -13,9 +13,10 @@ async function main() {
       },
       numberOfEpochs: 1,
       learningRate: 1e-4,
+      lrMin: 1e-8,
       loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
       assistantLossOnly: true,
-      outputParametersDir: "../../apps/desktop/output/finetune/",
+      outputParametersDir: "output/finetune/",
     },
   });
 

@@ -6,7 +6,9 @@ name: Verify lessons
 #     against its vendored answer.ts
 #   - sync:examples — vendored answer.ts files only use callables
 #     that still exist in the matched upstream file
-# Runs daily at 06:00 UTC. Manual dispatch for re-runs.
+# Runs daily at 06:00 UTC. Manual dispatch for re-runs. Deliberately not on
+# pull_request: both checks execute vendored lesson code, and a fork PR is
+# free to rewrite that code.
 # On drift, edit the matching examples/qvac/<lesson>.answer.ts + the
 # lesson text, then commit. Neither check ever modifies files.
 
@@ -34,13 +36,15 @@ jobs:
         with:
           version: 9.15.9
 
+      # Scoped by trigger, so a pull request cannot seed a cache that a
+      # protected-branch run later picks up through the prefix fallback.
       - name: cache pnpm store
         uses: actions/cache@v5
         with:
           path: ~/.local/share/pnpm/store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-${{ github.event_name == 'pull_request' && 'pr' || 'trunk' }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-
+            ${{ runner.os }}-pnpm-${{ github.event_name == 'pull_request' && 'pr' || 'trunk' }}-
 
       - name: install
         run: pnpm install --frozen-lockfile

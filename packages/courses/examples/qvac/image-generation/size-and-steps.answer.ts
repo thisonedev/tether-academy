@@ -9,6 +9,10 @@ async function main() {
       llmModelSrc: QWEN3_4B_Q4_K_M,
       vaeModelSrc: FLUX_2_KLEIN_4B_VAE,
     },
+    onProgress: ({ percentage, downloaded, total }) => {
+      const mb = (n) => (n / 1e6).toFixed(1);
+      console.log(`▸ Downloading ${percentage.toFixed(0)}% (${mb(downloaded)}/${mb(total)} MB)`);
+    },
   });
 
   const result = diffusion({
@@ -20,10 +24,16 @@ async function main() {
     seed: 42,
   });
 
+  if (result.progressStream) {
+    for await (const step of result.progressStream) {
+      console.log(`▸ step ${step.step}/${step.totalSteps}`);
+    }
+  }
+
   const outputs = await result.outputs;
   const firstImage = outputs[0];
   if (!firstImage) throw new Error("No image returned from diffusion");
-  fs.writeFileSync("../../apps/desktop/output/image-gen/cat-watercolor.png", firstImage);
+  fs.writeFileSync("output/image-gen/cat-watercolor.png", firstImage);
   console.log(`Generated ${outputs.length} image`);
 
   await unloadModel({ modelId });

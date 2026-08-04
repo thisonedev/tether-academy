@@ -19,11 +19,12 @@ hints:
   - "finetune() takes { modelId, options: {...} } and returns a handle. The handle has progressStream and result."
   - "options.trainDatasetDir points at a HuggingFace chat JSONL file (one JSON object per line with messages: [{role, content}, ...])."
   - "options.numberOfEpochs controls how many full passes through the dataset. 1 is a sensible first run; 2+ overfits small datasets fast."
-  - "The finetune worker can crash (SIGABRT) during cleanup after the last batch. The training and the adapter write finish before the crash, so wrap the await in try/catch and read the loss from the last progress tick."
+  - "options.lrMin is the floor the learning-rate decay stops at. Without it the last step trains at 0 and the native optimizer aborts the worker; 1e-8 is what the SDK's own example uses."
+  - "The finetune worker can still crash (SIGABRT) after a tick has arrived, so wrap the await in try/catch and read the loss from the last progress tick."
 expectedOutput:
   - "▸ epoch=1 step=1 batch=1/16 train loss="
-  - "▸ Training completed through step"
-  - "Adapter written to outputParametersDir"
+  - "▸ epoch=1 step=16 batch=16/16 train loss="
+  - "▸ Result status: COMPLETED"
 ---
 
 Now that we've confirmed the base model is fine-tunable, it's time to actually run a training job.
@@ -42,9 +43,10 @@ const handle = finetune({
     validation: { type: "dataset", path: "./examples/qvac/fine-tuning/input/small_eval_HF.jsonl" },
     numberOfEpochs: 1,
     learningRate: 1e-4,
+    lrMin: 1e-8,
     loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
     assistantLossOnly: true,
-    outputParametersDir: "../../apps/desktop/output/finetune/",
+    outputParametersDir: "output/finetune/",
   },
 });
 ```
@@ -66,16 +68,24 @@ const result = await handle.result;
 console.log("▸ Result status:", result.status);
 ```
 
-The data files at `./examples/qvac/fine-tuning/run-finetune/small_train_HF.jsonl` live next to this lesson's code. The output adapters go to `../../apps/desktop/output/finetune/` (the desktop app is the runtime, generated files live there).
+The data files at `./examples/qvac/fine-tuning/run-finetune/small_train_HF.jsonl` live next to this lesson's code. The output adapters go to `output/finetune/` (the desktop app is the runtime, generated files live there).
 
-## Known SDK quirk
+## Keep the learning rate above zero
 
-The bare worker that runs the trainer can crash with `SIGABRT` during cleanup after the last batch. Training and the adapter write complete before the crash, so the loss/accuracy you see are real. The answer wraps the `progressStream` loop in `try/catch` and swallows the SDK's `WORKER_CRASHED` error so the user just sees a clean "Adapter written" line. If something fails before any tick lands, the error is rethrown.
+The trainer decays the learning rate over the run. Left alone, the last step gets a rate of exactly `0`, and the native optimizer asserts on it:
+
+```
+GGML_ASSERT(opt_pars.adamw.alpha > 0.0f) failed
+```
+
+That assert aborts the whole worker with `SIGABRT` in the final batch, minutes into a run. `lrMin: 1e-8` is the floor the decay stops at, so the last step still has a rate to train with. Set it on every fine-tune.
+
+The answer still wraps the `progressStream` loop in `try/catch`: an aborted worker surfaces as `WORKER_CRASHED`, and the loss from the last tick and the adapter on disk are worth reporting even then. If something fails before any tick lands, the error is rethrown.
 
 > Note: `learningRate: 1e-4` is a reasonable starting point for LoRA on a Qwen3 600M. If you're training a larger model or a smaller one, scale by the parameter count or follow the dataset author's recommendation.
 
 ## Put it to the test
 
-1. Call `finetune({ modelId, options: { trainDatasetDir, numberOfEpochs: 1, learningRate: 1e-4, loraModules, assistantLossOnly, outputParametersDir } })` and store the handle.
+1. Call `finetune({ modelId, options: { trainDatasetDir, numberOfEpochs: 1, learningRate: 1e-4, lrMin: 1e-8, loraModules, assistantLossOnly, outputParametersDir } })` and store the handle.
 2. Loop through `handle.progressStream`, logging the epoch/step/batch/phase/loss/accuracy/eta for each tick.
-3. Await `handle.result` inside a `try/catch` and log `result.status` on success, or the last tick's loss/accuracy on the cleanup crash.
+3. Await `handle.result` inside a `try/catch` and log `result.status` on success, or the last tick's loss/accuracy if the worker aborts.

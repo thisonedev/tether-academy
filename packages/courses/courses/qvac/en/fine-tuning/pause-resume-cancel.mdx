@@ -80,7 +80,9 @@ const cancelResult = await finetune({ operation: "cancel", modelId });
 console.log("▸ Cancelled status:", cancelResult.status);
 ```
 
-Pause and resume both keep our saved checkpoints under `checkpointSaveDir`. Cancel drops the in-flight run but leaves any completed checkpoints intact, so we don't lose what we've already trained.
+Pause writes a checkpoint under `checkpointSaveDir` and resume consumes it, so the pair costs us one checkpoint on disk for as long as the run stays paused. Cancel clears it too.
+
+There is also `checkpointSaveSteps: N`, which writes a checkpoint every N steps as a safety net for a long run. We leave it off here. Each periodic checkpoint holds optimizer state on top of the adapter weights, every run writes to the same directory, and neither the SDK nor the app ever deletes one. Turn it on for real training and budget the disk for it.
 
 > Note: pause and cancel are both fire-and-forget at the SDK level. We `await` them to confirm the operation completed, but the returned promise resolves as soon as the trainer acknowledges the request.
 

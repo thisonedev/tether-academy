@@ -149,15 +149,35 @@ Two tuning knobs to revisit if the loop still misbehaves. If VAD commits segment
 
 > Note: the `isSpeaking` flag drops the transcripts after Whisper processes them, but the mic is still recording the whole time. Pausing the ffmpeg pipe would let the buffer pile up, so we keep the pipe draining and drop the transcripts in software. The trade-off is a little extra VAD work on audio we'll throw away, in exchange for never stalling on a full buffer.
 
-The SDK installs its own `SIGINT` / `SIGTERM` handler that aborts in-flight RPC streams on shutdown. The abort rejects any pending `session.write()` or `unloadModel()` call with a `WorkerShutdownError`. The bare-rpc socket also emits an `RPCError` with `code: 'CHANNEL_CLOSED'` on the same teardown path. Both surface as unhandled stream errors. The `process.on("uncaughtException", ...)` filter ignores the shutdown noise and re-throws anything else:
+The SDK installs its own `SIGINT` / `SIGTERM` handler that aborts in-flight RPC streams on shutdown. The abort rejects any pending `session.write()` or `unloadModel()` call with a `WorkerShutdownError`. The bare-rpc socket also emits an `RPCError` with `code: 'CHANNEL_CLOSED'` on the same teardown path. Both surface as unhandled stream errors. The `process.on("uncaughtException", ...)` filter ignores the shutdown noise and re-throws anything else. The lesson scopes its Sets to avoid shadowing the runner preamble's globals of the same name:
 
 ```ts
+const LESSON_TEARDOWN_NAMES = new Set([
+  "WorkerShutdownError", "WorkerCrashedError", "BareRuntimeBinaryNotFoundError",
+  "InferenceCancelledError", "TranscriptionFailedError", "TranslationFailedError",
+  "TextToSpeechFailedError", "TextToSpeechStreamFailedError", "AbortError",
+]);
+const LESSON_TEARDOWN_CODES = new Set([
+  "ABORT_ERR", "CHANNEL_CLOSED", "MODEL_NOT_LOADED", "MODEL_WAS_UNLOADED",
+  "WORKER_SHUTDOWN", "RPC_CONNECTION_FAILED",
+]);
+function isTeardown(err) {
+  if (!err) return true;
+  if (LESSON_TEARDOWN_NAMES.has((err.name || "").toString())) return true;
+  const code = (err.code || "").toString();
+  if (LESSON_TEARDOWN_CODES.has(code)) return true;
+  const msg = (err.message || String(err) || "").toString();
+  if (/\bis shutting down\b/i.test(msg)) return true;
+  if (/\bin-flight rpc\b/i.test(msg)) return true;
+  return false;
+}
 process.on("uncaughtException", (err) => {
-  if (err instanceof WorkerShutdownError) return;
-  if (err?.code === "CHANNEL_CLOSED") return;
+  if (isTeardown(err)) return;
   throw err;
 });
 ```
+
+Inside the turn body, the same teardown error families fire whenever an RPC drains after `unloadModel`. So wrap each per-turn SDK call in a `try { ... } catch (err) { if (!isTeardown(err)) ... }` and skip the rest of the turn, otherwise a single Stop spawns dozens of `Transcription failed: Model X unloaded` lines.
 
 ## Put it to the test
 
@@ -165,4 +185,4 @@ process.on("uncaughtException", (err) => {
 2. Define `POST_PLAYBACK_COOLDOWN_MS = 300`, `MIN_UTTERANCE_CHARS = 3`, `isMeaningfulTranscript(text)`, `sleep(ms)`, and `let isSpeaking = false`.
 3. Gate on `ffmpeg` and `ffplay` being on `PATH` at startup. Define the WAV helpers (`createWavHeader`, `int16ArrayToBuffer`, `playAudio`) and the mic helper (`startMicrophone`) above `main`.
 4. Open a `const session = await transcribeStream({ modelId: asrModelId })` session, then `const ffmpeg = startMicrophone(...)`, then `ffmpeg.stdout.on("data", (chunk) => { if (isSpeaking) return; session.write(chunk) })`.
-5. Iterate with `for await (const rawText of session)`. Skip transcripts while `isSpeaking`, skip non-meaningful ones, push user turn into `history`, wrap completion + textToSpeech in a `try/finally` that flips `isSpeaking = true` at the start and `false` at the end. After `await ttsResult.buffer`, wrap the samples in a WAV header, `playAudio(wavBuffer)`, then `await sleep(POST_PLAYBACK_COOLDOWN_MS)`. Wire the `WorkerShutdownError` filter to `uncaughtException` so the SDK's shutdown abort doesn't dump a stack trace.
+5. Iterate with `for await (const rawText of session)`. Skip transcripts while `isSpeaking`, skip non-meaningful ones, push user turn into `history`, wrap completion + textToSpeech in a `try/finally` that flips `isSpeaking = true` at the start and `false` at the end. After `await ttsResult.buffer`, wrap the samples in a WAV header, `playAudio(wavBuffer)`, then `await sleep(POST_PLAYBACK_COOLDOWN_MS)`. Wire the teardown filter to `uncaughtException` and to each per-turn SDK call so the SDK's shutdown abort doesn't dump a stack trace.

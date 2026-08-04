@@ -23,21 +23,20 @@ const lessonArgvSlot = z.object({
 });
 
 export const lessonFrontmatter = frontmatterSchema.extend({
-  // Upstream SDK file this lesson's answer was vendored from. Path is
-  // relative to the local upstream snapshot. The sync workflow reads
-  // this to detect API drift and to refresh the vendored copy.
+  // Upstream SDK file this lesson's answer was vendored from; the sync workflow uses it to detect drift and refresh the copy.
   sourceExample: z.string().optional(),
-  // sha256-prefix hash of the upstream file at last review. Refreshed by
-  // the sync script; mismatches in CI flag stale vendored copies.
+  // sha256-prefix hash of the upstream file at last review; mismatches in CI flag stale vendored copies.
   sourceExampleHash: z.string().optional(),
   // Set to true to skip this lesson from the sync workflow.
   noSync: z.boolean().optional(),
-  // Pedagogical fields. Tests run against the runner's editor, hints
-  // progressively unlock, expectedOutput drives the simulated Run.
+  // Pedagogical fields: tests run against the runner's editor, hints progressively unlock, expectedOutput drives the simulated Run.
   hints: z.array(z.string()).optional(),
   expectedOutput: z.array(z.string()).optional(),
   tests: z.array(lessonTest).optional(),
   platforms: z.array(z.enum(['node', 'web', 'mobile', 'desktop'])).optional(),
   // argv slots the runner resolves before executing the lesson's snippet.
   argv: z.array(lessonArgvSlot).optional(),
+  // Hints for the consent prompt, unioned with the host's own detectors (the real trust boundary); network is ordered none < localhost < all.
+  network: z.enum(['none', 'localhost', 'all']).optional(),
+  device: z.array(z.string()).optional(),
 });

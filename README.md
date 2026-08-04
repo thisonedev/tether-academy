@@ -20,7 +20,7 @@ pnpm install
 ```bash
 pnpm dev          # Next.js dev with HMR on :3000
 pnpm build        # build packages + web static export to apps/web/out/
-pnpm start        # alias: pnpm start:web — serve the static export on :3000
+pnpm start        # alias: pnpm start:web; serve the static export on :3000
 ```
 
 See `apps/web/README.md` for the full web build and dev details.
@@ -34,12 +34,6 @@ pnpm start:desktop    # open the Electron shell
 
 The desktop loads `apps/web/out/`. To hot-reload web changes into the desktop, run `pnpm dev` in one terminal and `PEAR_DEV_URL=http://localhost:3000 pnpm start:desktop` in another. See `apps/desktop/README.md` for storage (Corestore) and deep-link details.
 
-### Build everything
-
-```bash
-pnpm build            # packages first, then web
-```
-
 ## Layout
 
 ```
@@ -49,13 +43,12 @@ tether-academy/
     desktop/    Electron 40 + Pear Runtime. See apps/desktop/README.md.
   packages/
     config/         Shared TypeScript + Biome base config
-    validation/     Zod schemas (frontmatter, IPC payloads)
-    academy-bridge/ Shared IPC type contract (window.academy)
+    validation/     Zod schemas (frontmatter, IPC payloads, window.academy contract)
+    sandbox-types/  Shared TypeScript types for the OS-level sandbox
     core/           Zustand store + storage adapter
     ui/             React components (lesson workspace, code block, etc.)
     courses/        Curriculum, lesson MDX, vendored examples, sync/verify scripts
-  .github/workflows/  deploy.yml, verify-lessons.yml
-  checkpoints/    Migration logs and Python helpers
+  .github/workflows/  deploy.yml, test-desktop.yml, verify-lessons.yml
 ```
 
 Each app and package has its own `package.json` and `tsconfig.json` (extending `packages/config/tsconfig.base.json`).
@@ -89,11 +82,12 @@ pnpm check:yaml    # validate every lesson's YAML frontmatter against the zod sc
 ## Keeping lessons in sync with the upstream SDK
 
 ```bash
-pnpm sync:examples
+pnpm sync:examples          # print per-lesson sync status
+pnpm sync:examples:check    # CI mode, exit 1 on any drift
 ```
 
 | Status | Exit | Meaning | Fix |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `✓ ok` | 0 | Vendored calls are a subset of upstream's | Nothing |
 | `-` skipped | 0 | Lesson has no `sourceExample` frontmatter | Nothing |
 | `✗ api-drift` | 1 | Vendored file calls something upstream no longer has | Edit the vendored copy + lesson text, or re-point `sourceExample` |
@@ -102,23 +96,10 @@ pnpm sync:examples
 
 The vendored `.answer.ts` is a pedagogical subset of upstream, not a verbatim copy, so the script does not auto-overwrite it. To refresh a vendored copy after an upstream rename, edit the file directly and commit.
 
-## Top-level commands
+## Funding
 
-| Command | What |
-|---|---|
-| `pnpm dev` | Web dev server (Turbopack) |
-| `pnpm build` | Build all packages, then the web |
-| `pnpm start:web` (alias: `pnpm start`) | Serve the web static export on `:3000` |
-| `pnpm start:desktop` | Open the Electron shell |
-| `pnpm lint` / `pnpm check` / `pnpm format` | Biome (currently web-only; see above) |
-| `pnpm verify:tests` / `pnpm verify:tests:check` | Lesson tests (routed to `@academy/courses`) |
-| `pnpm check:yaml` | Lesson frontmatter check (routed to `@academy/courses`) |
-| `pnpm sync:examples` / `pnpm sync:examples:check` | Lesson sync with upstream SDK (routed to `@academy/courses`) |
+This is a community-owned project.
 
-## Contribution
+Buy me a coffee (USDT/USDC/ETH): `0x409072a91aa81C9759E1170993e29F8Ec83E6405`
 
-You can support this work via donation:
-
-```
-0x409072a91aa81C9759E1170993e29F8Ec83E6405
-```
+For sponsorships or grant inquiries, contact [here](https://thisonedev.github.io/#contact).

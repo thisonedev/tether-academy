@@ -16,13 +16,22 @@ async function main() {
       llmModelSrc: QWEN3_4B_Q4_K_M,
       vaeModelSrc: FLUX_2_KLEIN_4B_VAE,
     },
+    onProgress: ({ percentage, downloaded, total }) => {
+      const mb = (n) => (n / 1e6).toFixed(1);
+      console.log(`▸ Downloading ${percentage.toFixed(0)}% (${mb(downloaded)}/${mb(total)} MB)`);
+    },
   });
 
   const result = diffusion({ modelId, prompt: "a quiet harbor at dawn" });
+  if (result.progressStream) {
+    for await (const step of result.progressStream) {
+      console.log(`▸ step ${step.step}/${step.totalSteps}`);
+    }
+  }
   const outputs = await result.outputs;
   const first = outputs[0];
   if (!first) throw new Error("No image returned from diffusion");
-  fs.writeFileSync("../../apps/desktop/output/image-gen/harbor.png", first);
+  fs.writeFileSync("output/image-gen/harbor.png", first);
   console.log(`Generated ${outputs.length} image`);
 
   await unloadModel({ modelId });

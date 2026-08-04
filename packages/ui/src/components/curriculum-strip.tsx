@@ -10,7 +10,6 @@ import {
 } from '@academy/courses';
 import { useUserStore } from '@academy/core';
 
-/** Pulse keyframes for the active pill. Inlined via <style> below. */
 const PULSE_STYLES = `
   @keyframes curriculumPulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
@@ -100,7 +99,6 @@ function LessonPill({
 }) {
   const ariaLabel = `${lesson.num} · ${lesson.shortTitle ?? lesson.title}`;
 
-  // Upcoming lesson without an href: render as a static outlined pill.
   if (state === 'upcoming' && !lesson.href) {
     return (
       <li
@@ -115,8 +113,7 @@ function LessonPill({
 
   if (!lesson.href) return null;
 
-  // The current lesson: emerald arrow + ring. The arrow is the strong
-  // "you are here" affordance, the ring reads as the focused state.
+  // The arrow is the "you are here" affordance; the ring reads as focus.
   if (state === 'current') {
     return (
       <li>
@@ -132,8 +129,6 @@ function LessonPill({
     );
   }
 
-  // Completed lesson (signed in + lesson is in the user's completed set,
-  // or the chapter is fully done so every pill shows done).
   if (isCompleted || chapterDone) {
     return (
       <li>
@@ -149,7 +144,6 @@ function LessonPill({
     );
   }
 
-  // Upcoming, not yet attempted: outlined circle with the lesson number.
   return (
     <li>
       <Link

@@ -23,5 +23,9 @@
     "dev:desktop": "pnpm --filter @tether-academy/desktop dev",
     "start:desktop": "pnpm --filter @tether-academy/desktop start",
     "capture:desktop": "pnpm --filter @tether-academy/desktop capture"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "monaco-editor": "^0.56.0"
   }
 }

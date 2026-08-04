@@ -1,27 +1,44 @@
 const path = require('node:path');
 const fs = require('node:fs');
-const { generateKeyPairSync } = require('node:crypto');
 const Corestore = require('corestore');
 
-function jwkHex(keyObject, field) {
-  const jwk = keyObject.export({ format: 'jwk' });
-  return Buffer.from(jwk[field], 'base64url').toString('hex');
-}
+// Key-value state only; device identity lives in identity/manager.cjs.
+//
+// Compaction: every SNAPSHOT_THRESHOLD set/remove ops, a snapshot op carrying
+// the full cache is appended and prior blocks are cleared with core.clear().
+// Replay reads with wait: false, since the default wait: true would hang
+// forever on a cleared index on this peerless core instead of returning null.
 
+const SNAPSHOT_THRESHOLD = 64;
+
+/**
+ * @param {string} userDataDir
+ */
 async function createStore(userDataDir) {
   const dir = path.join(userDataDir, 'corestore');
   fs.mkdirSync(dir, { recursive: true });
   const store = new Corestore(dir);
 
-  const identity = await loadIdentity(store);
   const cache = await loadOrMigrateState(store, userDataDir);
+  // Compaction runs on a fixed op budget rather than a timer.
+  let opsSinceSnapshot = 0;
 
   const stateCore = store.get({ name: 'kv-state', valueEncoding: 'json' });
   await stateCore.ready();
 
-  return {
-    identity,
+  async function compact() {
+    // Snapshot is appended before the clear, so a crash between the two
+    // still leaves replay landing on the snapshot with stale ops discarded.
+    const snapshot = { ...cache };
+    await stateCore.append({ op: 'snapshot', state: snapshot, ts: Date.now() });
+    const snapshotIndex = stateCore.length - 1;
+    if (snapshotIndex > 0) {
+      await stateCore.clear(0, snapshotIndex);
+    }
+    opsSinceSnapshot = 0;
+  }
 
+  return {
     async get(key) {
       return Object.hasOwn(cache, key) ? cache[key] : null;
     },
@@ -29,12 +46,20 @@ async function createStore(userDataDir) {
     async set(key, value) {
       cache[key] = value;
       await stateCore.append({ op: 'set', key, value, ts: Date.now() });
+      opsSinceSnapshot += 1;
+      if (opsSinceSnapshot >= SNAPSHOT_THRESHOLD) {
+        try { await compact(); } catch { /* leave the log; next op will retry */ }
+      }
     },
 
     async remove(key) {
       if (!Object.hasOwn(cache, key)) return;
       delete cache[key];
       await stateCore.append({ op: 'remove', key, ts: Date.now() });
+      opsSinceSnapshot += 1;
+      if (opsSinceSnapshot >= SNAPSHOT_THRESHOLD) {
+        try { await compact(); } catch { /* leave the log; next op will retry */ }
+      }
     },
 
     async list() {
@@ -47,41 +72,6 @@ async function createStore(userDataDir) {
   };
 }
 
-async function loadIdentity(store) {
-  const core = store.get({ name: 'identity', valueEncoding: 'binary' });
-  await core.ready();
-
-  if (core.length > 0) {
-    try {
-      const raw = await core.get(core.length - 1);
-      const parsed = JSON.parse(raw.toString('utf-8'));
-      if (parsed && parsed.publicKey && parsed.privateKey) {
-        return {
-          publicKey: parsed.publicKey,
-          privateKey: parsed.privateKey,
-          createdAt: parsed.createdAt ?? null,
-        };
-      }
-    } catch (err) {
-      console.warn('[state-store] identity core read failed, regenerating:', err.message);
-    }
-  }
-
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-  const record = JSON.stringify({
-    publicKey: jwkHex(publicKey, 'x'),
-    privateKey: jwkHex(privateKey, 'd'),
-    createdAt: Date.now(),
-  });
-  await core.append(Buffer.from(record, 'utf-8'));
-
-  return {
-    publicKey: jwkHex(publicKey, 'x'),
-    privateKey: jwkHex(privateKey, 'd'),
-    createdAt: Date.now(),
-  };
-}
-
 async function loadOrMigrateState(store, userDataDir) {
   const core = store.get({ name: 'kv-state', valueEncoding: 'json' });
   await core.ready();
@@ -89,9 +79,13 @@ async function loadOrMigrateState(store, userDataDir) {
   const cache = {};
   const len = core.length;
   for (let i = 0; i < len; i++) {
-    const evt = await core.get(i);
+    // null means the block was cleared; guard before reading evt.op.
+    const evt = await core.get(i, { wait: false });
+    if (evt === null) continue;
     if (evt.op === 'set') cache[evt.key] = evt.value;
     else if (evt.op === 'remove') delete cache[evt.key];
+    // snapshot replaces the accumulator; earlier ops are stale and dropped.
+    else if (evt.op === 'snapshot') Object.assign(cache, evt.state);
   }
 
   if (len === 0) {
@@ -120,4 +114,4 @@ async function loadOrMigrateState(store, userDataDir) {
   return cache;
 }
 
-module.exports = { createStore };
+module.exports = { createStore, SNAPSHOT_THRESHOLD };

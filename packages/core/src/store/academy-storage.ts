@@ -1,4 +1,4 @@
-import type { AcademyStateAPI } from '@academy/academy-bridge';
+import type { AcademyStateAPI } from '@academy/validation';
 
 function getAcademyState(): AcademyStateAPI | null {
   if (typeof window === 'undefined') return null;
@@ -11,8 +11,7 @@ function hasLocalStorage(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
-// localStorage is the hot cache. The main-process Corestore holds the
-// durable copy; getItem falls back to it when localStorage is empty.
+// localStorage is a hot cache; getItem falls back to the durable main-process Corestore copy when empty.
 export const academyStorage = {
   getItem(name: string): string | null | Promise<string | null> {
     if (hasLocalStorage()) {

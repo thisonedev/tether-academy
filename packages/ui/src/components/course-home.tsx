@@ -1,9 +1,16 @@
 'use client';
 
-import { ArrowRight, Check, Lock } from 'lucide-react';
-import Link from 'next/link';
-import { CURRICULUM, type CurriculumChapter, type CurriculumLesson } from '@academy/courses';
 import { useUserHydrated, useUserStore } from '@academy/core';
+import {
+  CURRICULUM,
+  type CurriculumChapter,
+  type CurriculumLesson,
+  countLessons,
+  searchLessons,
+} from '@academy/courses';
+import { ArrowRight, Check, Lock, Search, X } from 'lucide-react';
+import Link from 'next/link';
+import { useMemo, useRef, useState } from 'react';
 
 interface CourseHomeProps {
   courseName: string;
@@ -24,8 +31,7 @@ const ACCENT_FG: Record<CourseHomeProps['accent'], string> = {
   rose: '#f5a5a5',
 };
 
-/** Course home: hero + chapter list, every lesson visible. Mirrors Codecademy/Scrimba.
- *  Each chapter is its own section with a clickable list of lessons. */
+/** Course home: hero + chapter list, every lesson visible, mirroring Codecademy/Scrimba. */
 export function CourseHome({ courseName, courseSlug, courseDescription, accent }: CourseHomeProps) {
   const hydrated = useUserHydrated();
   const username = useUserStore((s) => s.username);
@@ -33,8 +39,12 @@ export function CourseHome({ courseName, courseSlug, courseDescription, accent }
   const completedLessons = useUserStore((s) => s.completedLessons);
   const signedIn = hydrated && !!username;
 
+  const [query, setQuery] = useState('');
+  const matches = useMemo(() => searchLessons(CURRICULUM, query), [query]);
+  const searching = query.trim().length > 0;
+
   const totalChapters = CURRICULUM.length;
-  const totalLessons = CURRICULUM.reduce((sum, c) => sum + c.lessons.length, 0);
+  const totalLessons = countLessons(CURRICULUM);
   const firstLessonHref =
     CURRICULUM.flatMap((c) => c.lessons).find((l) => l.href)?.href ?? CURRICULUM[0]?.href;
 
@@ -95,36 +105,110 @@ export function CourseHome({ courseName, courseSlug, courseDescription, accent }
         </div>
       </header>
 
+      <LessonSearch
+        query={query}
+        onQuery={setQuery}
+        matchCount={countLessons(matches)}
+        totalLessons={totalLessons}
+      />
+
       <section aria-label="Chapters" className="space-y-4">
-        {CURRICULUM.map((chapter) => (
+        {matches.map((chapter) => (
           <ChapterSection
             key={chapter.slug}
             chapter={chapter}
+            chapterTotal={
+              CURRICULUM.find((c) => c.slug === chapter.slug)?.lessons.length ??
+              chapter.lessons.length
+            }
             signedIn={signedIn}
             isChapterDone={signedIn && completedChapters.includes(chapter.slug)}
             completedLessons={completedLessons}
           />
         ))}
+        {searching && matches.length === 0 ? (
+          <p className="rounded-xl border border-canvas-border bg-canvas-muted px-4 py-8 text-center text-sm text-canvas-muted-foreground">
+            No lesson matches <span className="text-canvas-foreground">{query.trim()}</span>.
+          </p>
+        ) : null}
       </section>
+    </div>
+  );
+}
+
+/** Filters the lesson list below it. Matches on title, slug, number and chapter. */
+function LessonSearch({
+  query,
+  onQuery,
+  matchCount,
+  totalLessons,
+}: {
+  query: string;
+  onQuery: (value: string) => void;
+  matchCount: number;
+  totalLessons: number;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const searching = query.trim().length > 0;
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 rounded-lg border border-canvas-border bg-canvas-muted px-3 focus-within:border-emerald-500/50">
+        <Search className="size-4 shrink-0 text-canvas-muted-foreground" aria-hidden />
+        <input
+          ref={input}
+          type="search"
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onQuery('');
+          }}
+          placeholder="Search lessons"
+          aria-label="Search lessons in this course"
+          className="w-full bg-transparent py-2.5 text-sm text-canvas-foreground outline-none placeholder:text-canvas-muted-foreground [&::-webkit-search-cancel-button]:appearance-none"
+        />
+        {searching ? (
+          <button
+            type="button"
+            onClick={() => {
+              onQuery('');
+              input.current?.focus();
+            }}
+            aria-label="Clear search"
+            className="shrink-0 rounded p-1 text-canvas-muted-foreground transition-colors hover:bg-canvas hover:text-canvas-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        ) : null}
+      </div>
+      {searching ? (
+        <p aria-live="polite" className="mt-2 font-mono text-xs text-canvas-muted-foreground">
+          {matchCount} of {totalLessons} {totalLessons === 1 ? 'lesson' : 'lessons'}
+        </p>
+      ) : null}
     </div>
   );
 }
 
 function ChapterSection({
   chapter,
+  chapterTotal,
   signedIn,
   isChapterDone,
   completedLessons,
 }: {
   chapter: CurriculumChapter;
+  /** Lessons the chapter has when nothing is filtered out. */
+  chapterTotal: number;
   signedIn: boolean;
   isChapterDone: boolean;
   completedLessons: string[];
 }) {
+  const filtered = chapter.lessons.length !== chapterTotal;
   const doneCount = signedIn
     ? chapter.lessons.filter((l) => completedLessons.includes(`${chapter.slug}-${l.slug}`)).length
     : 0;
-  const complete = signedIn && doneCount === chapter.lessons.length && doneCount > 0;
+  const complete = signedIn && !filtered && doneCount === chapter.lessons.length && doneCount > 0;
 
   return (
     <article className="rounded-xl border border-canvas-border bg-canvas-muted p-4 sm:p-5">
@@ -138,8 +222,9 @@ function ChapterSection({
               {chapter.label}
             </h2>
             <p className="text-xs text-canvas-muted-foreground">
-              {chapter.lessons.length} {chapter.lessons.length === 1 ? 'lesson' : 'lessons'}
-              {signedIn && doneCount > 0 ? (
+              {filtered ? `${chapter.lessons.length} of ${chapterTotal}` : chapter.lessons.length}{' '}
+              {chapterTotal === 1 ? 'lesson' : 'lessons'}
+              {signedIn && !filtered && doneCount > 0 ? (
                 <>
                   {' · '}
                   <span className="font-mono">

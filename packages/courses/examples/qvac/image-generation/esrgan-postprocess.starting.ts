@@ -27,11 +27,11 @@ async function main() {
 
   // 2: call diffusion with upscale: true
 
-  fs.writeFileSync("./examples/output/image-gen/fox_x4.png", x4Buffers[0]!);
+  fs.writeFileSync("output/image-gen/fox_x4.png", x4Buffers[0]!);
 
   // 3: call diffusion with upscale: { repeats: 2 }
 
-  fs.writeFileSync("./examples/output/image-gen/fox_x16.png", x16Buffers[0]!);
+  fs.writeFileSync("output/image-gen/fox_x16.png", x16Buffers[0]!);
 
   console.log("Generated 1 image");
   await unloadModel({ modelId });

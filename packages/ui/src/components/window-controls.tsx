@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type MouseEvent } from 'react';
-import type { AcademyAPI, AcademyWindowAPI } from '@academy/academy-bridge';
+import type { AcademyAPI, AcademyWindowAPI } from '@academy/validation';
 
 declare global {
   interface Window {
@@ -15,8 +15,7 @@ function readAPI(): AcademyWindowAPI | null {
 }
 
 export function WindowControls() {
-  // Start null so SSR and the first client render match; swap to the real
-  // bridge after mount to avoid the React #418 hydration mismatch.
+  // Start null so SSR and the first client render match, swapping to the real bridge after mount (avoids the React #418 hydration mismatch).
   const [api, setApi] = useState<AcademyWindowAPI | null>(null);
   useEffect(() => {
     setApi(readAPI());

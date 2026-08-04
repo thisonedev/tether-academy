@@ -131,8 +131,22 @@ html {
   background-color: transparent;
   border: 0;
   border-radius: 0;
+  /* Right padding reserves room for the copy button so it never overlaps the last chars. */
   padding: 1rem 6rem 1rem 1.25rem;
   margin: 0;
+  /* Lets the flex/grid item shrink below content width so the inner <pre> actually overflows. */
+  min-width: 0;
+}
+/* Shiki renders <pre><code>; let the inner <code> extend past the container so horizontal scroll triggers on .mdx-code-pre. */
+.prose-md .mdx-code-pre code,
+.prose-md .mdx-code-pre .line,
+.prose-md .mdx-code-pre .shiki {
+  display: inline-block;
+  min-width: max-content;
+}
+/* Stable gutter keeps the bottom-right scrollbar reachable on macOS overlay bars. */
+.prose-md .mdx-code-pre {
+  scrollbar-gutter: stable;
 }
 /* Fallback shiki token colouring */
 .prose-md .shiki code span {
@@ -214,18 +228,10 @@ html.dark .prose-md .shiki code span {
   transform-origin: center;
 }
 
-/* Constrain the CodeMirror editor to fill its parent and scroll internally */
-.cm-theme,
-.cm-editor,
-.cm-editor.cm-focused {
-  /* biome-ignore lint/complexity/noImportantStyles: CodeMirror default needs override */
-  height: 100% !important;
-  max-height: 100%;
-}
-.cm-scroller {
-  /* biome-ignore lint/complexity/noImportantStyles: CodeMirror default needs override */
-  overflow: auto !important;
-  max-height: 100%;
+/* Monaco defaults to rounded corners; canvas has square edges. */
+.monaco-editor,
+.monaco-editor .overflow-guard {
+  border-radius: 0;
 }
 
 /* Site header is the desktop title bar: whole header is a drag region, interactive children opt out. */
@@ -239,8 +245,7 @@ header.site-header input {
   -webkit-app-region: no-drag;
 }
 
-/* Web only: desktop app tags <html data-platform="..."> in app/layout.tsx,
-   so the rules below fire only when that tag is absent. */
+/* Desktop tags <html data-platform="..."> in app/layout.tsx; these rules fire only when that tag is absent. */
 html:not([data-platform]) header.site-header > :first-child {
   display: none;
 }
@@ -254,4 +259,31 @@ html:not([data-platform]) .run-mode-select-desktop {
 }
 html[data-platform="desktop"] .run-mode-select-web {
   display: none;
+}
+
+/* Desktop mirrors web at narrow widths (tutorial first, editor below); ≥960px keeps Monaco's share. */
+@media (min-width: 960px) {
+  html[data-platform="desktop"] .workspace-root {
+    height: calc(100vh - 3.5rem);
+  }
+  html[data-platform="desktop"] .workspace-row {
+    flex: 1 1 0%;
+    flex-direction: row;
+    gap: 1.5rem;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+  html[data-platform="desktop"] .workspace-sidebar {
+    max-width: 42%;
+    min-width: 360px;
+    flex-shrink: 0;
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+  }
+  html[data-platform="desktop"] .workspace-runner-section {
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 0%;
+  }
 }

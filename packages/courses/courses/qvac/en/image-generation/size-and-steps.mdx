@@ -42,12 +42,17 @@ const result = diffusion({
 });
 ```
 
-Same seed and same prompt, two calls produce byte-identical output like so:
+Same seed and same prompt, two calls produce byte-identical output like so. Split-layout inference streams step progress; drain it before awaiting `outputs` so inference isn't blocked:
 
 ```ts
+if (result.progressStream) {
+  for await (const step of result.progressStream) {
+    console.log(`▸ step ${step.step}/${step.totalSteps}`);
+  }
+}
 const outputs = await result.outputs;
 const first = outputs[0];
-if (first) fs.writeFileSync("../../apps/desktop/output/image-gen/cat-watercolor.png", first);
+if (first) fs.writeFileSync("output/image-gen/cat-watercolor.png", first);
 console.log(`Generated ${outputs.length} image`);
 ```
 

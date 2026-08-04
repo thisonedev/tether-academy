@@ -1,0 +1,35 @@
+{
+  "name": "@tether-academy/desktop-sandbox",
+  "private": true,
+  "main": "index.cjs",
+  "imports": {
+    "crypto": {
+      "bare": "bare-crypto",
+      "default": "crypto"
+    },
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
+    "path": {
+      "bare": "bare-path",
+      "default": "path"
+    },
+    "os": {
+      "bare": "bare-os",
+      "default": "os"
+    },
+    "child_process": {
+      "bare": "bare-subprocess",
+      "default": "child_process"
+    },
+    "events": {
+      "bare": "bare-events",
+      "default": "events"
+    },
+    "process": {
+      "bare": "bare-process",
+      "default": "process"
+    }
+  }
+}

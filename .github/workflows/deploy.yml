@@ -34,16 +34,23 @@ jobs:
         with:
           version: 9.15.9
 
+      # Scoped by trigger, so a pull request cannot seed a cache that a
+      # protected-branch run later picks up through the prefix fallback.
       - name: cache pnpm store
         uses: actions/cache@v5
         with:
           path: ~/.local/share/pnpm/store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-${{ github.event_name == 'pull_request' && 'pr' || 'trunk' }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-
+            ${{ runner.os }}-pnpm-${{ github.event_name == 'pull_request' && 'pr' || 'trunk' }}-
 
+      # This job runs on fork PRs, so the lockfile it installs from is the PR's.
+      # A dependency postinstall would execute on the runner before anyone has
+      # read the diff. The build does not need one: esbuild resolves its binary
+      # from the platform package through its JS API, and sharp goes unused
+      # because next.config.mjs sets images.unoptimized.
       - name: install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: lint
         run: pnpm --filter @tether-academy/web lint
