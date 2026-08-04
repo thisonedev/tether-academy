@@ -19,7 +19,7 @@ import {
   PendingRequestsSection,
   shortHex,
 } from './devices-panel.js';
-import { IdentityOnboarding } from './identity-onboarding.js';
+import { ProfileOnboarding } from './profile-onboarding.js';
 
 declare global {
   interface Window {
@@ -56,7 +56,7 @@ const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
 
 const SETTINGS_TABS = [
   { id: 'models', label: 'Models' },
-  { id: 'identity', label: 'Identity' },
+  { id: 'profile', label: 'Profile' },
   { id: 'paired', label: 'My devices' },
   { id: 'device', label: 'My device' },
 ] as const;
@@ -335,14 +335,14 @@ export function SettingsPage() {
         </section>
       ) : null}
 
-      {activeTab === 'identity' ? (
+      {activeTab === 'profile' ? (
         <section
           role="tabpanel"
-          id="settings-panel-identity"
-          aria-labelledby="settings-tab-identity"
+          id="settings-panel-profile"
+          aria-labelledby="settings-tab-profile"
           className="space-y-5 pb-8 sm:pb-12"
         >
-          <IdentityOnboarding />
+          <ProfileOnboarding />
         </section>
       ) : null}
 

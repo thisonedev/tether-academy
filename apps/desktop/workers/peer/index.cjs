@@ -5,7 +5,6 @@ const c = require('compact-encoding');
 const crypto = require('crypto');
 const hypercoreCrypto = require('hypercore-crypto');
 const { EventEmitter } = require('events');
-const os = require('os');
 const path = require('path');
 const process = require('process');
 const pairingCode = require('./pairing-code.cjs');
@@ -47,13 +46,12 @@ const toHex = (buf) => {
 
 const fromHex = (hex) => Buffer.from(hex, 'hex');
 
+// Falls back to the device key rather than OS username/hostname: a peer's
+// display name is self-reported and unverified, so it shouldn't leak local
+// machine identity when the profile hasn't picked a username yet.
 function defaultDeviceName() {
-  try {
-    const username = os.userInfo().username;
-    const host = os.hostname();
-    if (username && host) return `${username}@${host}`;
-  } catch {}
-  return os.hostname();
+  const key = localClaim?.devicePublicKey;
+  return key ? `device-${key.slice(0, 8)}` : 'Unnamed device';
 }
 
 let swarm = null;

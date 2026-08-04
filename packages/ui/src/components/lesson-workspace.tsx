@@ -130,6 +130,7 @@ function runFileName(data: LessonData): string {
 }
 
 function runLabel(data: LessonData): string {
+  if (data.currentLesson?.title) return data.currentLesson.title;
   const chapter = data.currentChapter?.slug;
   const lesson = data.currentLesson?.slug;
   if (chapter && lesson) return `${chapter}/${lesson}`;
@@ -397,6 +398,33 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     if (!allPassed || !data.currentChapter || !data.currentLesson) return;
     // Deduped in the store, so re-runs on the same lesson are no-ops.
     markLessonComplete(data.currentChapter.slug, data.currentLesson.slug);
+    // Best-effort mirror to the host's progress blob (desktop only); the
+    // local store stays the source of truth for UI if this fails.
+    if (typeof window !== 'undefined' && window.academy?.identity?.setProgress) {
+      const chapterSlug = data.currentChapter.slug;
+      const lessonSlug = data.currentLesson.slug;
+      const lessonKey = `${chapterSlug}-${lessonSlug}`;
+      void (async () => {
+        let hostProgress: Record<string, unknown> = {};
+        try {
+          const cur = await window.academy!.identity!.getProgress();
+          if (cur?.progress && typeof cur.progress === 'object') {
+            hostProgress = cur.progress as Record<string, unknown>;
+          }
+        } catch {
+          // fall back to an empty merge base
+        }
+        const next = {
+          ...hostProgress,
+          [lessonKey]: { completedAt: Date.now() },
+        };
+        try {
+          await window.academy!.identity!.setProgress({ progress: next });
+        } catch {
+          // ignore
+        }
+      })();
+    }
     if (isLastLessonOfChapter && !hasShownModal) {
       setShowCompleteModal(true);
       setHasShownModal(true);

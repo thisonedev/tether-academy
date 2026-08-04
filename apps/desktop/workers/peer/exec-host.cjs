@@ -332,6 +332,7 @@ function createExecHost(ctx) {
       signal,
       mode: run.mode,
       fileName: run.fileName,
+      label: run.label,
       cancelled: run.cancelled || undefined,
       source,
     });
@@ -569,7 +570,7 @@ function createExecHost(ctx) {
       return;
     }
     if (run.cancelled) {
-      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { mode, fileName });
+      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { mode, fileName, label });
       finishRun(discoveryKeyHex, run);
       return;
     }
@@ -583,6 +584,7 @@ function createExecHost(ctx) {
         fail(discoveryKeyHex, 'package-not-allowed', `refused packages: ${refused.join(', ')}`, {
           mode,
           fileName,
+          label,
           packages: refused,
         });
         finishRun(discoveryKeyHex, run);
@@ -674,7 +676,7 @@ function createExecHost(ctx) {
     }
 
     if (run.cancelled) {
-      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { mode, fileName });
+      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { mode, fileName, label });
       finishRun(discoveryKeyHex, run);
       return;
     }
@@ -703,7 +705,7 @@ function createExecHost(ctx) {
         mismatchedModels.length > 0
           ? `${mismatchedModels.length} cached model file(s) have bytes that do not match the recorded hash`
           : `${changedModels.length} cached model file(s) changed outside the app`,
-        { mode, fileName, changedModels },
+        { mode, fileName, label, changedModels },
       );
       finishRun(discoveryKeyHex, run);
       return;
@@ -728,6 +730,7 @@ function createExecHost(ctx) {
         fail(discoveryKeyHex, 'filename-escape', 'fileName escaped the run directory', {
           mode,
           fileName: null,
+          label,
         });
         finishRun(discoveryKeyHex, run);
         return;
@@ -750,6 +753,7 @@ function createExecHost(ctx) {
       fail(discoveryKeyHex, 'runtime-missing', `${runtime} runtime not resolvable`, {
         mode,
         fileName,
+        label,
         runtime,
       });
       finishRun(discoveryKeyHex, run);
@@ -784,6 +788,7 @@ function createExecHost(ctx) {
       fail(discoveryKeyHex, 'sandbox-unavailable', message, {
         mode,
         fileName,
+        label,
         sandboxMode: wrap?.mode ?? 'unavailable',
         sandboxed: false,
         warnings: wrap?.warnings ?? [],
@@ -893,7 +898,7 @@ function createExecHost(ctx) {
     child.on('error', (err) => {
       if (finalIdleTimer) clearTimeout(finalIdleTimer);
       if (!isCurrent(discoveryKeyHex, run)) return;
-      fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), { mode, fileName });
+      fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), { mode, fileName, label });
       finishRun(discoveryKeyHex, run);
     });
     child.on('exit', (exitCode, signal) => {
@@ -914,6 +919,7 @@ function createExecHost(ctx) {
         fail(discoveryKeyHex, 'sigtrap', 'child trapped under the OS sandbox', {
           mode,
           fileName,
+          label,
           signal: 'SIGTRAP',
         });
         finishRun(discoveryKeyHex, run);

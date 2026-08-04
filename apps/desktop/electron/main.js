@@ -487,6 +487,68 @@ handle('academy:identity:reset', async () => {
   return idm.publicView();
 });
 
+// --- Attested blob store (username, progress, future per-identity kinds) ---
+// Handlers await idm.ready() first: init() decrypts the blob store async,
+// and skipping this makes an early getProgress() throw "stores not loaded".
+async function identityReady(idm) {
+  if (idm.status() !== 'ready') return false;
+  await idm.ready();
+  return true;
+}
+
+handle('academy:identity:set-username', async (payload) => {
+  const idm = pearEnd.identity();
+  if (idm.status() !== 'ready') return null;
+  await idm.ready();
+  return idm.setUsername(payload.username);
+});
+handle('academy:identity:get-username', async () => {
+  const idm = pearEnd.identity();
+  if (idm.status() !== 'ready') return null;
+  await idm.ready();
+  return idm.getUsername();
+});
+handle('academy:identity:set-progress', async (payload) => {
+  const idm = pearEnd.identity();
+  if (idm.status() !== 'ready') return null;
+  await idm.ready();
+  return idm.setProgress(payload.progress);
+});
+handle('academy:identity:get-progress', async () => {
+  const idm = pearEnd.identity();
+  if (idm.status() !== 'ready') return null;
+  await idm.ready();
+  return idm.getProgress();
+});
+handle('academy:identity:list-blobs', async () => {
+  const idm = pearEnd.identity();
+  if (idm.status() !== 'ready') return { private: [], public: [] };
+  await idm.ready();
+  return idm.listBlobs();
+});
+handle('academy:identity:public-snapshot', async () => {
+  const idm = pearEnd.identity();
+  if (idm.status() !== 'ready') return null;
+  await idm.ready();
+  return idm.publicProfileSnapshot();
+});
+handle('academy:identity:verify-attested', async (payload) => {
+  const idm = pearEnd.identity();
+  return idm.verifyAttested(
+    payload.kind,
+    payload.payload,
+    payload.proofB64,
+    payload.expectedIdentityPublicKeyHex,
+  );
+});
+handle('academy:identity:import-profile', async (payload) => {
+  const idm = pearEnd.identity();
+  return idm.importProfile({
+    identityPublicKeyHex: payload.identityPublicKeyHex,
+    profile: payload.profile,
+  });
+});
+
 handle('academy:peer:take-deeplink', () => {
   const payload = pendingDeeplink;
   pendingDeeplink = null;

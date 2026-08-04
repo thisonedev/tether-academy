@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { getCurriculumChapterBySlug } from '@academy/courses';
+import { CURRICULUM, getCurriculumChapterBySlug } from '@academy/courses';
 import { academyStorage } from './academy-storage.js';
 
 export const POINTS_PER_LESSON = 10;
@@ -29,6 +29,8 @@ export interface UserState {
   signInPromptOpen: boolean;
   setUsername: (name: string) => void;
   markLessonComplete: (chapterSlug: string, lessonSlug: string) => void;
+  /** Replaces local progress with the host's signed record (sign-in / recovery on the same device). */
+  restoreProgress: (completedLessonKeys: string[]) => void;
   reset: () => void;
   openSignInPrompt: () => void;
   closeSignInPrompt: () => void;
@@ -67,6 +69,17 @@ export const useUserStore = create<UserState>()(
           completedChapters: newCompletedChapters,
           points: nextPoints,
         });
+      },
+      restoreProgress: (completedLessonKeys) => {
+        const completed = new Set(completedLessonKeys);
+        const completedChapters = CURRICULUM.filter(
+          (chapter) =>
+            chapter.lessons.length > 0 &&
+            chapter.lessons.every((l) => completed.has(lessonKey(chapter.slug, l.slug))),
+        ).map((c) => c.slug);
+        const points =
+          completedLessonKeys.length * POINTS_PER_LESSON + completedChapters.length * POINTS_PER_CHAPTER;
+        set({ completedLessons: [...completedLessonKeys], completedChapters, points });
       },
       reset: () =>
         set({

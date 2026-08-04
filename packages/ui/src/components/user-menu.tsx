@@ -25,6 +25,29 @@ export function UserMenu() {
     setIsDesktop(typeof window !== 'undefined' && !!window.academy);
   }, []);
 
+  // On desktop, restore the crypto-signed username on mount so the avatar
+  // initial isn't stuck on the empty default before the host responds.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const identityApi = window.academy?.identity;
+    if (!identityApi?.getUsername || !identityApi.setUsername) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const host = await identityApi.getUsername();
+        if (cancelled) return;
+        if (host?.username && !useUserStore.getState().username) {
+          useUserStore.getState().setUsername(host.username);
+        }
+      } catch {
+        // best-effort: leave the local store alone if the host is unreachable
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Close on outside click and Escape; restore focus to the trigger.
   useEffect(() => {
     if (!open) return;

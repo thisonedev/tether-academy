@@ -4,6 +4,7 @@ import type { AcademyAPI, AcademyIdentityStatus } from '@academy/validation';
 import { useUserStore } from '@academy/core';
 import { Check, KeyRound, Loader2, Shield } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { ProfileUsernameSection } from './profile-username.js';
 
 declare global {
   interface Window {
@@ -13,8 +14,8 @@ declare global {
 
 type Step = 'choose' | 'backup' | 'recover' | 'done';
 
-/** Identity setup for Settings: create, recover, or view/remove the local identity. Multi-device link and Keet app interop are deferred. */
-export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
+/** Profile setup for Settings: create, recover, or view/remove the local identity. Multi-device link and Keet app interop are deferred. */
+export function ProfileOnboarding({ onReady }: { onReady?: () => void }) {
   const resetUser = useUserStore((s) => s.reset);
   const [status, setStatus] = useState<AcademyIdentityStatus | null>(null);
   const [step, setStep] = useState<Step>('choose');
@@ -48,7 +49,7 @@ export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
     return (
       <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
         <p className="text-sm text-canvas-muted-foreground">
-          Identity setup is available in the desktop app.
+          Profile setup is available in the desktop app.
         </p>
       </div>
     );
@@ -56,60 +57,63 @@ export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
 
   if (status?.ready && step === 'done') {
     return (
-      <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-          Identity
-        </p>
-        <p className="mt-1 text-sm text-canvas-foreground">Tether Academy identity ready</p>
-        <p className="mt-3 text-xs text-canvas-muted-foreground">
-          {status.holdsRoot
-            ? 'This device holds your recovery phrase. Keep it safe and don`t share with anyone.'
-            : 'This device is set up under a root identity.'}
-        </p>
-
-        <div className="mt-6 border-t border-canvas-border pt-4">
+      <div className="space-y-5">
+        <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-            Remove from this device
+            Profile
           </p>
-          <p className="mt-1 text-xs text-canvas-muted-foreground">
-            Deletes the sealed identity keys on this machine only. You will need your recovery
-            phrase to set up again.
+          <p className="mt-1 text-sm text-canvas-foreground">Tether Academy profile ready</p>
+          <p className="mt-3 text-xs text-canvas-muted-foreground">
+            {status.holdsRoot
+              ? 'This device holds your recovery phrase. Keep it safe and don`t share with anyone.'
+              : 'This device is set up under a root identity.'}
           </p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              if (
-                !window.confirm(
-                  'Remove identity from this device? You will need your recovery phrase to sign in again.',
-                )
-              ) {
-                return;
-              }
-              setBusy(true);
-              setError(null);
-              void window.academy!.identity!.reset()
-                .then(() => {
-                  // Identity is gone; sign out too.
-                  resetUser();
-                  setStep('choose');
-                  return refresh();
-                })
-                .catch((err) => {
-                  setError(err instanceof Error ? err.message : String(err));
-                })
-                .finally(() => setBusy(false));
-            }}
-            className="mt-2 rounded border border-red-500/40 px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-50"
-          >
-            Remove identity from this device
-          </button>
+
+          <div className="mt-6 border-t border-canvas-border pt-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+              Remove from this device
+            </p>
+            <p className="mt-1 text-xs text-canvas-muted-foreground">
+              Deletes the sealed keys on this machine only. You will need your recovery
+              phrase to set up again.
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    'Remove your profile from this device? You will need your recovery phrase to sign in again.',
+                  )
+                ) {
+                  return;
+                }
+                setBusy(true);
+                setError(null);
+                void window.academy!.identity!.reset()
+                  .then(() => {
+                    // Profile keys are gone; sign out too.
+                    resetUser();
+                    setStep('choose');
+                    return refresh();
+                  })
+                  .catch((err) => {
+                    setError(err instanceof Error ? err.message : String(err));
+                  })
+                  .finally(() => setBusy(false));
+              }}
+              className="mt-2 rounded border border-red-500/40 px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+            >
+              Remove your profile
+            </button>
+          </div>
+          {error ? (
+            <p className="mt-3 text-xs text-red-400" role="alert">
+              {error}
+            </p>
+          ) : null}
         </div>
-        {error ? (
-          <p className="mt-3 text-xs text-red-400" role="alert">
-            {error}
-          </p>
-        ) : null}
+        <ProfileUsernameSection />
       </div>
     );
   }
@@ -166,11 +170,11 @@ export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
   return (
     <div className="rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
-        Identity setup
+        Profile setup
       </p>
       <p className="mt-1 text-sm text-canvas-muted-foreground">
-        Create a new identity or restore one with your recovery phrase. Progress will attach to
-        this identity later.
+        Create a new profile or restore one with your recovery phrase. Progress will attach to
+        this profile.
       </p>
 
       {error ? (
@@ -190,7 +194,7 @@ export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
             <KeyRound className="mt-0.5 size-4 shrink-0 text-emerald-400" />
             <span>
               <span className="block text-sm font-semibold text-canvas-foreground">
-                Create a new identity
+                Create a new profile
               </span>
               <span className="mt-0.5 block text-xs text-canvas-muted-foreground">
                 Recommended. New recovery phrase for this app only.
