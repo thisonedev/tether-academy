@@ -20,7 +20,7 @@ pnpm install
 ```bash
 pnpm dev          # Next.js dev with HMR on :3000
 pnpm build        # build packages + web static export to apps/web/out/
-pnpm start        # alias: pnpm start:web — serve the static export on :3000
+pnpm start        # alias: pnpm start:web; serve the static export on :3000
 ```
 
 See `apps/web/README.md` for the full web build and dev details.
@@ -43,13 +43,12 @@ tether-academy/
     desktop/    Electron 40 + Pear Runtime. See apps/desktop/README.md.
   packages/
     config/         Shared TypeScript + Biome base config
-    validation/     Zod schemas (frontmatter, IPC payloads)
-    academy-bridge/ Shared IPC type contract (window.academy)
+    validation/     Zod schemas (frontmatter, IPC payloads, window.academy contract)
+    sandbox-types/  Shared TypeScript types for the OS-level sandbox
     core/           Zustand store + storage adapter
     ui/             React components (lesson workspace, code block, etc.)
     courses/        Curriculum, lesson MDX, vendored examples, sync/verify scripts
-  .github/workflows/  deploy.yml, verify-lessons.yml
-  checkpoints/    Migration logs and Python helpers
+  .github/workflows/  deploy.yml, test-desktop.yml, verify-lessons.yml
 ```
 
 Each app and package has its own `package.json` and `tsconfig.json` (extending `packages/config/tsconfig.base.json`).
@@ -88,7 +87,7 @@ pnpm sync:examples:check    # CI mode, exit 1 on any drift
 ```
 
 | Status | Exit | Meaning | Fix |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `✓ ok` | 0 | Vendored calls are a subset of upstream's | Nothing |
 | `-` skipped | 0 | Lesson has no `sourceExample` frontmatter | Nothing |
 | `✗ api-drift` | 1 | Vendored file calls something upstream no longer has | Edit the vendored copy + lesson text, or re-point `sourceExample` |
@@ -99,10 +98,8 @@ The vendored `.answer.ts` is a pedagogical subset of upstream, not a verbatim co
 
 ## Funding
 
-This is a community-owned project. Buy me a coffee (USDT/USDC/ETH):
+This is a community-owned project.
 
-```
-0x409072a91aa81C9759E1170993e29F8Ec83E6405
-```
+Buy me a coffee (USDT/USDC/ETH): `0x409072a91aa81C9759E1170993e29F8Ec83E6405`
 
-For sponsorships or grant inquiries, reach out [here](https://thisonedev.github.io/#contact).
+For sponsorships or grant inquiries, contact [here](https://thisonedev.github.io/#contact).

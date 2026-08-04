@@ -1,6 +1,6 @@
 # Tether Academy Desktop
 
-Electron + Pear Runtime shell that loads the Tether Academy web app. 
+Electron + Pear Runtime shell that loads the Tether Academy web app.
 
 ## Getting started
 
@@ -22,13 +22,15 @@ or from `apps/desktop`:
 pnpm start
 ```
 
-The app serves `apps/web/out/` over an inline HTTP server (because Next's `/_next/...` asset paths don't load over `file://`). `PEAR_DEV_URL` always wins if set; otherwise it serves the static build; if neither is available, it falls back to `http://localhost:4712` as a last resort.
+The app serves `apps/web/out/` over an inline HTTP server. `PEAR_DEV_URL` always wins if set; otherwise it serves the static build. If neither is available, it falls back to `http://localhost:4712` as a last resort.
 
 ### Development
 
+Run both commands from the repository root. `start:desktop` is defined on the workspace `package.json` and resolves to `pnpm --filter @tether-academy/desktop start`; from inside `apps/desktop` the equivalent is `pnpm start`. Running `pnpm start:desktop` from another directory produces `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command "start:desktop" not found`.
+
 ```bash
 # terminal 1
-pnpm dev                          # Next dev server with HMR
+pnpm dev                          # Next dev server with HMR on :3000
 
 # terminal 2
 PEAR_DEV_URL=http://localhost:3000 pnpm start:desktop
@@ -39,8 +41,8 @@ PEAR_DEV_URL=http://localhost:3000 pnpm start:desktop
 ## Layout
 
 | File | Purpose |
-|---|---|
-| `electron/main.js` | BrowserWindow, IPC handlers, inline static server, deep-link receiver — thin shell, delegates P2P/identity to `pear-end/` |
+| --- | --- |
+| `electron/main.js` | BrowserWindow, IPC handlers, inline static server, deep-link receiver; thin shell that delegates P2P/identity to `pear-end/` |
 | `electron/preload.js` | exposes `window.academy` via contextBridge |
 | `electron/identity/manager.cjs` | root + device identity (`keet-identity-key`): create/recover/attest/revoke, sealed at rest |
 | `electron/pear-end/` | main-side facade and the proxy that spawns the Bare worker (`worker-client.cjs`) |
@@ -62,42 +64,39 @@ pnpm test:unit         # ~2s
 pnpm test:integration  # ~3min, real DHT testnets and sandboxed children
 ```
 
-The runner is [brittle](https://github.com/holepunchto/brittle), which also runs under Bare via `brittle-bare` if `peer.cjs` ever needs testing in its worker runtime.
+The runner is [brittle](https://github.com/holepunchto/brittle), which also runs under Bare via `brittle-bare` if `workers/peer/` ever needs testing in its worker runtime.
 
 `unit/` touches no network and spawns nothing, so CI runs it on every PR. `integration/` creates `hyperdht` testnets and spawns sandboxed children, so CI runs it nightly. Tests never close resources by hand.
 
 ## Architecture
 
-`peer.cjs` (pairing + mesh + peer-exec) runs inside a real Bare worker process, spawned by `pear-end/worker-client.cjs` and communicating over a `bare-rpc` command channel (one command per action — no generic `invoke(method, args)` dispatcher). `main.js` only ever talks to `pear-end/index.cjs`'s facade; it never requires `peer.cjs` directly. Identity (`identity/manager.cjs`) and the KV store stay in the Electron main process — the worker receives only an already-decrypted device identity at init.
+`workers/peer/index.cjs` (pairing + mesh + peer-exec) runs inside a real Bare worker process, spawned by `pear-end/worker-client.cjs` and communicating over a `bare-rpc` command channel (one command per action, no generic `invoke(method, args)` dispatcher). `main.js` only ever talks to `pear-end/index.cjs`'s facade; it never requires `workers/peer/` directly. Identity (`identity/manager.cjs`) and the KV store stay in the Electron main process. The worker receives only an already-decrypted device identity at init.
 
 ### What macOS read confinement does not cover
 
-Writes are allowlisted by subpath. Reads cannot be, because dyld and the runtime need broad filesystem visibility to start: a pure read allowlist kills the `bare` binary with SIGABRT, and a synthetic `HOME` makes every cached model look missing, since the SDK resolves its cache from it. So the profile allows `file-read*` and then denies back. `sandbox-mac.cjs` generates that deny set per spawn by listing `$HOME`, its parent, and `/tmp`, and denying every entry no needed path touches, on top of a named list of credential stores elsewhere.
+Writes are allowlisted by subpath; reads can't be, because dyld and the runtime need broad filesystem visibility to start. So the profile allows `file-read*` and denies back entry by entry, generated per spawn from `$HOME`, its parent, and `/tmp`, along with a named list of credential stores elsewhere (`sandbox-mac.cjs`).
 
-Denying back leaves residue. Each of the following is a limit of the mechanism, and closing it needs something seatbelt does not offer:
+Denying back leaves gaps a rule can't close without breaking something the runtime needs:
 
-- A file or directory created after the profile is generated is not in the deny set. The profile is rebuilt for every spawn, so this window is the length of one run.
-- A directory the walk has to descend into, but cannot list, keeps its contents readable. Lesson output lives in `~/Documents/Tether Academy`, so the walk must enter `~/Documents` to deny the siblings of that one folder. TCC blocks reading `~/Documents` until the user grants access, and without the listing there are no sibling names to deny. The profile emits a warning naming each directory it could not read.
-- `~/Library` stays readable apart from the named denies, because the dyld, font, and preference caches the runtime starts from live there.
-- Paths outside `$HOME`, `/Users`, and `/tmp` are covered only by the named list in `SYSTEM_READ_DENY`. A credential in a location that list does not name is readable. The per-user temp container (`$TMPDIR`) is one of those. Denying it entry by entry is not the answer: a working machine holds five figures of them, and `sandbox-exec` compile time climbs faster than the rule count (3k denies cost 2s per spawn, 11k cost 30s, 19k never finish, so the child never starts).
-- Whatever the walk had not reached when it hit `MAX_GENERATED_DENIES`, which exists for the same reason. The profile warns when the walk stops there.
+- A path created after the profile is generated isn't in the deny set. This is bounded to one run, since the profile is rebuilt every spawn.
+- A directory the walk must enter but can't list keeps its contents readable; the profile warns per directory.
+- `~/Library` stays readable outside the named denies because the dyld, font, and preference caches the runtime starts from live there.
+- Paths outside `$HOME`, `/Users`, and `/tmp` are covered only by the named `SYSTEM_READ_DENY` list; walking `$TMPDIR` entry by entry would push `sandbox-exec`'s per-spawn compile time past what a run can tolerate.
+- Any path the walk had not reached when it hit `MAX_GENERATED_DENIES` stays readable.
 
-Seatbelt matches rules last-first, so a later allow re-opens an earlier `subpath` deny. That is what lets the broad `file-read*` allow be denied back, and it means a crowded directory can be confined without a rule per entry: deny the root once, then allow each path the run needs.
+Seatbelt matches rules last-first, so a later allow re-opens an earlier `subpath` deny. This lets a crowded directory be confined without a rule per entry: deny the root once, then allow back each path the run needs.
 
 ### sandbox-exec is deprecated
 
-`sandbox-exec(1)` carries a deprecation notice in its own man page and is the entire macOS boundary. If a future macOS drops it, peer-exec on macOS stops working. That is the intended outcome: `buildWrap` checks the binary is present and reports `mode: 'mac-no-sandbox-exec'` with `sandboxed: false` when it is not, and callers refuse the spawn rather than running remote code unconfined.
+`sandbox-exec(1)` carries a deprecation notice in its own man page and is the entire macOS peer-exec boundary. If a future macOS drops it, peer-exec on macOS stops working by design: `buildWrap` reports `sandboxed: false` when the binary is missing, and callers refuse the spawn rather than run remote code unconfined.
 
-Neither documented replacement covers this use today:
+Neither documented replacement fits today: App Sandbox is entitlement-based and applies to the whole app at launch, not a per-spawn profile, so it would confine the editor along with the lesson. Endpoint Security observes syscalls after the fact rather than declaring what a child may reach before it starts.
 
-- App Sandbox is entitlement-based and applies to the whole application at launch. It cannot express a different profile per spawned child, which is what peer-exec needs, and it would confine the editor and the P2P stack along with the lesson.
-- Endpoint Security observes and can block, but it is an event-monitoring API requiring a provisioned distribution entitlement from Apple, and it is a different shape of control: it watches syscalls as they happen, where peer-exec needs to declare what a child may reach before it starts.
-
-Revisit when Apple ships a supported per-process profile mechanism. Until then this is a known strategic risk, not an oversight.
+Revisit when Apple ships a supported per-process profile mechanism.
 
 ## Storage
 
-State lives in a Corestore at `app.getPath('userData')/corestore/`, plus a separate sealed identity record (`identity-v3.json`) managed by `identity/manager.cjs`. The Corestore holds one core:
+State lives in a Corestore at `app.getPath('userData')/corestore/`, with a separate sealed identity record (`identity-v3.json`) managed by `identity/manager.cjs`. The Corestore holds one core:
 
 - `kv-state` (json): append-only event log of `{op, key, value, ts}` writes. Current state is the reduce of the log. Same `get/set/remove/list` API the renderer's storage adapter already speaks.
 
