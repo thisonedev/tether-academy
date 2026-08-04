@@ -97,6 +97,17 @@ function pairUrl(invite: string, hostIdentity: string | null): string {
   return hostIdentity ? `${base}&h=${encodeURIComponent(hostIdentity)}` : base;
 }
 
+/** Profile username as the peer-visible device name, so pairing doesn't fall
+ *  back to the OS login name and hostname. */
+async function pairingUserData(): Promise<{ name: string } | undefined> {
+  try {
+    const host = await window.academy?.identity?.getUsername?.();
+    return host?.username ? { name: host.username } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function pairUserDataLabel(info: { userData: unknown }): string {
   const data = info.userData;
   if (data && typeof data === 'object' && 'name' in data && typeof data.name === 'string') {
@@ -155,7 +166,7 @@ function auditLabel(entry: AcademyPeerAuditEntry, peerName?: string | null): str
         return 'Rejected: this device was revoked';
       }
       if (entry.reason === 'host-identity-mismatch') {
-        return 'Rejected: the host is not the identity the invite claimed';
+        return 'Rejected: the host is not the profile the invite claimed';
       }
       if (entry.reason === 'unverified-build') {
         return 'Pair request rejected';
@@ -163,8 +174,8 @@ function auditLabel(entry: AcademyPeerAuditEntry, peerName?: string | null): str
       return 'Pair request rejected';
     case 'peer:identity-verified':
       return entry.identityVerified
-        ? `Identity verified${entry.identityPublicKey ? ` · ${shortHex(entry.identityPublicKey, 8, 6)}` : ''}`
-        : 'Peer holds its device key but announced no verified identity';
+        ? `Profile verified${entry.identityPublicKey ? ` · ${shortHex(entry.identityPublicKey, 8, 6)}` : ''}`
+        : 'Peer holds its device key but announced no verified profile';
     case 'peer:dropped':
       return 'Pair dropped';
     case 'peer:lockdown':
@@ -311,7 +322,8 @@ export function DevicesPanel() {
     setInviteBusy(true);
     setError(null);
     try {
-      const invite = await window.academy.peer.invite();
+      const userData = await pairingUserData();
+      const invite = await window.academy.peer.invite(userData ? { userData } : undefined);
       // The guest checks this against what the host proves during pairing.
       setInviteModal({ invite, hostIdentity: invite.hostIdentity ?? null });
     } catch (err) {
@@ -336,8 +348,9 @@ export function DevicesPanel() {
         setError('Pairing code is required. Enter the code from the host separately.');
         return;
       }
+      const userData = await pairingUserData();
       await window.academy.peer.accept(parsed.invite, {
-        userData: { source: 'settings-panel' },
+        userData,
         code,
         hostIdentity: parsed.hostIdentity || undefined,
       });
@@ -402,7 +415,7 @@ export function DevicesPanel() {
               <p className="mt-1 text-sm text-canvas-muted-foreground">Loading…</p>
             ) : identity === null || !identity.publicKey ? (
               <p className="mt-1 text-sm text-canvas-muted-foreground">
-                No identity yet — set one up under Settings → Identity.
+                No profile yet, set one up under Settings → Profile.
               </p>
             ) : (
               <p
@@ -626,8 +639,7 @@ function InviteModal({
             label="Pairing code (read aloud or share separately)"
           />
           <p className="text-[11px] text-canvas-muted-foreground/80">
-            Send the invite link over chat or email. Give the code out of band — the link does
-            not include it.
+            Send the invite link over chat or email. Give the code out of band; the link does not include it.
           </p>
         </div>
         <div className="mt-4 flex flex-col gap-2">
