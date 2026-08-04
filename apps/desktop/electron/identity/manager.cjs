@@ -10,6 +10,13 @@ const {
   createSecretStorage,
   wipeStringRef,
 } = require('../secret-storage.cjs');
+const {
+  BLOB_FILE_PRIVATE,
+  attestPayload,
+  verifyPayload,
+  createStore: createBlobStore,
+} = require('./attested-blob-store.cjs');
+const { publicStoreFromIdentity } = require('./profile-publish.cjs');
 
 const RECORD_FILE = 'identity-v3.json';
 const RECORD_VERSION = 3;
@@ -49,6 +56,10 @@ function createManager(userDataDir, opts = {}) {
   /** In-memory secrets (never written plaintext). */
   let deviceSecretKeyHex = null;
   let rootSeedHex = null;
+  /** Stores keyed by `kind`, lazily created once identity is ready. */
+  let privateBlobStore = null;
+  let publicBlobStore = null;
+  let deviceKeyPair = null;
   /** Pending create: mnemonic shown once until confirmBackup. */
   let pendingMnemonic = null;
   /** Host-side attest sessions awaiting explicit confirm. */
@@ -88,9 +99,67 @@ function createManager(userDataDir, opts = {}) {
     }
   }
 
-  function init() {
+  async function loadBlobStores() {
+    privateBlobStore = null;
+    publicBlobStore = null;
+    deviceKeyPair = null;
+    if (!record || !deviceSecretKeyHex || !record.devicePublicKey) return;
+    deviceKeyPair = keyPairFromHex(record.devicePublicKey, deviceSecretKeyHex);
+    const blobPath = path.join(userDataDir, BLOB_FILE_PRIVATE);
+    const openPrivateStore = () => createBlobStore({
+      filePath: blobPath,
+      encrypt: (buf) => secrets.encryptString(buf.toString('utf8')),
+      decrypt: (buf) => Buffer.from(secrets.decryptString(buf.toString('utf8')), 'utf8'),
+      identityPublicKey: record.identityPublicKey,
+    });
+    try {
+      privateBlobStore = openPrivateStore();
+    } catch (err) {
+      if (!/identity mismatch/.test(err.message)) throw err;
+      // Stale blob from a prior identity (resetLocal keeps it for same-mnemonic
+      // recovery). Move it aside instead of failing this identity's setup.
+      try {
+        fs.renameSync(blobPath, `${blobPath}.stale-${Date.now()}`);
+      } catch {
+        // ignore
+      }
+      privateBlobStore = openPrivateStore();
+    }
+    // Only available with the root seed (tether-academy devices); keet-linked
+    // devices can't derive the discovery key, so they're read-only here.
+    if (rootSeedHex) {
+      try {
+        const id = await IdentityKey.from({ seed: fromHex(rootSeedHex) });
+        publicBlobStore = publicStoreFromIdentity({
+          identity: id,
+          userDataDir,
+        });
+        id.clear();
+      } catch {
+        publicBlobStore = null;
+      }
+    }
+  }
+
+  // Resolves once init() has loaded the blob stores, so IPC handlers can
+  // await it and avoid racing the async hydrate; create/recover re-resolve it.
+  let readyPromise = null;
+  function ready() {
+    if (!readyPromise) {
+      readyPromise = (async () => {
+        await init();
+        return true;
+      })();
+    }
+    return readyPromise;
+  }
+
+  async function init() {
     record = loadRecordFromDisk();
-    if (record) hydrateSecrets();
+    if (record) {
+      hydrateSecrets();
+      await loadBlobStores();
+    }
   }
 
   function reapAttestSessions() {
@@ -206,6 +275,8 @@ function createManager(userDataDir, opts = {}) {
     };
     persistRecord();
     id.clear();
+    await loadBlobStores();
+    readyPromise = null;
 
     return {
       mnemonic,
@@ -271,6 +342,8 @@ function createManager(userDataDir, opts = {}) {
     };
     persistRecord();
     id.clear();
+    await loadBlobStores();
+    readyPromise = null;
     return publicView();
   }
 
@@ -439,11 +512,17 @@ function createManager(userDataDir, opts = {}) {
     pendingMnemonic = null;
     attestSessions.clear();
     record = null;
+    privateBlobStore = null;
+    publicBlobStore = null;
+    deviceKeyPair = null;
+    readyPromise = null;
     try {
       if (fs.existsSync(recordPath)) fs.unlinkSync(recordPath);
     } catch {
       // ignore
     }
+    // Blob files stay on disk (not deleted): recovering the same mnemonic on
+    // this device should find prior progress. Wipe is a per-device decision.
     return { status: 'none' };
   }
 
@@ -452,13 +531,202 @@ function createManager(userDataDir, opts = {}) {
     return pendingMnemonic;
   }
 
-  init();
+  // --- Attested blob store: read/write helpers for both stores ---
+
+  function ensureReady() {
+    if (status() !== 'ready') throw new Error('identity: not ready');
+    if (!record || !privateBlobStore || !deviceKeyPair) {
+      throw new Error('identity: stores not loaded');
+    }
+  }
+
+  function nextRevision(prev) {
+    return typeof prev === 'number' && prev >= 0 ? prev + 1 : 1;
+  }
+
+  function writePrivate(kind, payload) {
+    ensureReady();
+    if (!kind || typeof kind !== 'string') {
+      throw new Error('blob: kind must be a non-empty string');
+    }
+    const prev = privateBlobStore.get(kind);
+    const entry = attestPayload({
+      kind,
+      payload,
+      deviceKeyPair,
+      currentProofB64: record.proof,
+      identityKey: null, // IdentityKey unused when currentProofB64 is set
+    });
+    entry.revision = nextRevision(prev && prev.revision);
+    privateBlobStore.put(kind, entry);
+    return entry;
+  }
+
+  function readPrivate(kind) {
+    ensureReady();
+    const entry = privateBlobStore.get(kind);
+    if (!entry) return null;
+    if (!verifyPayload(entry, {
+      IdentityKey,
+      expectedIdentityPublicKeyHex: record.identityPublicKey,
+    })) {
+      // Tampering or proof-chain divergence surfaces as null rather than
+      // throwing, so a corrupted kind doesn't take down the whole identity.
+      return null;
+    }
+    return entry;
+  }
+
+  function writePublic(kind, payload) {
+    ensureReady();
+    if (!publicBlobStore) {
+      throw new Error('blob: cannot publish on a keet-linked device (no root seed)');
+    }
+    const prev = publicBlobStore.get(kind);
+    const entry = attestPayload({
+      kind,
+      payload,
+      deviceKeyPair,
+      currentProofB64: record.proof,
+      identityKey: null,
+    });
+    entry.revision = nextRevision(prev && prev.revision);
+    publicBlobStore.put(kind, entry);
+    return entry;
+  }
+
+  function readPublic(kind) {
+    ensureReady();
+    if (!publicBlobStore) return null;
+    const entry = publicBlobStore.get(kind);
+    if (!entry) return null;
+    if (!verifyPayload(entry, {
+      IdentityKey,
+      expectedIdentityPublicKeyHex: record.identityPublicKey,
+    })) {
+      return null;
+    }
+    return entry;
+  }
+
+  // --- High-level helpers ----------------------------------------------
+
+  const USERNAME_RE = /^[a-z0-9](?:[a-z0-9_-]{1,28}[a-z0-9])?$/i;
+
+  function normalizeUsername(raw) {
+    if (typeof raw !== 'string') throw new Error('username: must be a string');
+    const trimmed = raw.trim().toLowerCase();
+    if (!USERNAME_RE.test(trimmed)) {
+      throw new Error('username: 3-30 chars, letters/digits/underscore/dash, no leading or trailing dash or underscore');
+    }
+    return trimmed;
+  }
+
+  function setUsername(rawUsername) {
+    ensureReady();
+    const username = normalizeUsername(rawUsername);
+    const entry = writePrivate('username', { username });
+    if (publicBlobStore) {
+      try {
+        writePublic('username', { username });
+      } catch (err) {
+        // Don't fail the local set if the publish failed; the user can retry.
+        console.error('identity: failed to publish username', err);
+      }
+    }
+    return { username, revision: entry.revision, updatedAt: entry.updatedAt };
+  }
+
+  function getUsername() {
+    const entry = readPrivate('username');
+    if (!entry) return null;
+    return {
+      username: entry.payload && entry.payload.username,
+      revision: entry.revision,
+      updatedAt: entry.updatedAt,
+      published: !!readPublic('username'),
+    };
+  }
+
+  // Progress is an open per-machine JSON blob keyed by lesson-id; the renderer owns its shape.
+  function setProgress(progress) {
+    ensureReady();
+    if (!progress || typeof progress !== 'object') {
+      throw new Error('progress: must be an object');
+    }
+    const entry = writePrivate('progress', {
+      progress,
+      updatedAt: Date.now(),
+    });
+    return {
+      progress: entry.payload.progress,
+      revision: entry.revision,
+      updatedAt: entry.updatedAt,
+    };
+  }
+
+  function getProgress() {
+    const entry = readPrivate('progress');
+    if (!entry) return null;
+    return {
+      progress: entry.payload && entry.payload.progress,
+      revision: entry.revision,
+      updatedAt: entry.updatedAt,
+    };
+  }
+
+  // Exposes verifyPayload to the UI, e.g. to confirm a peer's username
+  // before saving it to a contact list.
+  function verifyAttested(kind, payload, proofB64, expectedIdentityPublicKeyHex) {
+    return verifyPayload(
+      { kind, payload, proofB64 },
+      { IdentityKey, expectedIdentityPublicKeyHex },
+    );
+  }
+
+  // Verifies a peer's publicProfileSnapshot. Only the plain {payload,
+  // proofB64} shape can be checked here; payloadEnc blobs need the peer's
+  // discovery key (derived from their seed), which isn't exchanged yet.
+  function importProfile({ identityPublicKeyHex, profile }) {
+    if (!identityPublicKeyHex || typeof identityPublicKeyHex !== 'string') {
+      throw new Error('import-profile: identityPublicKeyHex required');
+    }
+    if (!profile || typeof profile !== 'object') {
+      throw new Error('import-profile: profile object required');
+    }
+    const blobs = profile.blobs || {};
+    const verified = {};
+    for (const [kind, entry] of Object.entries(blobs)) {
+      if (!entry || typeof entry !== 'object') {
+        verified[kind] = false;
+        continue;
+      }
+      if (entry.payload && entry.proofB64) {
+        verified[kind] = verifyPayload(
+          { kind, payload: entry.payload, proofB64: entry.proofB64 },
+          { IdentityKey, expectedIdentityPublicKeyHex: identityPublicKeyHex },
+        );
+      } else if (entry.payloadEnc) {
+        verified[kind] = false;
+      } else {
+        verified[kind] = false;
+      }
+    }
+    return { ok: true, verified };
+  }
+
+  init().catch((err) => {
+    console.error('identity: init failed', err);
+  });
 
   return {
     status,
     publicView,
     /** 'safeStorage' or 'aes-gcm-local'. Peer-exec refuses the latter. */
     secretScheme: () => secrets.scheme,
+    /** Resolves once init() has loaded the blob stores. IPC handlers
+     *  await this so renderer calls never race the async hydrate. */
+    ready,
     getDeviceIdentity,
     getDevicePrivateMaterialHex,
     createNew,
@@ -481,6 +749,27 @@ function createManager(userDataDir, opts = {}) {
       if (expectedDeviceHex) opts.expectedDevice = fromHex(expectedDeviceHex);
       return IdentityKey.verify(proof, null, opts);
     },
+    setUsername,
+    getUsername,
+    setProgress,
+    getProgress,
+    listBlobs() {
+      return {
+        private: privateBlobStore ? privateBlobStore.list() : [],
+        public: publicBlobStore ? publicBlobStore.list() : [],
+      };
+    },
+    publicProfileSnapshot() {
+      if (!publicBlobStore || !record) return null;
+      return {
+        identityPublicKey: record.identityPublicKey,
+        devicePublicKey: record.devicePublicKey,
+        proof: record.proof,
+        blobs: publicBlobStore.snapshot().blobs,
+      };
+    },
+    verifyAttested,
+    importProfile,
   };
 }
 

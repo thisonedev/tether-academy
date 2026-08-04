@@ -114,3 +114,63 @@ test('identity-manager - recovers the same root from a mnemonic', async (t) => {
   t.is(recovered.identityPublicKey, rootKey);
   t.is(recovered.ready, true, 'recovery implies the mnemonic is already backed up');
 });
+
+// ready() resolves once init() has loaded the blob stores; blob-touching
+// operations before that throw "stores not loaded".
+test('identity-manager - ready() resolves after init() loads blob stores', async (t) => {
+  const m = manager(t, 'ready');
+  await m.createNew();
+  m.confirmBackup();
+  await m.ready();
+  t.is(m.status(), 'ready');
+  const result = await m.setUsername('alice');
+  t.ok(result, 'setUsername returns a result');
+  t.is(result.username, 'alice');
+});
+
+// Models a real app restart: every other test here reuses the writer's
+// instance, so it can't catch decrypt-path bugs.
+test('identity-manager - a fresh instance reads back blobs written before restart', async (t) => {
+  const dir = tmpDir(t, 'idm-restart');
+  const m1 = createManager(dir, { safeStorage: null });
+  await m1.createNew();
+  m1.confirmBackup();
+  await m1.ready();
+  await m1.setUsername('alice');
+  await m1.setProgress({ 'getting-started': 'done' });
+
+  const m2 = createManager(dir, { safeStorage: null });
+  await m2.ready();
+  t.is(m2.getUsername().username, 'alice');
+  t.alike(m2.getProgress().progress, { 'getting-started': 'done' });
+});
+
+// resetLocal() leaves the blob file for same-mnemonic recovery, so a fresh
+// createNew (a different identity) finds a file that doesn't match it.
+test('identity-manager - createNew after reset does not choke on a stale blob file from the old identity', async (t) => {
+  const dir = tmpDir(t, 'idm-stale-blobs');
+  const m1 = createManager(dir, { safeStorage: null });
+  await m1.createNew();
+  m1.confirmBackup();
+  await m1.ready();
+  await m1.setUsername('alice');
+  m1.resetLocal();
+
+  const m2 = createManager(dir, { safeStorage: null });
+  await t.execution(m2.createNew());
+  m2.confirmBackup();
+  await m2.ready();
+  t.is(m2.getUsername(), null, 'the new identity does not inherit the old one\'s username');
+});
+
+test('identity-manager - ready() invalidates after reset and re-runs init', async (t) => {
+  const m = manager(t, 'ready-reset');
+  await m.createNew();
+  m.confirmBackup();
+  await m.setUsername('bob');
+  m.resetLocal();
+  // After reset, ready() must re-run init() against an empty store and
+  // find no record.
+  await m.ready();
+  t.is(m.status(), 'none', 'reset leaves no identity');
+});

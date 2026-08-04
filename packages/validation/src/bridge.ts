@@ -209,6 +209,46 @@ export interface AcademyIdentityAPI {
   listDevices: () => Promise<AcademyIdentityStatus['devices']>;
   /** Wipe identity from this device only. Requires create/link/recover to use the app again. */
   reset: () => Promise<AcademyIdentityStatus>;
+  // Attested blob store; see electron/identity/manager.cjs for the primitive.
+  setUsername: (payload: { username: string }) => Promise<{
+    username: string;
+    revision: number;
+    updatedAt: number;
+  } | null>;
+  getUsername: () => Promise<{
+    username: string;
+    revision: number;
+    updatedAt: number;
+    published: boolean;
+  } | null>;
+  setProgress: (payload: {
+    progress: Record<string, unknown>;
+  }) => Promise<{ progress: Record<string, unknown>; revision: number; updatedAt: number } | null>;
+  getProgress: () => Promise<{
+    progress: Record<string, unknown>;
+    revision: number;
+    updatedAt: number;
+  } | null>;
+  listBlobs: () => Promise<{
+    private: Array<{ kind: string; revision: number; updatedAt: number }>;
+    public: Array<{ kind: string; revision: number; updatedAt: number }>;
+  }>;
+  publicSnapshot: () => Promise<{
+    identityPublicKey: string;
+    devicePublicKey: string;
+    proof: string;
+    blobs: Record<string, unknown>;
+  } | null>;
+  verifyAttested: (payload: {
+    kind: string;
+    payload: unknown;
+    proofB64: string;
+    expectedIdentityPublicKeyHex: string;
+  }) => Promise<boolean>;
+  importProfile: (payload: {
+    identityPublicKeyHex: string;
+    profile: unknown;
+  }) => Promise<{ ok: boolean; verified: Record<string, boolean> }>;
 }
 
 export interface AcademyPeerInvite {

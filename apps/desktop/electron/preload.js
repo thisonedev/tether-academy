@@ -50,6 +50,15 @@ const academy = {
       ipcRenderer.invoke('academy:identity:revoke-device', devicePublicKey),
     listDevices: () => ipcRenderer.invoke('academy:identity:list-devices'),
     reset: () => ipcRenderer.invoke('academy:identity:reset'),
+    // Attested blob store: username, progress, future xp/reputation.
+    setUsername: (payload) => ipcRenderer.invoke('academy:identity:set-username', payload),
+    getUsername: () => ipcRenderer.invoke('academy:identity:get-username'),
+    setProgress: (payload) => ipcRenderer.invoke('academy:identity:set-progress', payload),
+    getProgress: () => ipcRenderer.invoke('academy:identity:get-progress'),
+    listBlobs: () => ipcRenderer.invoke('academy:identity:list-blobs'),
+    publicSnapshot: () => ipcRenderer.invoke('academy:identity:public-snapshot'),
+    verifyAttested: (payload) => ipcRenderer.invoke('academy:identity:verify-attested', payload),
+    importProfile: (payload) => ipcRenderer.invoke('academy:identity:import-profile', payload),
   },
   peer: {
     identity: () => ipcRenderer.invoke('academy:peer:identity'),
