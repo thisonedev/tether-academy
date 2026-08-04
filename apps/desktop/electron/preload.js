@@ -8,6 +8,7 @@ const academy = {
   run: (payload) => ipcRenderer.invoke('academy:run', payload),
   stop: () => ipcRenderer.invoke('academy:stop'),
   reveal: (filePath) => ipcRenderer.invoke('academy:reveal', filePath),
+  readSaved: (filePath) => ipcRenderer.invoke('academy:read-saved', filePath),
   onRunChunk: (callback) => {
     const handler = (/** @type {unknown} */ _e, /** @type {any} */ chunk) => callback(chunk);
     ipcRenderer.on('academy:run:chunk', handler);

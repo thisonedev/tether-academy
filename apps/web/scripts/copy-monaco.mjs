@@ -2,7 +2,7 @@
 // Copy the bundled Monaco editor's AMD loader (min/vs) into the public assets
 // so the renderer can load it from /monaco/vs. Without this, @monaco-editor/
 // react fetches the loader from cdn.jsdelivr.net at runtime, which the renderer
-// CSP would have to allow — defeating the supply-chain rule the protocol scheme
+// CSP would have to allow, defeating the supply-chain rule the protocol scheme
 // was chosen to enforce.
 
 import { existsSync } from 'node:fs';

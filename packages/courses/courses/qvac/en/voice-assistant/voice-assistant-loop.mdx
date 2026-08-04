@@ -158,14 +158,51 @@ process.on("SIGINT", () => void cleanup());
 process.on("SIGTERM", () => void cleanup());
 ```
 
-The SDK installs its own `SIGINT` / `SIGTERM` handler that aborts in-flight RPC streams on shutdown. The abort rejects any pending `session.write()` or `unloadModel()` call with a `WorkerShutdownError`. The bare-rpc socket also emits an `RPCError` with `code: 'CHANNEL_CLOSED'` on the same teardown path. Both surface as unhandled stream errors. The `process.on("uncaughtException", ...)` filter ignores the shutdown noise and re-throws anything else:
+The SDK installs its own `SIGINT` / `SIGTERM` handler that aborts in-flight RPC streams on shutdown. The abort rejects any pending `session.write()` or `unloadModel()` call with a `WorkerShutdownError`. The bare-rpc socket also emits an `RPCError` with `code: 'CHANNEL_CLOSED'` on the same teardown path. Both surface as unhandled stream errors. The `process.on("uncaughtException", ...)` filter ignores the shutdown noise and re-throws anything else. The lesson scopes its Sets to avoid shadowing the runner preamble's globals of the same name:
 
 ```ts
+const LESSON_TEARDOWN_NAMES = new Set([
+  "WorkerShutdownError", "WorkerCrashedError", "BareRuntimeBinaryNotFoundError",
+  "InferenceCancelledError", "TranscriptionFailedError", "TranslationFailedError",
+  "TextToSpeechFailedError", "TextToSpeechStreamFailedError", "AbortError",
+]);
+const LESSON_TEARDOWN_CODES = new Set([
+  "ABORT_ERR", "CHANNEL_CLOSED", "MODEL_NOT_LOADED", "MODEL_WAS_UNLOADED",
+  "WORKER_SHUTDOWN", "RPC_CONNECTION_FAILED",
+]);
+function isTeardown(err) {
+  if (!err) return true;
+  if (LESSON_TEARDOWN_NAMES.has((err.name || "").toString())) return true;
+  const code = (err.code || "").toString();
+  if (LESSON_TEARDOWN_CODES.has(code)) return true;
+  const msg = (err.message || String(err) || "").toString();
+  if (/\bis shutting down\b/i.test(msg)) return true;
+  if (/\bin-flight rpc\b/i.test(msg)) return true;
+  return false;
+}
 process.on("uncaughtException", (err) => {
-  if (err instanceof WorkerShutdownError) return;
-  if (err?.code === "CHANNEL_CLOSED") return;
+  if (isTeardown(err)) return;
   throw err;
 });
+```
+
+Each teardown-aware RPC also lands in the body of the loop, so guard each call against the `shuttingDown` flag and catch per-turn errors, otherwise a flush that fires after `unloadModel` raises `Transcription failed: Model X unloaded` for every drained segment:
+
+```ts
+for await (const rawText of session) {
+  if (shuttingDown) break;
+  // ...
+  try {
+    for await (const token of llmResult.tokenStream) {
+      if (shuttingDown) break;
+      process.stdout.write(token);
+      assistantText += token;
+    }
+  } catch (err) {
+    if (!isTeardown(err)) console.error("✖ LLM:", err.message);
+    break;
+  }
+}
 ```
 
 > Note: the system prompt bans markdown and lists because the output is spoken aloud. A `### heading` or a `1. ` list reads as a stuttery mess through TTS.

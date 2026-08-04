@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '../..');
 const main = fs.readFileSync(path.join(root, 'electron/main.js'), 'utf8');
 const registry = require(path.join(root, 'shared/ipc-channels.cjs'));
 
-// Match `handle('channel'` but not `protocol.handle('scheme'` — only the
+// Match `handle('channel'` but not `protocol.handle('scheme'`. Only the
 // IPC wrapper registers IPC channels, not the protocol handler.
 const registered = [...main.matchAll(/(?<![\w.])handle\('([^']+)'/g)].map(
   (match) => match[1],

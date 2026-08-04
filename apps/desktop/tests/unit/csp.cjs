@@ -25,7 +25,7 @@ test('csp - script-src does not name any remote origin', (t) => {
     directives[d.slice(0, idx)] = d.slice(idx + 1);
   }
   for (const [name, value] of Object.entries(directives)) {
-    // frame-ancestors does not load code, but every named origin is still an attack surface.
+    // frame-ancestors does not load code, but every named origin is still trusted input.
     const hosts = value.match(/https?:\/\/[^\s]+/g) ?? [];
     t.alike(hosts, [], `${name} names no remote origin`);
   }

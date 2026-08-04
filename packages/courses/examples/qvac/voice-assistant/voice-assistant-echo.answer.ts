@@ -206,15 +206,42 @@ async function cleanup() {
 process.on("SIGINT", () => void cleanup());
 process.on("SIGTERM", () => void cleanup());
 
+// The SDK raises a small family of teardown-time errors after unloadModel:
+// TranscriptionFailedError, TranslationFailedError, TextToSpeechStreamFailedError,
+// ModelNotLoadedError, and WorkerShutdownError. Match by name and by the
+// SDK's own teardown codes (CHANNEL_CLOSED, ABORT_ERR, MODEL_WAS_UNLOADED, ...).
+// Anything we don't recognize here is a real bug worth surfacing.
+// Use lesson-scoped names: the runner preamble already injects a Set named
+// TEARDOWN_NAMES, so redeclaring it here would crash with "Identifier has
+// already been declared".
+const LESSON_TEARDOWN_NAMES = new Set([
+  "WorkerShutdownError", "WorkerCrashedError", "BareRuntimeBinaryNotFoundError",
+  "InferenceCancelledError", "TranscriptionFailedError", "TranslationFailedError",
+  "TextToSpeechFailedError", "TextToSpeechStreamFailedError", "AbortError",
+]);
+const LESSON_TEARDOWN_CODES = new Set([
+  "ABORT_ERR", "CHANNEL_CLOSED", "MODEL_NOT_LOADED", "MODEL_WAS_UNLOADED",
+  "WORKER_SHUTDOWN", "RPC_CONNECTION_FAILED",
+]);
+function isTeardown(err) {
+  if (!err) return true;
+  if (LESSON_TEARDOWN_NAMES.has((err.name || "").toString())) return true;
+  const code = (err.code || "").toString();
+  if (LESSON_TEARDOWN_CODES.has(code)) return true;
+  const msg = (err.message || String(err) || "").toString();
+  if (/\bis shutting down\b/i.test(msg)) return true;
+  if (/\bin-flight rpc\b/i.test(msg)) return true;
+  return false;
+}
 process.on("uncaughtException", (err) => {
-  if (err instanceof WorkerShutdownError) return;
-  if (err?.code === "CHANNEL_CLOSED") return;
+  if (isTeardown(err)) return;
   throw err;
 });
 
 console.log("▸ Listening. Speak a question and pause. Ctrl+C to quit.\n");
 
 for await (const rawText of session) {
+  if (shuttingDown) break;
   if (isSpeaking) continue;
   if (!isMeaningfulTranscript(rawText)) continue;
   const userText = rawText.trim();
@@ -224,6 +251,7 @@ for await (const rawText of session) {
 
   isSpeaking = true;
   try {
+    if (shuttingDown) break;
     console.log("▸ Assistant:");
     const llmResult = completion({
       modelId: llmModelId,
@@ -231,33 +259,49 @@ for await (const rawText of session) {
       stream: true,
     });
     let assistantText = "";
-    for await (const token of llmResult.tokenStream) {
-      process.stdout.write(token);
-      assistantText += token;
+    try {
+      for await (const token of llmResult.tokenStream) {
+        if (shuttingDown) break;
+        process.stdout.write(token);
+        assistantText += token;
+      }
+      process.stdout.write("\n");
+    } catch (err) {
+      if (!isTeardown(err)) console.error("✖ LLM:", err.message);
     }
-    process.stdout.write("\n");
     history.push({ role: "assistant", content: assistantText });
 
     const spoken = assistantText.trim();
-    if (spoken.length > 0) {
-      const ttsResult = textToSpeech({
-        modelId: ttsModelId,
-        text: spoken,
-        inputType: "text",
-        stream: false,
-      });
-      const samples = await ttsResult.buffer;
-      if (samples.length > 0) {
+    if (spoken.length > 0 && !shuttingDown) {
+      let samples: Int16Array;
+      try {
+        const ttsResult = textToSpeech({
+          modelId: ttsModelId,
+          text: spoken,
+          inputType: "text",
+          stream: false,
+        });
+        samples = await ttsResult.buffer;
+      } catch (err) {
+        if (!isTeardown(err)) console.error("✖ TTS:", err.message);
+      }
+      if (samples && samples.length > 0 && !shuttingDown) {
         const wavBuffer = Buffer.concat([
           createWavHeader(samples.length * 2, TTS_SAMPLE_RATE),
           int16ArrayToBuffer(samples),
         ]);
-        playAudio(wavBuffer);
+        try {
+          if (!shuttingDown) playAudio(wavBuffer);
+        } catch (err) {
+          if (!isTeardown(err)) console.error("✖ Turn failed:", err.message);
+        }
+        try {
+          await sleep(POST_PLAYBACK_COOLDOWN_MS);
+        } catch {}
       }
-      await sleep(POST_PLAYBACK_COOLDOWN_MS);
     }
   } catch (turnError) {
-    console.error("\n✖ Turn failed:", turnError instanceof Error ? turnError.message : turnError);
+    if (!isTeardown(turnError)) console.error("\n✖ Turn failed:", turnError instanceof Error ? turnError.message : turnError);
   } finally {
     isSpeaking = false;
     console.log("\n▸ Listening...\n");

@@ -112,7 +112,7 @@ export function HelpPanel({ hints, answer, onReveal, disabled = false }: HelpPan
             : undefined
         }
       >
-        {/* Mobile drag handle — purely decorative */}
+        {/* Mobile drag handle, purely decorative */}
         <div className="mb-3 flex justify-center md:hidden">
           <span className="h-1 w-10 rounded-full bg-canvas-muted-foreground/40" />
         </div>

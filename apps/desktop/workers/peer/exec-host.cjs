@@ -320,6 +320,9 @@ function createExecHost(ctx) {
       kind: 'exit',
       code,
       signal,
+      // Lets the renderer distinguish a user-initiated Stop from an actual
+      // crash, so a SIGTRAP-on-cleanup doesn't surface as "stopped by SIGTRAP".
+      cancelled: run.cancelled || undefined,
       mode: run.mode,
       fileName: run.fileName,
     });

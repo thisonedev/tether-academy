@@ -15,6 +15,7 @@ const {
   precreateOutputDirs,
   snapshotOutputs,
   describeNewOutputs,
+  formatRunError,
 } = require('../../shared/lesson-output.cjs');
 
 const COURSES = path.join(__dirname, '..', '..', '..', '..', 'packages', 'courses');
@@ -186,4 +187,40 @@ test('lesson-output - the sandbox grants the lesson folder, not all of Documents
 
   t.ok(write.includes(vars.lessonDir), 'lesson folder is writable');
   t.absent(write.includes(path.join(os.homedir(), 'Documents')), 'Documents itself is not');
+});
+
+test('lesson-output - formatRunError shrinks SDK cancel/stop messages', (t) => {
+  // The QVAC SDK throws an INFERENCE_CANCELLED with a full file:// URL and a
+  // AbortSignal.onAbort frame when the user clicks Stop on a long generation.
+  // The lesson panel should show one short word, not a stack fragment.
+  t.is(formatRunError({
+    message:
+      'INFERENCE_CANCELLED: Inference request "043be4f96f26e013ed3baceeb311f983" was cancelled before it could complete at AbortSignal.onAbort (file:///Users/source/jerry/code/tether-academy/node_modules/.pnpm/@qvac+sdk@0.15.0_bare-buffer@3.6.2_bare-events@2.9.1_bare-abort-controller@1.1.2__bare-pipe@4_n7ab4mn4rtviilwocsrg3bap4i/node_modules/@qvac/sdk/dist/server/rpc/handlers/load-model/download-manager.js:99:42)',
+  }), 'stopped');
+
+  t.is(formatRunError(new Error('AbortedError: aborted')), 'stopped');
+  t.is(formatRunError('AbortedError: stream closed'), 'stopped');
+
+  // Voice-assistant lessons install their own filter; if a WorkerShutdownError
+  // or CHANNEL_CLOSED slips through, the host still maps it to a short note.
+  t.is(formatRunError(new Error('WorkerShutdownError: bare worker exited')), 'runner stopped');
+  t.is(formatRunError({ message: 'RPCError code: CHANNEL_CLOSED' }), 'runner stopped');
+
+  // Other errors drop file:// URLs and trailing `at ... (...)` frames so the
+  // panel doesn't fill with stack fragments.
+  t.is(
+    formatRunError(new Error('TimeoutError: model load took too long at p (file:///Users/x/model.js:42:11)')),
+    'TimeoutError: model load took too long',
+  );
+
+  t.is(formatRunError(undefined), 'unknown error');
+  t.is(formatRunError(''), 'unknown error');
+  t.is(formatRunError(new Error('  ')), 'unknown error');
+
+  // Strings passed straight through are accepted.
+  t.is(formatRunError('plain error message'), 'plain error message');
+
+  // Long messages are capped at 400 chars.
+  const long = 'x'.repeat(1000);
+  t.is(formatRunError(long).length, 400);
 });

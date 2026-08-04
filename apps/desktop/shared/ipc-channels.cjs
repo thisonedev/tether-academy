@@ -11,6 +11,7 @@ const IPC_CHANNELS = Object.freeze({
   'academy:run': 'academyRunPayloadSchema',
   'academy:stop': null,
   'academy:reveal': 'academyRevealPathSchema',
+  'academy:read-saved': 'academyRevealPathSchema',
   'academy:state:get': 'stateKeySchema',
   'academy:state:set': 'stateSetSchema',
   'academy:state:remove': 'stateKeySchema',

@@ -12,7 +12,7 @@ const MAX_RUNTIME_MS = 5 * 60 * 1000;
 
 const { buildLesson } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
-const { lessonCwd, snapshotOutputs, describeNewOutputs } = require('./shared/lesson-output.cjs');
+const { lessonCwd, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
 const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 
@@ -93,6 +93,13 @@ function runExample({ source, language, argv, onChunk }) {
     // Same 1 MiB per-stream cap peer-exec uses.
     const output = createAccumulator();
     let killed = false;
+    let stopRequested = false;
+    const settle = (value) => {
+      if (stopRequested && typeof value === 'object' && value) {
+        value.stopRequested = true;
+      }
+      resolve(value);
+    };
     const timer = setTimeout(() => {
       killed = true;
       killGroup('SIGTERM');
@@ -110,7 +117,7 @@ function runExample({ source, language, argv, onChunk }) {
     child.on('error', (err) => {
       clearTimeout(timer);
       rm(dir, { recursive: true, force: true }).catch(() => {});
-      resolve({ ok: false, output: `[runner] ${err.message}\n${output.result('stdout')}${output.result('stderr')}` });
+      settle({ ok: false, output: `[runner] ${formatRunError(err)}\n${output.result('stdout')}${output.result('stderr')}` });
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
@@ -142,11 +149,11 @@ function runExample({ source, language, argv, onChunk }) {
       }
       const fullOutput = `${output.result('stdout')}${output.result('stderr')}`;
       if (killed)
-        resolve({
+        settle({
           ok: false,
           output: `${fullOutput}\n[runner] killed after ${MAX_RUNTIME_MS / 1000}s`,
         });
-      else resolve({ ok: code === 0, output: fullOutput });
+      else settle({ ok: code === 0, output: fullOutput });
     });
   });
 
@@ -154,6 +161,7 @@ function runExample({ source, language, argv, onChunk }) {
   const abort = () => {
     if (aborted || child.killed || child.exitCode !== null) return false;
     aborted = true;
+    stopRequested = true;
     killGroup('SIGTERM');
     return true;
   };

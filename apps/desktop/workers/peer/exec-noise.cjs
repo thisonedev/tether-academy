@@ -24,11 +24,27 @@ const NOISE_LINE = [
   /^alloc_compute_meta: /i,
   /^add_text: /i,
   /^clip_ctx: /i,
+  // Vision model hparams dump from the multimodal plugin (SmolVLM2 etc).
+  // The earlier `clip_model_loader: tensor[` rule only strips tensors; the
+  // surrounding `clip_model_loader: <key>: <value>` lines don't carry signal
+  // for a learner, so the whole `clip_model_loader:` prefix is dropped.
+  /^clip_model_loader: /i,
+  // Standalone delimiter lines inside the multimodal hparams dump, e.g.
+  // `--- vision hparams ---` or `--- llm hparams ---`.
+  /^--- (vision|llm|text|image|audio) hparams ---$/i,
+  // Hugging Face download progress bars the addon prints to stderr alongside
+  // (or instead of) the onProgress callback. The lesson uses an explicit
+  // `console.log(\`▸ Downloading N% (X/Y MB)\`)` for the same data; the
+  // addon-side bar just doubles it up. Strip both shapes: `tag|<bar> N/N - rate`
+  // and the standalone `N%|###|` columns UI emits.
+  /^[^|]+\|=+[>=]?\s*\d+\/\d+/,
+  /^[^|]+:\s*\d+%\s*\|.*\|/,
+  /^\d+%\s*\|.*\|/,
   // llama.cpp LOG_INF: `<tag>: <message>`. `llama_` covers every llama.cpp
   // call site; the allowlist below covers SDK helpers wrapping the same
   // logging without the prefix.
   /^llama_/i,
-  /^(common_init_result|initFromConfig|parse|load_internals): /i,
+  /^(common_init_result|common_init_from_model_and_params|initFromConfig|parse|load_internals): /i,
   // ggml backend probing and the Metal device dump, both `<tag>: <message>`.
   // A crash's assert and frames don't match this shape, so it still shows up.
   /^ggml_[a-z0-9_]+: /i,

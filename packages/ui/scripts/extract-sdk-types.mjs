@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build-time walker for the @qvac/sdk type graph.
 //
-// At runtime, the Monaco TS worker can't read files — it only sees
+// At runtime, the Monaco TS worker can't read files; it only sees
 // what we register as extraLibs. This script walks the SDK's
 // `.d.ts` graph from `index.d.ts`, finds every reachable file
 // (skipping the 1.3MB `models/registry` which lessons never need),

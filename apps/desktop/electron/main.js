@@ -28,6 +28,7 @@ const { getDeviceInfo } = require('./device.cjs');
 const { buildLesson } = require('./runner-process.cjs');
 const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
+const { formatRunError } = require('../shared/lesson-output.cjs');
 const IPC_CHANNELS = require('../shared/ipc-channels.cjs');
 
 // A channel not in IPC_CHANNELS throws at startup. The dynamic
@@ -194,7 +195,7 @@ async function runAcademy(parsed, evt) {
         cwd: COURSES_DIR,
       });
     } catch (err) {
-      return { ok: false, output: `[peer-exec] ${err.message}` };
+      return { ok: false, output: `[peer-exec] ${formatRunError(err)}` };
     }
     // Capped so a run that prints in a loop cannot grow main-process memory unbounded.
     const collected = createAccumulator();
@@ -214,9 +215,13 @@ async function runAcademy(parsed, evt) {
     const run = {
       promise: new Promise((resolve) => {
         let idleTimer = null;
+        let stopRequested = false;
         const settle = (value) => {
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = null;
+          if (stopRequested && typeof value === 'object' && value) {
+            value.stopRequested = true;
+          }
           resolve(value);
         };
         noteActivity = () => {
@@ -232,18 +237,26 @@ async function runAcademy(parsed, evt) {
           }, PEER_EXEC_IDLE_MS);
         };
         emitter.on('exit', (info) => {
+          // `info.cancelled` arrives from the peer when it was instructed to
+          // stop; treat it the same as a renderer-initiated Stop so the lesson
+          // output renders as `[stopped]` instead of `[stopped by SIGTRAP]`
+          // when the Bare runtime trap-fires during cleanup.
+          if (info?.cancelled) stopRequested = true;
           settle({
-            ok: info.code === 0,
+            ok: info.code === 0 && !info.cancelled,
             output: collected.result('stdout'),
             remoteExit: { code: info.code, signal: info.signal },
           });
         });
         emitter.on('error', (err) => {
-          settle({ ok: false, output: `${collected.result('stdout')}${collected.result('stderr')}\n[peer-exec] ${err.message}` });
+          settle({ ok: false, output: `${collected.result('stdout')}${collected.result('stderr')}\n[peer-exec] ${formatRunError(err)}` });
         });
         noteActivity();
       }),
-      abort: () => pearEnd.peer.cancelExec(parsed.peerId),
+      abort: () => {
+        stopRequested = true;
+        return pearEnd.peer.cancelExec(parsed.peerId);
+      },
     };
     currentRun = run;
     return run.promise.finally(() => {
@@ -270,6 +283,29 @@ handle('academy:reveal', async (filePath) => {
   if (!require('node:fs').existsSync(abs)) return false;
   shell.showItemInFolder(abs);
   return true;
+});
+
+// Read a lesson's saved file as base64 so the renderer can inline preview an
+// image or video without poking the OS file manager. Same containment check
+// as academy:reveal; nothing else on disk is reachable through this channel.
+// Capped at 64 MiB to leave room for a generated MP4 clip; bigger files return null.
+const { mimeFor, canPreviewFile, MAX_READ_SAVED_BYTES } = require('../shared/lesson-preview.cjs');
+handle('academy:read-saved', async (filePath) => {
+  const fs = require('node:fs');
+  const { lessonHomeDir } = require('../shared/lesson-output.cjs');
+  const root = path.resolve(lessonHomeDir());
+  const abs = path.resolve(filePath);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  let stat;
+  try {
+    stat = await fs.promises.stat(abs);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.size > MAX_READ_SAVED_BYTES) return null;
+  if (!canPreviewFile(abs)) return null;
+  const buf = await fs.promises.readFile(abs);
+  return { base64: buf.toString('base64'), mime: mimeFor(abs), bytes: stat.size };
 });
 
 handle('academy:stop', () => {
@@ -633,17 +669,6 @@ function fsSync() {
 // is needed because the static export has no server to mint nonces for Next's
 // inline bootstrap. Policy lives in security-headers.cjs, shared with the <meta> tag.
 const { SECURITY_HEADERS } = require('./security-headers.cjs');
-
-function mimeFor(p) {
-  if (p.endsWith('.html')) return 'text/html; charset=utf-8';
-  if (p.endsWith('.js') || p.endsWith('.mjs')) return 'text/javascript; charset=utf-8';
-  if (p.endsWith('.css')) return 'text/css; charset=utf-8';
-  if (p.endsWith('.json')) return 'application/json; charset=utf-8';
-  if (p.endsWith('.svg')) return 'image/svg+xml';
-  if (p.endsWith('.png')) return 'image/png';
-  if (p.endsWith('.woff2')) return 'font/woff2';
-  return 'application/octet-stream';
-}
 
 function resolveStaticPath(pathname, root) {
   // trailingSlash: true, so directory and extensionless requests land on index.html.

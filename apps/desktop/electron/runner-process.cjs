@@ -250,7 +250,36 @@ function __academyEnd(code) {
 function __academyFinish(p) {
   Promise.resolve(p).then(() => __academyEnd(0), (err) => { console.error(err); __academyEnd(1); });
 }
+// Lesson snippets install their own uncaughtException filter for these. If
+// one slips through the host shouldn't pass on a stack for it.
 process.on('unhandledRejection', () => { __academyEnd(1); });
+// Swallow teardown-time errors entirely so the lesson output panel only
+// shows what the lesson chose to print. Voice-assistant loops can produce
+// dozens of these (model unloaded, in-flight RPC aborted) on Stop; surfacing
+// them red-as-an-error would undo the "you clicked Stop" UX. The allowlists
+// are mirrored from electron/teardown-noise.cjs so the unit tests stay the
+// single source of truth.
+const TEARDOWN_NAMES = new Set(['WorkerShutdownError', 'WorkerCrashedError', 'BareRuntimeBinaryNotFoundError', 'InferenceCancelledError', 'TranscriptionFailedError', 'TranslationFailedError', 'TextToSpeechStreamFailedError', 'TextToSpeechFailedError']);
+const TEARDOWN_CODES = new Set(['ABORT_ERR', 'CHANNEL_CLOSED', 'MODEL_NOT_LOADED', 'MODEL_WAS_UNLOADED', 'WORKER_SHUTDOWN', 'RPC_CONNECTION_FAILED']);
+function __academyIsTeardownNoise(err) {
+  if (!err) return true;
+  const name = (err.name || '').toString();
+  const code = (err.code || '').toString();
+  if (TEARDOWN_NAMES.has(name)) return true;
+  if (TEARDOWN_CODES.has(code)) return true;
+  if (/^abort/i.test(name)) return true;
+  const m = (err.message || String(err) || '').toString();
+  if (/\bis shutting down\b/i.test(m)) return true;
+  if (/\bin-flight rpc\b/i.test(m)) return true;
+  if (/^Worker exited mid-request\b/i.test(m)) return true;
+  return false;
+}
+process.on('uncaughtException', (err) => {
+  if (__academyIsTeardownNoise(err)) return;
+  // Real error worth surfacing as a one-liner.
+  const m = ((err && err.message) || String(err) || '').toString().trim();
+  console.error(m);
+});
 `;
 
 function routeWritesThroughDedupe(src) {

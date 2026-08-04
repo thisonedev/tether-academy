@@ -125,4 +125,39 @@ module.exports = {
   precreateOutputDirs,
   snapshotOutputs,
   describeNewOutputs,
+  formatRunError,
 };
+
+// SDK / Node error messages here often include `at func (file:///...node_modules/...)`
+// frames; the lesson panel only needs a one-word reason.
+function formatRunError(err) {
+  if (!err) return 'unknown error';
+  const raw = typeof err === 'string' ? err : err.message || String(err);
+  const text = String(raw).trim();
+  if (!text) return 'unknown error';
+
+  // The QVAC SDK throws an AbortError-shaped wrapper with code INFERENCE_CANCELLED
+  // when the user clicks Stop on a long video / image generation. The original
+  // message points into a node_modules file path that is not useful in the
+  // lesson output panel.
+  if (/INFERENCE_CANCELLED|AbortedError|was cancelled before it could complete/i.test(text)) {
+    return 'stopped';
+  }
+
+  // Lesson snippets install their own uncaughtException filter for these. If
+  // one slips through the host shouldn't pass on a stack for it.
+  if (/WorkerShutdownError|CHANNEL_CLOSED/.test(text)) {
+    return 'runner stopped';
+  }
+
+  // Drop trailing frame markers: `at name (file:line:col)`, `at file:line:col`,
+  // and backtick file paths left over from the SDK's `at` wrappers. Match
+  // anywhere in the message, not just the tail, so partial stacks still shrink.
+  return text
+    .replace(/\s+at\s+[^\n]+(?:file:\/\/\/|\/)[^\n)]+\)?\s*/g, ' ')
+    .replace(/file:\/\/\/\S+/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, 400) || 'unknown error';
+}
+

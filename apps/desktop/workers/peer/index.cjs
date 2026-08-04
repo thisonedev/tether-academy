@@ -904,7 +904,11 @@ function handleExecReply(discoveryKeyHex, buf) {
     if (payload.stream !== 'stdout' && payload.stream !== 'stderr') return;
     active.emitter.emit(payload.stream, payload.data);
   } else if (payload.kind === 'exit') {
-    active.emitter.emit('exit', { code: payload.code ?? null, signal: payload.signal ?? null });
+    active.emitter.emit('exit', {
+      code: payload.code ?? null,
+      signal: payload.signal ?? null,
+      cancelled: payload.cancelled === true,
+    });
     active.emitter.emit('end');
     activeGuestExec.delete(discoveryKeyHex);
     appendAudit('peer:exec:remote-finished', {

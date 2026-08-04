@@ -48,6 +48,9 @@ export const academyRunResultSchema = z.object({
   remoteExit: z
     .object({ code: z.number().nullable(), signal: z.string().nullable() })
     .optional(),
+  /** True when the user clicked Stop while the run was still healthy. Lets the
+   *  UI render a neutral "stopped" note instead of a red "[exit non-zero]". */
+  stopRequested: z.boolean().optional(),
 });
 
 export const academyRunChunkSchema = z.string();
@@ -87,6 +90,10 @@ export const peerAcceptOptsSchema = z
 
 /** Absolute path of a file a lesson saved. Confined to the lesson folder in main. */
 export const academyRevealPathSchema = z.string().min(1).max(4096);
+
+/** Cap on `academy:readSaved` responses. Models never exceed ~6 MB but a
+ *  generated MP4 clip can run higher, so this is sized for video, not images. */
+export const MAX_READ_SAVED_BYTES = 64 * 1024 * 1024;
 
 export const peerRequestIdSchema = z.string().uuid();
 

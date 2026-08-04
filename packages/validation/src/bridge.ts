@@ -296,6 +296,9 @@ export interface AcademyAPI {
   run: (payload: AcademyRunPayload) => Promise<AcademyRunResult>;
   /** Show a file a lesson saved in the OS file manager. */
   reveal?: (filePath: string) => Promise<boolean>;
+  /** Read a saved file's bytes (base64) + MIME for inline preview in the lesson panel.
+   *  Refuses paths outside the lesson home; the renderer never sees arbitrary disk reads. */
+  readSaved?: (filePath: string) => Promise<{ base64: string; mime: string; bytes: number } | null>;
   /** Kill the current run. Returns false when nothing was running. */
   stop?: () => Promise<boolean>;
   onRunChunk?: (callback: (chunk: AcademyRunChunk) => void) => () => void;

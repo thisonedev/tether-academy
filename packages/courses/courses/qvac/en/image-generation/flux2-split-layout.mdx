@@ -39,14 +39,19 @@ const modelId = await loadModel({
 });
 ```
 
-From the caller's perspective, split-layout vs single-file is invisible. The `outputs` array is the same shape as for a single-file model: a `Promise<Uint8Array[]>` of PNG bytes:
+From the caller's perspective, split-layout vs single-file is invisible. The `outputs` array is the same shape as for a single-file model: a `Promise<Uint8Array[]>` of PNG bytes. Drain `progressStream` while waiting for outputs so inference isn't blocked:
 
 ```ts
 const result = diffusion({ modelId, prompt: "a quiet harbor at dawn" });
+if (result.progressStream) {
+  for await (const step of result.progressStream) {
+    console.log(`▸ step ${step.step}/${step.totalSteps}`);
+  }
+}
 const outputs = await result.outputs;
 ```
 
-`outputs[0]` is the first PNG, `fs.writeFileSync` writes raw bytes (no header needed), and an empty array means the call failed silently. Here's how an example would look like:
+`outputs[0]` is the first PNG, `fs.writeFileSync` writes raw bytes (no header needed), and an empty array means the call failed silently. Save the file and log the count:
 
 ```ts
 const first = outputs[0];

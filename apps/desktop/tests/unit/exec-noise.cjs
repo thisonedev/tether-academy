@@ -27,6 +27,65 @@ test('exec-noise - drops model loader chatter', (t) => {
   t.is(isNoiseLine('Result: The first article is from 1923.'), false);
 });
 
+// llama.cpp LOG_INF for the chatml/embedding plugins: `common_init_from_model_and_params:` warms the model
+// with an empty run and dumps a long hint about `--no-warmup` that buries the lesson text. Same shape as
+// `common_init_result:`, just a different helper.
+test('exec-noise - drops common_init_from_model_and_params warmup banner', (t) => {
+  t.is(
+    isNoiseLine(
+      'common_init_from_model_and_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)'
+    ),
+    true,
+  );
+  t.is(
+    isNoiseLine(
+      'common_init_from_model_and_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)\ncommon_init_from_model_and_params: warmup finished'
+    ) ||
+      // Falls through `push()`; below confirms the streaming path.
+      false,
+    true,
+  );
+  // Streaming path: a chunk containing both the banner and real output drops only the banner.
+  const filter = createNoiseFilter();
+  const out = filter.push(
+    'common_init_from_model_and_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)\nGenerated 3 embeddings\n'
+  );
+  t.absent(out.includes('warming up'), 'warmup banner is dropped');
+  t.ok(out.includes('Generated 3 embeddings'), 'real output survives');
+});
+
+// SmolVLM2 and similar vision plugins dump the GGUF hparams table on stderr; the entire
+// `clip_model_loader:` prefix is filtered, not just the tensor-array lines. Standalone
+// `--- vision hparams ---` delimiters inside the table are dropped too.
+test('exec-noise - drops the full clip_model_loader hparams dump', (t) => {
+  t.is(isNoiseLine('clip_model_loader: model name:   SmolVLM2 500M Video Instruct'), true);
+  t.is(isNoiseLine('clip_model_loader: description:'), true);
+  t.is(isNoiseLine('clip_model_loader: GGUF version: 3'), true);
+  t.is(isNoiseLine('clip_model_loader: alignment: 32'), true);
+  t.is(isNoiseLine('clip_model_loader: --- vision hparams ---'), true);
+  // The delimiter can also be emitted on its own line without the prefix; either
+  // form must be filtered.
+  t.is(isNoiseLine('--- vision hparams ---'), true, 'standalone delimiter dropped');
+  t.is(isNoiseLine('--- llm hparams ---'), true);
+  t.is(isNoiseLine('--- text hparams ---'), true);
+  t.is(isNoiseLine('--- image hparams ---'), true);
+  // Content that mentions one of these tokens in prose is NOT a delimiter.
+  t.is(isNoiseLine('class: vision hparams were parsed in the previous run'), false);
+});
+
+// `loadModel({onProgress})` replaces these in the lesson output panel, but the
+// HuggingFace download bar can still print to stderr in some flows. Strip both
+// the TTY-rendered shape (`50%|#####|`) and the plain form (`tag|<bar> N/N`).
+test('exec-noise - drops HuggingFace download progress bars', (t) => {
+  t.is(isNoiseLine('50%|#####      | 1234/5000 [00:15<01:00, 1.20GB/s]'), true);
+  t.is(isNoiseLine('model.safetensors: 0%|          | 0/1234 [00:00<?, ?B/s]'), true);
+  t.is(isNoiseLine('hubert-base-768|===========================>  795/795 - 3.18GB/s [A'), true);
+  t.is(isNoiseLine('something|======>  322/322 - 0.40GB/s[?25l'), true);
+  // Lesson-emitted progress lines that look like progress must NOT be filtered.
+  t.is(isNoiseLine('▸ step 5/20'), false);
+  t.is(isNoiseLine('▸ Saved /Users/x/output/image-gen/cat.png'), false);
+});
+
 test('exec-noise - drops llama.cpp LOG_INF and SDK helper chatter', (t) => {
   // llama.cpp uses `llama_<tag>:` for LOG_INF; the QVAC SDK wraps the same logging without the prefix in a few helpers.
   t.is(isNoiseLine('llama_model_load_internal: model size = 103.73 MiB'), true);

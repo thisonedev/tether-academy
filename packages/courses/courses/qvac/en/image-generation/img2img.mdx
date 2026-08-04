@@ -28,13 +28,18 @@ With txt2img, the model by default starts from noise. With img2img, the model st
 
 Common uses include rough sketch to colored illustration, screenshot to wireframe turned into a design mock, or an existing photo restyled.
 
-Reading the source image into a `Uint8Array` is what hands the bytes to `diffusion()`. Let's look at how to handle that:
+Reading the source image into a `Uint8Array` is what hands the bytes to `diffusion()`. Same single-file loader as Stable Diffusion, since SD supports `init_image` directly:
 
 ```ts
+const modelId = await loadModel({
+  modelSrc: SD_V2_1_1B_Q8_0,
+  modelType: "sdcpp-generation",
+  modelConfig: { prediction: "v" },
+});
 const initImage = fs.readFileSync("./examples/qvac/image-generation/input/sketch.png");
 ```
 
-Calling `diffusion()` with `init_image` set to the source bytes is the img2img path. The call we'd run looks like:
+Calling `diffusion()` with `init_image` set to the source bytes is the img2img path. The four-knob call we'd run looks like:
 
 ```ts
 const result = diffusion({
@@ -46,12 +51,12 @@ const result = diffusion({
   height: 512,
   steps: 25,
 });
+const outputs = await result.outputs;
 ```
 
-Once `await result.outputs` resolves, write `outputs[0]` and log the count:
+Once the awaited PNG is in hand, write `outputs[0]` and log the count:
 
 ```ts
-const outputs = await result.outputs;
 const first = outputs[0];
 if (!first) throw new Error("No image returned from diffusion");
 fs.writeFileSync("output/image-gen/fox-painting.png", first);

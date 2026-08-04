@@ -569,11 +569,15 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           }
         } else {
           // A native abort kills the child without printing anything, so the signal is all the student has to go on.
-          const ended = result.remoteExit?.signal
-            ? `[stopped by ${result.remoteExit.signal}]`
-            : '[exit non-zero]';
-          const note = unstreamed(result.output ?? '', streamBuffer) || ended;
-          producedOutput = [...streamBuffer, { stream: 'stdout', line: note }];
+          // A user-initiated Stop should not look like a crash; the host flags `stopRequested` on the result when
+          // the abort came from `academy:stop` rather than an actual non-zero exit.
+          const note = result.stopRequested
+            ? '[stopped]'
+            : result.remoteExit?.signal
+              ? `[stopped by ${result.remoteExit.signal}]`
+              : '[exit non-zero]';
+          const tail = unstreamed(result.output ?? '', streamBuffer) || note;
+          producedOutput = [...streamBuffer, { stream: 'stdout', line: tail }];
           if (isRemoteRun && selectedPeerId) {
             setLastRemoteRun({
               kind: 'err',
@@ -1364,22 +1368,111 @@ function SavedFilesBar({ files }: { files: string[] }) {
   const home = files[0]?.match(/^(\/Users\/[^/]+|\/home\/[^/]+|[A-Z]:\\Users\\[^\\]+)/)?.[1];
   const pretty = (p: string) => (home && p.startsWith(home) ? `~${p.slice(home.length)}` : p);
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-canvas-border pt-2 font-sans text-xs">
-      <span className="text-canvas-muted-foreground">
-        Saved {files.length === 1 ? 'file' : `${files.length} files`} to
-      </span>
+    <div className="mt-3 space-y-2 border-t border-canvas-border pt-2 font-sans text-xs">
       {files.map((file) => (
-        <button
-          key={file}
-          type="button"
-          onClick={() => void window.academy?.reveal?.(file)}
-          className="max-w-full truncate rounded border border-canvas-border px-2 py-0.5 text-canvas-foreground hover:bg-canvas-muted"
-          title={`Show ${file} in your file manager`}
-        >
-          {pretty(file)}
-        </button>
+        <SavedPreview key={`preview-${file}`} file={file} />
       ))}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-xs">
+        <span className="text-canvas-muted-foreground">
+          Saved {files.length === 1 ? 'file' : `${files.length} files`} to
+        </span>
+        {files.map((file) => (
+          <button
+            key={file}
+            type="button"
+            onClick={() => void window.academy?.reveal?.(file)}
+            className="max-w-full truncate rounded border border-canvas-border px-2 py-0.5 text-canvas-foreground hover:bg-canvas-muted"
+            title={`Show ${file} in your file manager`}
+          >
+            {pretty(file)}
+          </button>
+        ))}
+      </div>
     </div>
+  );
+}
+
+const PREVIEWABLE_EXTS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'webp',
+  'gif',
+  'mp4',
+  'webm',
+  'mov',
+  'avi',
+  'mp3',
+  'wav',
+]);
+
+function isPreviewable(file: string): boolean {
+  const m = file.toLowerCase().match(/[^./]+\.([a-z0-9]+)$/);
+  return !!m && PREVIEWABLE_EXTS.has(m[1]);
+}
+
+function SavedPreview({ file }: { file: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [kind, setKind] = useState<'image' | 'video' | 'audio' | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSrc(null);
+    setKind(null);
+    if (!isPreviewable(file)) return () => {};
+    if (typeof window === 'undefined' || !window.academy?.readSaved) return () => {};
+    void window.academy
+      .readSaved(file)
+      .then((res) => {
+        if (cancelled || !res) return;
+        const lower = file.toLowerCase();
+        if (
+          lower.endsWith('.png') ||
+          lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.webp') ||
+          lower.endsWith('.gif')
+        ) {
+          setKind('image');
+        } else if (
+          lower.endsWith('.mp4') ||
+          lower.endsWith('.webm') ||
+          lower.endsWith('.mov') ||
+          lower.endsWith('.avi')
+        ) {
+          setKind('video');
+        } else if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
+          setKind('audio');
+        }
+        setSrc(`data:${res.mime};base64,${res.base64}`);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
+
+  if (!kind || !src) return null;
+  if (kind === 'image') {
+    return (
+      <img
+        src={src}
+        alt="Saved by this run"
+        className="max-h-72 max-w-full rounded"
+      />
+    );
+  }
+  if (kind === 'video') {
+    return (
+      <video
+        src={src}
+        controls
+        className="max-h-72 max-w-full rounded"
+      />
+    );
+  }
+  return (
+    <audio src={src} controls className="w-full" />
   );
 }
 
