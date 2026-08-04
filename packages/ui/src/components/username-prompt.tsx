@@ -23,6 +23,7 @@ export function UsernamePrompt() {
   const promptOpen = useUserStore((s) => s.signInPromptOpen);
   const username = useUserStore((s) => s.username);
   const setUsername = useUserStore((s) => s.setUsername);
+  const restoreProgress = useUserStore((s) => s.restoreProgress);
   const closeSignInPrompt = useUserStore((s) => s.closeSignInPrompt);
 
   const [isDesktop, setIsDesktop] = useState(
@@ -40,6 +41,8 @@ export function UsernamePrompt() {
   const [recoverText, setRecoverText] = useState('');
   const [identityReady, setIdentityReady] = useState(false);
   const [identityLabel, setIdentityLabel] = useState<string | null>(null);
+  // Username already signed to this identity, if any (sign-out doesn't clear it).
+  const [existingUsername, setExistingUsername] = useState<string | null>(null);
 
   // Latest-value ref: lets refreshIdentity read mnemonic without a dep.
   const mnemonicRef = useRef<string | null>(null);
@@ -54,7 +57,15 @@ export function UsernamePrompt() {
       const s = await window.academy.identity.status();
       setIdentityReady(!!s.ready);
       if (s.ready) {
-        setIdentityLabel('Tether Academy identity');
+        setIdentityLabel('Tether Academy profile');
+        try {
+          const host = await window.academy.identity.getUsername();
+          setExistingUsername(host?.username ?? null);
+        } catch {
+          setExistingUsername(null);
+        }
+      } else {
+        setExistingUsername(null);
       }
       if (s.status === 'pending-backup' && mnemonicRef.current) {
         // Only resume backup if we still hold the phrase this session.
@@ -102,12 +113,40 @@ export function UsernamePrompt() {
   if (!promptOpen) return null;
   if (username) return null;
 
+  // Recomputes local points/chapters/lessons from the host's signed record,
+  // so progress survives sign-out instead of resetting to zero.
+  const restoreProgressFromHost = async () => {
+    if (typeof window === 'undefined' || !window.academy?.identity?.getProgress) return;
+    try {
+      const result = await window.academy.identity.getProgress();
+      const entries = result?.progress ?? {};
+      const completedLessonKeys = Object.keys(entries).filter((k) => {
+        const v = entries[k];
+        return !!v && typeof v === 'object' && 'completedAt' in (v as Record<string, unknown>);
+      });
+      restoreProgress(completedLessonKeys);
+    } catch {
+      // best-effort: leave local progress alone if the host is unreachable
+    }
+  };
+
   const finishWithUsername = (name: string) => {
     setUsername(name);
     setValue('');
     setTouched(false);
     setMnemonic(null);
     setRecoverText('');
+    // Push the username to the host IPC so it persists cryptographically
+    // and shows up in the Profile tab's revision counter. Skip silently
+    // when the host API isn't available (web build).
+    if (typeof window !== 'undefined' && window.academy?.identity?.setUsername) {
+      void window.academy.identity.setUsername({ username: name }).catch(() => {
+        // Best-effort: the local store is the source of truth for the
+        // username prompt; failure here is surfaced in the Profile tab.
+      });
+    }
+    // Covers a recovered identity with host progress but no username yet.
+    void restoreProgressFromHost();
   };
 
   const submitUsername = (e: React.FormEvent) => {
@@ -173,7 +212,7 @@ export function UsernamePrompt() {
       await window.academy!.identity!.confirmBackup();
       setMnemonic(null);
       setIdentityReady(true);
-      setIdentityLabel('Tether Academy identity');
+      setIdentityLabel('Tether Academy profile');
       setStep('username');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -204,7 +243,19 @@ export function UsernamePrompt() {
     try {
       await window.academy!.identity!.recover(recoverText);
       setIdentityReady(true);
-      setIdentityLabel('Tether Academy identity');
+      setIdentityLabel('Tether Academy profile');
+      // This mnemonic's blob store may already have a username; restore it
+      // instead of asking again.
+      try {
+        const host = await window.academy!.identity!.getUsername();
+        if (host?.username) {
+          setUsername(host.username);
+          await restoreProgressFromHost();
+          return;
+        }
+      } catch {
+        // fall through to asking for a username
+      }
       setStep('username');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -223,7 +274,7 @@ export function UsernamePrompt() {
         ? 'Save your recovery phrase'
         : step === 'recover'
           ? 'Recover identity'
-          : 'Pick a display name';
+          : 'Pick a username';
 
   return (
     <div
@@ -326,6 +377,13 @@ export function UsernamePrompt() {
                   disabled={busy}
                   onClick={() => {
                     setError(null);
+                    if (existingUsername) {
+                      // Local-only restore, no host round-trip or revision
+                      // bump; progress still needs one host read below.
+                      setUsername(existingUsername);
+                      void restoreProgressFromHost();
+                      return;
+                    }
                     setStep('username');
                   }}
                   className="flex w-full items-start gap-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-left transition-colors hover:border-emerald-500/60 disabled:opacity-50"
@@ -333,10 +391,12 @@ export function UsernamePrompt() {
                   <Check className="mt-0.5 size-4 shrink-0 text-emerald-400" />
                   <span>
                     <span className="block text-sm font-semibold text-canvas-foreground">
-                      Continue with existing identity
+                      Continue with existing profile
                     </span>
                     <span className="mt-0.5 block text-xs text-canvas-muted-foreground">
-                      {identityLabel ?? 'Identity on this device'}. Pick a display name to continue.
+                      {existingUsername
+                        ? `Sign back in as @${existingUsername}.`
+                        : `${identityLabel ?? 'Profile on this device'}. Pick a display name to continue.`}
                     </span>
                   </span>
                 </button>
@@ -521,13 +581,13 @@ export function UsernamePrompt() {
           <form onSubmit={submitUsername}>
             <p className="mb-4 text-sm leading-relaxed text-canvas-muted-foreground">
               {identityLabel ? `${identityLabel} is ready on this device. ` : ''}
-              Choose a display name for progress. This is not your recovery phrase.
+              Choose your username.
             </p>
             <label
               htmlFor="username-input-desktop"
               className="mb-2 block text-xs font-semibold uppercase tracking-widest text-canvas-muted-foreground"
             >
-              Display name
+              Username
             </label>
             <input
               id="username-input-desktop"

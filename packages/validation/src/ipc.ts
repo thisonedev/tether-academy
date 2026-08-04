@@ -216,6 +216,37 @@ export const identityFinishAttestPayloadSchema = z
 
 export const identitySessionIdSchema = z.string().uuid();
 
+// Loose on purpose; the manager's regex (not this schema) enforces the
+// actual username rules.
+export const identityUsernameSchema = z.object({ username: z.string().min(1).max(64) }).strict();
+
+// Progress is open JSON; bounded so a runaway renderer can't fill the disk.
+export const MAX_PROGRESS_BYTES = 256 * 1024;
+export const identityProgressSchema = z
+  .object({ progress: z.record(z.string().min(1).max(128), z.unknown()) })
+  .strict()
+  .refine((v) => JSON.stringify(v).length <= MAX_PROGRESS_BYTES, {
+    message: `progress exceeds ${MAX_PROGRESS_BYTES} bytes`,
+  });
+
+export const identityVerifyAttestedSchema = z
+  .object({
+    kind: z.string().min(1).max(64),
+    payload: z.unknown(),
+    proofB64: z.string().min(1).max(8192),
+    expectedIdentityPublicKeyHex: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  })
+  .strict();
+
+// Untrusted peer profile blob; the renderer marks it "unverified" until
+// verifyAttested confirms it.
+export const identityImportProfileSchema = z
+  .object({
+    identityPublicKeyHex: z.string().regex(/^[0-9a-fA-F]{64}$/),
+    profile: z.unknown(),
+  })
+  .strict();
+
 export function parseIpc<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
   const result = schema.safeParse(value);
   if (!result.success) {
