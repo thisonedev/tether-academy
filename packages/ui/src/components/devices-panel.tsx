@@ -405,30 +405,22 @@ export function DevicesPanel() {
                 No identity yet — set one up under Settings → Identity.
               </p>
             ) : (
-              <div className="mt-1 space-y-0.5">
-                <p
-                  className="font-mono text-sm text-canvas-foreground"
-                  title={identity.identityPublicKey ?? identity.publicKey}
-                >
-                  root {shortHex(identity.identityPublicKey ?? identity.publicKey, 12, 8)}
-                </p>
-                {identity.identityPublicKey ? (
-                  <p
-                    className="font-mono text-[11px] text-canvas-muted-foreground"
-                    title={identity.publicKey}
-                  >
-                    device {shortHex(identity.publicKey, 12, 8)}
-                    {identity.source ? ` · ${identity.source}` : ''}
-                  </p>
-                ) : null}
-              </div>
+              <p
+                className="mt-1 font-mono text-sm text-canvas-foreground"
+                title={identity.publicKey ?? ''}
+              >
+                {shortHex(identity.publicKey, 12, 8)}
+              </p>
             )}
             <ThisDeviceRoleSummary peers={pairedPeers} loaded={pairedPeersLoaded} />
           </div>
           {identity && identity !== 'loading' && identity.publicKey ? (
             <button
               type="button"
-              onClick={() => onCopy(identity.identityPublicKey ?? identity.publicKey!, 'identity')}
+              onClick={() => {
+                const id = identity.publicKey ?? '';
+                if (id) onCopy(id, 'identity');
+              }}
               className="inline-flex shrink-0 items-center gap-1 rounded-md border border-canvas-border bg-canvas-muted px-2.5 py-1 text-xs text-canvas-muted-foreground transition-colors hover:border-emerald-500/40 hover:text-canvas-foreground"
             >
               {copied === 'identity' ? (

@@ -63,7 +63,7 @@ export interface LessonData {
   argv?: LessonArgvSlot[];
 }
 
-const TABS = ['output', 'tests', 'preview'] as const;
+const TABS = ['output', 'tests'] as const;
 type Tab = (typeof TABS)[number];
 
 const RUN_MODES = ['simulated', 'this-device', 'remote'] as const;
@@ -1309,7 +1309,6 @@ function Runner({
           )
         ) : null}
         {tab === 'tests' ? <TestsView results={testResults} tests={null as never} /> : null}
-        {tab === 'preview' ? <PreviewView /> : null}
       </div>
     </div>
   );
@@ -1562,14 +1561,14 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
 function TestsView({ results }: { results: null | ReturnType<typeof runTests>; tests: never }) {
   if (!results) {
     return (
-      <p className="text-canvas-muted-foreground">
+      <p className="p-4 text-canvas-muted-foreground">
         Click <span className="text-emerald-400">Check Answer</span> in the tutorial to run the
         tests.
       </p>
     );
   }
   return (
-    <ul className="space-y-1.5 text-canvas-foreground">
+    <ul className="space-y-1.5 p-4 text-canvas-foreground">
       {results.map((r) => (
         <li key={r.id} className="flex items-start gap-2">
           <span
@@ -1587,18 +1586,6 @@ function TestsView({ results }: { results: null | ReturnType<typeof runTests>; t
         </li>
       ))}
     </ul>
-  );
-}
-
-function PreviewView() {
-  return (
-    <p className="text-canvas-muted-foreground">
-      The simulated live preview animates token streams, progress, and UI state changes keyed to
-      your code passing the checks. Ships in a later pass. The per-lesson preview animation hooks
-      into the same
-      <span className="px-1 font-mono text-emerald-400">expectedOutput</span>
-      array already declared in the lesson frontmatter.
-    </p>
   );
 }
 

@@ -13,12 +13,6 @@ declare global {
 
 type Step = 'choose' | 'backup' | 'recover' | 'done';
 
-function shortHex(hex: string | null | undefined, head = 10, tail = 6): string {
-  if (!hex) return '-';
-  if (hex.length <= head + tail + 1) return hex;
-  return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
-}
-
 /** Identity setup for Settings: create, recover, or view/remove the local identity. Multi-device link and Keet app interop are deferred. */
 export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
   const resetUser = useUserStore((s) => s.reset);
@@ -67,21 +61,9 @@ export function IdentityOnboarding({ onReady }: { onReady?: () => void }) {
           Identity
         </p>
         <p className="mt-1 text-sm text-canvas-foreground">Tether Academy identity ready</p>
-        <p
-          className="mt-2 font-mono text-xs text-canvas-muted-foreground"
-          title={status.identityPublicKey ?? ''}
-        >
-          root {shortHex(status.identityPublicKey, 14, 10)}
-        </p>
-        <p
-          className="mt-1 font-mono text-xs text-canvas-muted-foreground"
-          title={status.devicePublicKey ?? ''}
-        >
-          device {shortHex(status.devicePublicKey, 14, 10)}
-        </p>
         <p className="mt-3 text-xs text-canvas-muted-foreground">
           {status.holdsRoot
-            ? 'This device holds recovery material. Keep your phrase offline.'
+            ? 'This device holds your recovery phrase. Keep it safe and don`t share with anyone.'
             : 'This device is set up under a root identity.'}
         </p>
 

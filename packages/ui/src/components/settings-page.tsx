@@ -57,7 +57,7 @@ const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
 const SETTINGS_TABS = [
   { id: 'models', label: 'Models' },
   { id: 'identity', label: 'Identity' },
-  { id: 'paired', label: 'Paired devices' },
+  { id: 'paired', label: 'My devices' },
   { id: 'device', label: 'My device' },
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TABS)[number]['id'];

@@ -46,7 +46,7 @@ export function MdxPre({
   }, []);
 
   return (
-    <figure className="mdx-code-figure relative my-5 overflow-hidden rounded-lg border border-canvas-border bg-[#0d1117] not-prose">
+    <figure className="mdx-code-figure relative my-5 rounded-lg border border-canvas-border bg-[#0d1117] not-prose">
       <button
         type="button"
         onClick={handleCopy}

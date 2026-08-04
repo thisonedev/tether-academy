@@ -46,7 +46,7 @@ export async function CodeBlock({ file, mode = 'answer', title }: CodeBlockProps
         </span>
       </figcaption>
       <div
-        className="overflow-x-auto p-4 text-sm leading-relaxed [&_pre]:bg-transparent [&_pre]:p-0 [&_pre]:m-0"
+        className="overflow-x-auto p-4 text-sm leading-relaxed [&_pre]:bg-transparent [&_pre]:p-0 [&_pre]:m-0 [&_pre]:min-w-0 [&_code]:min-w-max"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: html is built by shiki from the same source file we read into `content`; it never contains user input.
         dangerouslySetInnerHTML={{ __html: html }}
       />

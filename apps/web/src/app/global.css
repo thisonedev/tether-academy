@@ -131,8 +131,22 @@ html {
   background-color: transparent;
   border: 0;
   border-radius: 0;
+  /* Right padding reserves room for the copy button so it never overlaps the last chars. */
   padding: 1rem 6rem 1rem 1.25rem;
   margin: 0;
+  /* Lets the flex/grid item shrink below content width so the inner <pre> actually overflows. */
+  min-width: 0;
+}
+/* Shiki renders <pre><code>; let the inner <code> extend past the container so horizontal scroll triggers on .mdx-code-pre. */
+.prose-md .mdx-code-pre code,
+.prose-md .mdx-code-pre .line,
+.prose-md .mdx-code-pre .shiki {
+  display: inline-block;
+  min-width: max-content;
+}
+/* Stable gutter keeps the bottom-right scrollbar reachable on macOS overlay bars. */
+.prose-md .mdx-code-pre {
+  scrollbar-gutter: stable;
 }
 /* Fallback shiki token colouring */
 .prose-md .shiki code span {
@@ -231,8 +245,7 @@ header.site-header input {
   -webkit-app-region: no-drag;
 }
 
-/* Web only: desktop app tags <html data-platform="..."> in app/layout.tsx,
-   so the rules below fire only when that tag is absent. */
+/* Desktop tags <html data-platform="..."> in app/layout.tsx; these rules fire only when that tag is absent. */
 html:not([data-platform]) header.site-header > :first-child {
   display: none;
 }
@@ -248,9 +261,7 @@ html[data-platform="desktop"] .run-mode-select-web {
   display: none;
 }
 
-/* Desktop mirrors the web at narrow widths: tutorial first, editor below.
-   At wider widths the row stays side by side so Monaco keeps its share of the
-   window. The 960px cutoff matches the renderer min-width. */
+/* Desktop mirrors web at narrow widths (tutorial first, editor below); ≥960px keeps Monaco's share. */
 @media (min-width: 960px) {
   html[data-platform="desktop"] .workspace-root {
     height: calc(100vh - 3.5rem);
