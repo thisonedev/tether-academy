@@ -202,6 +202,40 @@ function extractCallables(code, userDefined) {
   return calls;
 }
 
+function extractLocalImportSpecifiers(code) {
+  const specs = new Set();
+  for (const m of code.matchAll(/\bimport\s+(?:[\w*\s{},]+\s+from\s+)?['"](\.[^'"]+)['"]/g)) {
+    specs.add(m[1]);
+  }
+  return specs;
+}
+
+const LOCAL_IMPORT_SUFFIXES = ['', '.ts', '.tsx', '.js', '.mjs', '/index.ts', '/index.js'];
+
+async function readLocalImport(fromFile, spec) {
+  const base = path.resolve(path.dirname(fromFile), spec);
+  for (const suffix of LOCAL_IMPORT_SUFFIXES) {
+    try {
+      return await fs.readFile(base + suffix, 'utf-8');
+    } catch {
+      // try the next candidate
+    }
+  }
+  return null;
+}
+
+// Upstream sometimes factors shared bits into sibling helper files. One hop
+// only, since a lesson is meant to read as a single file, not a call graph.
+async function collectUpstreamCalls(upstreamPath, upstreamCode) {
+  const calls = extractCallables(upstreamCode, new Set());
+  for (const spec of extractLocalImportSpecifiers(upstreamCode)) {
+    const code = await readLocalImport(upstreamPath, spec);
+    if (!code) continue;
+    for (const name of extractCallables(code, new Set())) calls.add(name);
+  }
+  return calls;
+}
+
 async function checkLesson(lessonPath) {
   const raw = await fs.readFile(lessonPath, 'utf-8');
   const { data } = parseFrontmatter(raw);
@@ -240,7 +274,7 @@ async function checkLesson(lessonPath) {
     };
   }
 
-  const upstreamCalls = extractCallables(upstream, new Set());
+  const upstreamCalls = await collectUpstreamCalls(upstreamPath, upstream);
   const userDefined = extractUserDefined(vendored);
   const vendoredCalls = extractCallables(vendored, userDefined);
   const drift = [...vendoredCalls].filter((c) => !upstreamCalls.has(c));
