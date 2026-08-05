@@ -30,7 +30,7 @@ test('runner-peer - buildLesson wraps the lesson with SDK teardown', (t) => {
   const wrapped = buildLesson({ source: LESSON_SOURCE, cwd: COURSES_DIR });
 
   t.ok(wrapped.includes('close'), 'close is imported');
-  t.ok(wrapped.includes('.finally'), 'teardown is hooked onto main()');
+  t.ok(wrapped.includes('__academyFinish(main()'), 'teardown is hooked onto main()');
 });
 
 // The lesson mentions neither, so both must come from the wrapper.

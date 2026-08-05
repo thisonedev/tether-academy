@@ -34,9 +34,8 @@ jobs:
           key: ${{ runner.os }}-pnpm-${{ github.event_name == 'pull_request' && 'pr' || 'trunk' }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-pnpm-${{ github.event_name == 'pull_request' && 'pr' || 'trunk' }}-
 
-      # No postinstall from a fork PR's dependencies, same as deploy.yml. This
-      # job needs none: build:packages is tsc, and the unit tests spawn node,
-      # so the Electron download being skipped here went unused anyway.
+      # No postinstall from a fork PR's dependencies, same as deploy.yml.
+      # This job never needed the Electron download anyway (tsc build, node-spawned tests).
       - name: install
         run: pnpm install --frozen-lockfile --ignore-scripts
 
@@ -99,6 +98,14 @@ jobs:
       - name: install bubblewrap
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces via AppArmor
+      # by default, which is what bwrap needs to build its sandbox; bwrap's own
+      # probe then reports the same "unavailable" result peer-exec gives a
+      # denied request, so every sandboxed test refuses before it can run.
+      - name: allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: integration tests (Linux)
         if: runner.os == 'Linux'
