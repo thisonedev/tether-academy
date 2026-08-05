@@ -1,0 +1,16 @@
+{
+  "name": "@tether-academy/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "tether-academy CLI: install, update, and start the desktop app.",
+  "bin": {
+    "tether-academy": "./bin/tether-academy.js"
+  },
+  "scripts": {
+    "start": "node bin/tether-academy.js"
+  },
+  "dependencies": {
+    "electron": "^40.2.1",
+    "paparam": "^1.10.0"
+  }
+}

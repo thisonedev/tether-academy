@@ -22,7 +22,8 @@
     "check:yaml": "pnpm --filter @academy/courses check:yaml",
     "dev:desktop": "pnpm --filter @tether-academy/desktop dev",
     "start:desktop": "pnpm --filter @tether-academy/desktop start",
-    "capture:desktop": "pnpm --filter @tether-academy/desktop capture"
+    "capture:desktop": "pnpm --filter @tether-academy/desktop capture",
+    "cli": "node apps/cli/bin/tether-academy.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
