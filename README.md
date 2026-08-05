@@ -2,6 +2,19 @@
 
 Interactive code school for the [Tether](https://tether.io) product suite. A pnpm-workspace monorepo with two apps and six shared packages.
 
+## Install via terminal
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh
+```
+
+Installs to ~/.tether-academy and adds tether-academy to your PATH.
+
+```bash
+tether-academy start     # launch the desktop app
+tether-academy update    # pull and safely build the latest version
+```
+
 ## Getting started
 
 ### Prerequisites
