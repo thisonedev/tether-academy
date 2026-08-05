@@ -3,11 +3,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh
 #
-# This script's only job is getting Node running against a checkout of the
-# repo. The actual install logic (clone into ~/.tether-academy/versions/<sha>,
-# pnpm install, build, symlink `current`, write the PATH shim) lives in one
-# place, apps/cli/src/install.js, and runs from the checkout this script
-# makes. There's no separate copy of that logic to drift out of sync.
+# Only job: get Node running against a checkout so apps/cli/src/install.js
+# (the actual install logic) can take over from there.
 set -eu
 
 REPO_URL="${TETHER_ACADEMY_REPO:-https://github.com/thisonedev/tether-academy.git}"
@@ -31,5 +28,6 @@ trap cleanup EXIT INT TERM
 echo "-> Fetching installer from $REPO_URL ($BRANCH)..."
 git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$tmp_dir"
 
-# Not `exec`: the EXIT trap must still fire afterward to clean up $tmp_dir.
-node "$tmp_dir/apps/cli/bin/tether-academy.js" install
+# bootstrap-install.js skips cli.js/paparam (see that file for why).
+# Not `exec`: the EXIT trap must still fire to clean up $tmp_dir.
+node "$tmp_dir/apps/cli/bin/bootstrap-install.js"

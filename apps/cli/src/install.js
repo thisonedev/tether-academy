@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { run } = require('./proc');
 const { home, versionsDir, currentLink, repoUrl, branch } = require('./home');
+const { printSplash } = require('./splash');
 
 function writeShim(targetEntry) {
   const binDir = path.join(os.homedir(), '.local', 'bin');
@@ -16,11 +17,12 @@ function writeShim(targetEntry) {
 }
 
 async function install() {
+  printSplash('installing');
   fs.mkdirSync(versionsDir(), { recursive: true });
   const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);
 
   console.log(`-> Cloning ${repoUrl()} (${branch()})...`);
-  run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir]);
+  run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir], { quiet: true });
 
   const sha = run('git', ['-C', tmpDir, 'rev-parse', 'HEAD'], { quiet: true }).stdout.trim();
   const finalDir = path.join(versionsDir(), sha);
@@ -28,9 +30,9 @@ async function install() {
   else fs.renameSync(tmpDir, finalDir);
 
   console.log('-> Installing dependencies...');
-  run('pnpm', ['install'], { cwd: finalDir });
-  console.log('-> Building packages...');
-  run('pnpm', ['build:packages'], { cwd: finalDir });
+  run('pnpm', ['install'], { cwd: finalDir, quiet: true });
+  console.log('-> Building (this can take a minute or two)...');
+  run('pnpm', ['build'], { cwd: finalDir, quiet: true });
 
   const tmpLink = `${currentLink()}.tmp-${process.pid}`;
   fs.symlinkSync(finalDir, tmpLink, 'dir');

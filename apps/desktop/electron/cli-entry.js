@@ -1,9 +1,8 @@
-// Headless Electron entry point for `tether-academy update`'s pre-swap
-// validation and backup steps. No BrowserWindow is ever created.
+// Headless Electron entry for `tether-academy update`'s pre-swap validation
+// and backup steps. No BrowserWindow is created.
 //
-// Invocation: electron cli-entry.js --action <device-info|paths> [--storage <dir>]
-// Protocol on stdout: one JSON line, {"type":"result","ok":true,"result":...}
-// or {"type":"result","ok":false,"error":...}.
+// electron cli-entry.js --action <device-info|paths> [--storage <dir>]
+// stdout: one JSON line, {"type":"result","ok":true|false,...}
 'use strict';
 
 const { app } = require('electron');

@@ -6,6 +6,7 @@ const { run } = require('./proc');
 const { runAction } = require('./electron-bridge');
 const { home, versionsDir, currentLink, backupsDir, repoUrl, branch } = require('./home');
 const { UpdateLock, describeHolder } = require('./update-lock');
+const { printSplash } = require('./splash');
 
 const KEEP_VERSIONS = 3;
 const KEEP_BACKUPS = 3;
@@ -78,11 +79,9 @@ function pruneOldVersions(keepSha) {
   }
 }
 
-// Note: this does not check whether a GUI instance is currently open. That's
-// fine for correctness: the swap only lands after a successful build and
-// smoke test, and a running process keeps its already-loaded code in memory
-// no matter what `current` points to. Still, restart the app after updating
-// to pick up the new version.
+// Doesn't check whether the GUI is open — the swap only lands after a
+// successful build+smoke test, and a running process keeps its old code in
+// memory regardless. Restart the app afterward to pick up the new version.
 async function update() {
   const lock = new UpdateLock();
   const acquired = lock.acquire();
@@ -93,15 +92,16 @@ async function update() {
   }
 
   try {
+    printSplash('updating');
     const before = currentSha();
-    console.log(`-> Backing up profile data (defense in depth)...`);
+    console.log(`-> Backing up profile data...`);
     const backup = await backupProgressData();
     if (backup) console.log(`   snapshot: ${backup}`);
 
     const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);
     fs.mkdirSync(versionsDir(), { recursive: true });
     console.log('-> Fetching latest...');
-    run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir]);
+    run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir], { quiet: true });
     const sha = run('git', ['-C', tmpDir, 'rev-parse', 'HEAD'], { quiet: true }).stdout.trim();
 
     if (sha === before) {
@@ -118,11 +118,11 @@ async function update() {
     // failure at any point here leaves the live install completely untouched.
     try {
       console.log('-> Installing dependencies...');
-      run('pnpm', ['install'], { cwd: finalDir });
-      console.log('-> Building packages...');
-      run('pnpm', ['build:packages'], { cwd: finalDir });
+      run('pnpm', ['install'], { cwd: finalDir, quiet: true });
+      console.log('-> Building (this can take a minute or two)...');
+      run('pnpm', ['build'], { cwd: finalDir, quiet: true });
       console.log('-> Validating build...');
-      run('pnpm', ['--filter', '@tether-academy/desktop', 'typecheck'], { cwd: finalDir });
+      run('pnpm', ['--filter', '@tether-academy/desktop', 'typecheck'], { cwd: finalDir, quiet: true });
       await smokeTest(finalDir);
     } catch (err) {
       console.error(`Update validation failed: ${err.message}`);

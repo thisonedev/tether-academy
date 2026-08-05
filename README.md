@@ -2,7 +2,7 @@
 
 Interactive code school for the [Tether](https://tether.io) product suite. A pnpm-workspace monorepo with two apps and six shared packages.
 
-## Install via terminal
+## Install via terminal (Mac/Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh

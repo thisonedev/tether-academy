@@ -26,7 +26,13 @@ const updateCmd = command('update', () => {
 const cli = command('tether-academy', startCmd, installCmd, updateCmd);
 
 function main(argv = process.argv.slice(2)) {
-  cli.parse(argv);
+  try {
+    cli.parse(argv);
+  } catch (err) {
+    console.error(`tether-academy: ${err?.message ?? err}`);
+    console.error('Run `tether-academy --help` to see available commands.');
+    process.exitCode = 1;
+  }
 }
 
 module.exports = { main };
