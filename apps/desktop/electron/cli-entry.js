@@ -9,6 +9,10 @@ const { app } = require('electron');
 const path = require('node:path');
 const { getDeviceInfo } = require('./device.cjs');
 
+// This process never creates a window; hide it from the dock so `update`'s
+// smoke test doesn't visibly bounce an icon for a fraction of a second.
+if (process.platform === 'darwin') app.dock?.hide();
+
 function parseArgs(argv) {
   const out = { action: null, storage: null };
   for (let i = 0; i < argv.length; i++) {

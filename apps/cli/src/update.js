@@ -46,10 +46,13 @@ async function backupProgressData() {
 }
 
 function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), ms)),
-  ]);
+  // Promise.race doesn't cancel the loser; an uncleared timer here kept
+  // running for the full `ms` after `promise` won, hanging the process.
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timed out')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function smokeTest(versionDir) {
@@ -79,7 +82,7 @@ function pruneOldVersions(keepSha) {
   }
 }
 
-// Doesn't check whether the GUI is open — the swap only lands after a
+// Doesn't check whether the GUI is open: the swap only happens after a
 // successful build+smoke test, and a running process keeps its old code in
 // memory regardless. Restart the app afterward to pick up the new version.
 async function update() {
@@ -96,7 +99,6 @@ async function update() {
     const before = currentSha();
     console.log(`-> Backing up profile data...`);
     const backup = await backupProgressData();
-    if (backup) console.log(`   snapshot: ${backup}`);
 
     const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);
     fs.mkdirSync(versionsDir(), { recursive: true });
@@ -105,7 +107,7 @@ async function update() {
     const sha = run('git', ['-C', tmpDir, 'rev-parse', 'HEAD'], { quiet: true }).stdout.trim();
 
     if (sha === before) {
-      console.log('Already up to date.');
+      console.log('Already up to date!');
       fs.rmSync(tmpDir, { recursive: true, force: true });
       return;
     }

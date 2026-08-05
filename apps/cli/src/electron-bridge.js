@@ -40,7 +40,11 @@ function runAction(desktopDir, action, opts = {}) {
     });
 
     child.on('error', reject);
-    child.on('exit', (code) => {
+    // 'close', not 'exit': resolving on 'exit' left the stdout pipe open a
+    // tick longer, keeping ChildProcess as an active handle and hanging the
+    // CLI after a successful run. 'close' waits for stdio to fully drain.
+    child.on('close', (code) => {
+      rl.close();
       if (settled) return resolve(settled);
       reject(new Error(`tether-academy: action "${action}" exited ${code} with no result`));
     });
