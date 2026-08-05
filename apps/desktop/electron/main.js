@@ -47,7 +47,17 @@ function handle(channel, fn) {
   ipcMain.handle(channel, async (evt, payload) => {
     const args =
       schemaName === null ? undefined : await parseIpc(schemaName, payload, channel);
-    return fn(args, evt);
+    try {
+      return await fn(args, evt);
+    } catch (err) {
+      // Fires for any call in flight when the worker is torn down (e.g.
+      // Ctrl+C); without this, Electron logs the full RPC stack per call.
+      if (err?.code === 'CHANNEL_CLOSED') {
+        console.warn(`[tether-academy-desktop] ${channel}: worker channel closed (shutting down)`);
+        return null;
+      }
+      throw err;
+    }
   });
 }
 
