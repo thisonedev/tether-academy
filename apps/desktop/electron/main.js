@@ -73,7 +73,19 @@ const WORKER_PATH = require.resolve('hello-pear-worker');
 const appName = productName ?? name;
 const mainWorkerSpecifier = '/workers/main.js';
 
+// Unset, this defaults to Electron's own name/icon: shows as "Electron" in
+// the dock/menu bar/Activity Monitor for an unpackaged app. Set as early as
+// possible (before app.whenReady()) to shrink the window where the OS shows
+// Electron's own defaults during launch.
+const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
+app.setName(appName);
+if (isMac) app.dock?.setIcon(ICON_PATH);
+
 const workers = new Map();
+// Raw PearRuntime.run() process objects, tracked separately from `workers`
+// (which stores the FramedStream `pipe` callers actually use) so before-quit
+// can force-kill anything still alive instead of leaking it as an orphan.
+const workerProcesses = new Set();
 
 const cmd = command(
   appName,
@@ -132,6 +144,7 @@ function getWorker(specifier) {
     dir,
     appPath,
   ]);
+  workerProcesses.add(worker);
   const pipe = new FramedStream(worker);
   const sendIPC = (data) => sendToAll(`pear:worker:ipc:${specifier}`, data);
   const sendOut = (data) => sendToAll(`pear:worker:stdout:${specifier}`, data);
@@ -140,6 +153,7 @@ function getWorker(specifier) {
   worker.stdout.on('data', sendOut);
   worker.stderr.on('data', sendErr);
   worker.once('exit', (code) => {
+    workerProcesses.delete(worker);
     pipe.removeListener('data', sendIPC);
     worker.stdout.removeListener('data', sendOut);
     worker.stderr.removeListener('data', sendErr);
@@ -676,6 +690,7 @@ async function createWindow() {
     minHeight: 600,
     backgroundColor: '#0a0a0a',
     title: 'Tether Academy',
+    icon: ICON_PATH, // window/taskbar icon on Linux and Windows; macOS uses the dock icon set at top-of-file
     // No native title bar on macOS; the web header doubles as one. Other
     // platforms keep the default frame so the OS window controls stay usable.
     frame: !isMac,
@@ -832,6 +847,16 @@ if (!lock) {
     if (shuttingDown) return;
     shuttingDown = true;
     evt.preventDefault();
+    // pearEnd.shutdown() only tears down the peer-mesh worker; the sandbox
+    // worker(s) from getWorker() are a separate process and were leaking
+    // (never killed on quit) without this.
+    for (const worker of workerProcesses) {
+      try {
+        worker.destroy();
+      } catch {
+        // already gone
+      }
+    }
     pearEnd
       .shutdown()
       .catch((err) => console.warn('[tether-academy-desktop] shutdown error:', err?.message ?? err))

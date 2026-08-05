@@ -10,6 +10,10 @@ const path = require('node:path');
 
 const MAX_RUNTIME_MS = 5 * 60 * 1000;
 
+// Electron-as-node (ELECTRON_RUN_AS_NODE) still claims its own Dock icon on
+// macOS unless told otherwise; see electron/dock-hide-shim.cjs.
+const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
+
 const { buildLesson } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
 const { lessonCwd, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
@@ -62,7 +66,12 @@ function runExample({ source, language, argv, onChunk }) {
 
   const child = spawn(
     process.execPath,
-    ['--experimental-strip-types', file, ...extraArgv],
+    [
+      '--experimental-strip-types',
+      ...(process.platform === 'darwin' ? ['--require', DOCK_HIDE_SHIM] : []),
+      file,
+      ...extraArgv,
+    ],
     {
       cwd: childCwd,
       env: {

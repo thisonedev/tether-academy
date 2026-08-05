@@ -100,7 +100,7 @@ async function update() {
 
     const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);
     fs.mkdirSync(versionsDir(), { recursive: true });
-    console.log('-> Fetching latest...');
+    console.log('-> Fetching updates...');
     run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir], { quiet: true });
     const sha = run('git', ['-C', tmpDir, 'rev-parse', 'HEAD'], { quiet: true }).stdout.trim();
 
