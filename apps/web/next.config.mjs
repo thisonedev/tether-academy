@@ -12,6 +12,11 @@ const nextConfig = {
   // Project page on thisonedev.github.io/tether-academy/ in production.
   // Stripped in dev so localhost:3000/ works as expected.
   basePath: isProd ? '/tether-academy' : '',
+  // Publish the basePath so client-side asset paths (e.g. Monaco's AMD loader) can be
+  // prefixed the same way HTML anchors are.
+  env: {
+    NEXT_PUBLIC_BASE_PATH: isProd ? '/tether-academy' : '',
+  },
 };
 
 export default withMDX(nextConfig);

@@ -7,7 +7,10 @@ import { QVAC_THEME, setupQvacMonaco } from './monaco-qvac-setup.js';
 
 // Pin the loader to the app-bundled Monaco; otherwise @monaco-editor/react fetches the AMD
 // loader from cdn.jsdelivr.net, which the renderer CSP can't allow into the window.academy origin.
-loader.config({ paths: { vs: '/monaco/vs' } });
+// Resolve relative to the Next basePath so the loader works when the web build is served under
+// a sub-path (GitHub Pages project pages, the Electron academy://app origin).
+const __academyBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+loader.config({ paths: { vs: `${__academyBasePath}/monaco/vs` } });
 
 const COMMON_EDITOR_OPTIONS: monacoTypes.editor.IStandaloneEditorConstructionOptions = {
   fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
