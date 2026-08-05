@@ -40,7 +40,7 @@ function repoUrl() {
   return override && override.trim() ? override : 'https://github.com/thisonedev/tether-academy.git';
 }
 
-// Overrides the branch `install`/`update` track (default: master) — combine
+// Overrides the branch `install`/`update` track (default: master). Combine
 // with TETHER_ACADEMY_REPO=<local path> to test a not-yet-merged branch.
 function branch() {
   const override = process.env.TETHER_ACADEMY_BRANCH;

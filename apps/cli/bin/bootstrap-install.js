@@ -2,7 +2,7 @@
 'use strict';
 
 // Used only by install.sh's bootstrap clone. Calls install.js directly
-// instead of via cli.js, which requires `paparam` — not installed yet in
+// instead of via cli.js, which requires `paparam`, not installed yet in
 // a bare `git clone`.
 require('../src/install')
   .install()
