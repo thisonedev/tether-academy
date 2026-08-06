@@ -1,20 +1,27 @@
 'use client';
 
+import { COURSES, type Course, CURRICULUM } from '@academy/courses';
+import type { AcademyAPI } from '@academy/validation';
 import {
-  AppWindow,
   ArrowRight,
   BookOpen,
   Check,
   Code2,
   Cpu,
-  Globe,
-  HardDrive,
+  Lock,
   type LucideIcon,
   Network,
-  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { CopyButton } from '../../../../../packages/ui/src/components/install-command';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { InstallCommand } from '../../../../../packages/ui/src/components/install-command';
+
+declare global {
+  interface Window {
+    academy?: AcademyAPI;
+  }
+}
 
 const INSTALL_COMMAND =
   'curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh';
@@ -30,7 +37,7 @@ const FEATURES: FeatureItem[] = [
   {
     icon: BookOpen,
     title: 'Learn by doing',
-    body: "Every lesson = a short explanation, a small coding task, and instant feedback. No passive reading.",
+    body: 'Every lesson = a short explanation, a small coding task, and instant feedback. No passive reading.',
   },
   {
     icon: Code2,
@@ -40,7 +47,7 @@ const FEATURES: FeatureItem[] = [
   {
     icon: Sparkles,
     title: 'AI-native by design',
-    body: "Every lesson doubles as high-quality training data. Agents can fetch the full curriculum via llms.txt.",
+    body: 'Every lesson doubles as high-quality training data. Agents can fetch the full curriculum via llms.txt.',
   },
 ];
 
@@ -62,8 +69,8 @@ export default function HomePage() {
         <HeroWithInstall />
         <ToolStrip />
         <FeatureCards />
+        <CoursesSection />
         <FeatureBlocks />
-        <Architecture />
         <Copyright />
       </div>
     </main>
@@ -102,16 +109,11 @@ function Hero() {
 
 function InstallRow() {
   return (
-    <section className="max-w-md space-y-3">
+    <section id="install" className="max-w-md space-y-3 scroll-mt-24">
       <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
         Install via Terminal (macOS / Linux)
       </p>
-      <div className="overflow-hidden rounded-md border border-canvas-border bg-canvas">
-        <div className="flex items-center gap-2 px-3 py-2 font-mono text-sm text-canvas-foreground">
-          <code className="min-w-0 flex-1 truncate">{INSTALL_COMMAND}</code>
-          <CopyButton command={INSTALL_COMMAND} />
-        </div>
-      </div>
+      <InstallCommand command={INSTALL_COMMAND} />
     </section>
   );
 }
@@ -213,32 +215,26 @@ const FEATURE_SHOTS: FeatureShot[] = [
       'Rate-limited to one in-flight run per peer.',
     ],
   },
-  {
-    key: 'models',
-    icon: HardDrive,
-    category: 'LLMs',
-    label: 'Model management',
-    src: '/model-management.png',
-    alt: 'Model management view in Tether Academy, showing a list of downloaded models with sizes and integrity hashes.',
-    checkboxes: [
-      'Models are files on your disk, with a sha256 hash recorded in a manifest.',
-      'A tampered model is rejected on load.',
-      'Manage the list from Settings → Models.',
-    ],
-  },
 ];
 
 function FeatureBlocks() {
   return (
-    <div className="space-y-14 sm:space-y-20">
+    <div className="space-y-14 sm:space-y-10">
       <SectionDivider />
+      <h2 className="text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
+        Explore new way of learning
+      </h2>
+      <h3 className="max-w-2xl text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
+        The Academy is built on a local-first, peer-to-peer architecture. This allows a series of
+        features that are impossible in a traditional online coding academies, including local
+        execution, device pairing, private identity management, etc.
+      </h3>
       <section className="space-y-14 sm:space-y-20">
-      {FEATURE_SHOTS.map((feature, index) => (
-        <FeatureBlock key={feature.key} feature={feature} index={index} />
-      ))}
-    </section>
+        {FEATURE_SHOTS.map((feature, index) => (
+          <FeatureBlock key={feature.key} feature={feature} index={index} />
+        ))}
+      </section>
     </div>
-    
   );
 }
 
@@ -248,7 +244,6 @@ function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number 
   const reverse = index % 2 === 1;
   const textOrder = hasImage ? (reverse ? 'md:order-1' : 'md:order-2') : 'md:col-span-2';
   const imageOrder = hasImage ? (reverse ? 'md:order-2' : 'md:order-1') : '';
-  const number = String(index + 1).padStart(2, '0');
   const text = (
     <div
       className={`relative flex flex-col justify-center gap-4 overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted p-6 sm:p-8 ${textOrder}`}
@@ -299,112 +294,160 @@ function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number 
   );
 }
 
-interface ArchitectureLayer {
-  icon: LucideIcon;
-  title: string;
-  subtitle: string;
+/** True once the desktop bridge (window.academy) is confirmed present. Starts
+ *  false so SSR HTML matches the first client render, then flips after mount. */
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    setIsDesktop(typeof window !== 'undefined' && !!window.academy);
+  }, []);
+  return isDesktop;
 }
 
-const ARCH_LAYERS: ArchitectureLayer[] = [
-  {
-    icon: Globe,
-    title: 'Page',
-    subtitle: 'Next.js + Fumadocs + Monaco',
-  },
-  {
-    icon: AppWindow,
-    title: 'Desktop shell',
-    subtitle: 'Electron main + preload',
-  },
-  {
-    icon: Cpu,
-    title: 'Bare host',
-    subtitle: 'Pear Runtime + peer transport',
-  },
-  {
-    icon: ShieldCheck,
-    title: 'Sandboxed peer-exec',
-    subtitle: 'kernel sandbox + remote peers',
-  },
-];
+/** Per-course accent palette, used until real logos exist. Mirrors
+ *  apps/web/src/app/courses/page.tsx so the two listings stay visually in sync. */
+function glyphPalette(slug: string): { bg: string; fg: string } {
+  switch (slug) {
+    case 'qvac':
+      return { bg: 'linear-gradient(135deg, #0d2620 0%, #1a5e4a 100%)', fg: '#34d399' };
+    case 'wdk':
+      return { bg: 'linear-gradient(135deg, #1a1d2e 0%, #2d3050 100%)', fg: '#a5a8d4' };
+    case 'pears':
+      return { bg: 'linear-gradient(135deg, #2e1a1d 0%, #5a2d30 100%)', fg: '#f5a5a5' };
+    default:
+      return { bg: 'var(--color-canvas)', fg: 'var(--color-canvas-foreground)' };
+  }
+}
 
-const ARCH_LAYER_STYLES: { tint: string; icon: string; ring: string }[] = [
-  {
-    tint: 'from-emerald-500/15 to-emerald-500/0',
-    icon: 'from-emerald-400 to-emerald-500',
-    ring: 'ring-emerald-500/30',
-  },
-  {
-    tint: 'from-cyan-500/10 to-cyan-500/0',
-    icon: 'from-cyan-400 to-cyan-500',
-    ring: 'ring-cyan-500/30',
-  },
-  {
-    tint: 'from-violet-500/10 to-violet-500/0',
-    icon: 'from-violet-400 to-violet-500',
-    ring: 'ring-violet-500/30',
-  },
-  {
-    tint: 'from-amber-500/10 to-amber-500/0',
-    icon: 'from-amber-400 to-amber-500',
-    ring: 'ring-amber-500/30',
-  },
-];
+function CourseGlyph({ slug }: { slug: string }) {
+  const { bg, fg } = glyphPalette(slug);
+  return (
+    <span
+      className="flex size-12 items-center justify-center rounded-lg border text-sm font-bold sm:size-14 sm:text-base"
+      style={{ background: bg, color: fg, borderColor: 'transparent' }}
+      aria-hidden
+    >
+      {slug.slice(0, 3).toUpperCase()}
+    </span>
+  );
+}
 
-function Architecture() {
+/** Counts chapters + lessons for a course. Only QVAC ships chapters today. */
+function courseCounts(slug: string): { chapters: number; lessons: number } {
+  if (slug !== 'qvac') return { chapters: 0, lessons: 0 };
+  return {
+    chapters: CURRICULUM.length,
+    lessons: CURRICULUM.reduce((sum, c) => sum + c.lessons.length, 0),
+  };
+}
+
+function CoursesSection() {
+  const isDesktop = useIsDesktop();
   return (
     <section className="space-y-10">
       <SectionDivider />
-      <h2 className="text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
-        Architecture
-      </h2>
-      <h3 className="max-w-2xl text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
-        The Academy is built on a local-first, peer-to-peer architecture. The page runs in a browser, the
-        desktop shell runs in Electron, and the lesson engine runs in a sandboxed process. Every
-        action is mediated by a small, audited bridge.
-      </h3>
-      <div className="rounded-2xl border border-canvas-border bg-canvas-muted p-4 sm:p-6">
-        <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:gap-3">
-          {ARCH_LAYERS.map((layer, index) => {
-            const Icon = layer.icon;
-            const isLast = index === ARCH_LAYERS.length - 1;
-            const style = ARCH_LAYER_STYLES[index] ?? ARCH_LAYER_STYLES[0];
-            return (
-              <div key={layer.title} className="contents">
-                <div
-                  className={`relative flex flex-col items-center gap-3 overflow-hidden rounded-2xl border border-canvas-border bg-gradient-to-b ${style.tint} p-5 text-center`}
-                >
-                  <span
-                    className={`inline-flex size-11 items-center justify-center rounded-xl border border-canvas-border bg-gradient-to-br ${style.icon} p-2 text-canvas shadow-sm`}
-                  >
-                    <Icon className="size-5 text-canvas" strokeWidth={2} aria-hidden />
-                  </span>
-                  <h3 className="text-lg font-semibold tracking-tight text-canvas-foreground">
-                    {layer.title}
-                  </h3>
-                  <p className="text-sm text-canvas-muted-foreground">{layer.subtitle}</p>
-                </div>
-                {!isLast ? (
-                  <div
-                    aria-hidden
-                    className="hidden flex-col items-center justify-center gap-2 self-center text-canvas-muted-foreground md:flex"
-                  >
-                    <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-400">
-                      {index === 0 ? 'contextBridge' : index === 1 ? 'bare-rpc' : 'Hyperswarm'}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <span className="h-px w-3 bg-emerald-500/40" />
-                      <ArrowRight className="size-4 text-emerald-400" />
-                      <span className="h-px w-3 bg-emerald-500/40" />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+      <div className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">Courses</p>
+        <h2 className="text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
+          Pick a track
+        </h2>
+        <p className="max-w-2xl text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
+          Pick an open-source stack to learn. Each course is a series of short lessons with code to
+          read and run.
+        </p>
       </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {COURSES.map((course) => (
+          <CourseCard key={course.slug} course={course} isDesktop={isDesktop} />
+        ))}
+      </div>
+      {isDesktop ? null : (
+        <p className="text-sm text-canvas-muted-foreground">
+          Courses run in the desktop app.{' '}
+          <a href="#install" className="font-semibold text-emerald-400 hover:underline">
+            Install it above
+          </a>{' '}
+          to start one.
+        </p>
+      )}
     </section>
+  );
+}
+
+function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean }) {
+  const counts = courseCounts(course.slug);
+  // Web visitors never get a clickable course, live or not: the app is where
+  // lessons actually run, so every card here should push toward installing it.
+  const locked = !isDesktop && !course.planned;
+
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <CourseGlyph slug={course.slug} />
+        {course.planned ? (
+          <span className="inline-flex items-center rounded-full border border-canvas-border bg-canvas px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+            Coming soon
+          </span>
+        ) : locked ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-canvas-border bg-canvas px-2.5 py-1 text-[11px] font-semibold tracking-wide text-canvas-muted-foreground">
+            <Lock className="size-3" strokeWidth={2.5} />
+            Desktop only
+          </span>
+        ) : (
+          <ArrowRight className="size-4 shrink-0 text-canvas-muted-foreground transition-colors group-hover:text-emerald-400" />
+        )}
+      </div>
+      <h3 className="mt-4 text-lg font-semibold text-canvas-foreground sm:text-xl">
+        {course.name}
+      </h3>
+      <p className="mt-1 text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
+        {course.description}
+      </p>
+      {counts.chapters > 0 ? (
+        <div className="mt-auto flex items-center gap-3 pt-4 text-xs text-canvas-muted-foreground">
+          <span className="font-mono">
+            {counts.chapters} {counts.chapters === 1 ? 'chapter' : 'chapters'}
+          </span>
+          <span aria-hidden className="text-canvas-border">
+            ·
+          </span>
+          <span className="font-mono">
+            {counts.lessons} {counts.lessons === 1 ? 'lesson' : 'lessons'}
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (course.planned) {
+    return (
+      <div
+        aria-disabled
+        className="flex h-full flex-col rounded-xl border border-dashed border-canvas-border bg-canvas-muted/40 p-4 opacity-70 sm:p-5"
+      >
+        {body}
+      </div>
+    );
+  }
+
+  if (locked) {
+    return (
+      <div
+        title="Install the desktop app to start this course"
+        className="flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-4 opacity-80 sm:p-5"
+      >
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={course.href}
+      className="group flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-4 transition-colors hover:border-emerald-500/50 hover:bg-canvas sm:p-5"
+    >
+      {body}
+    </Link>
   );
 }
 
