@@ -182,7 +182,7 @@ const FEATURE_SHOTS: FeatureShot[] = [
     icon: Cpu,
     category: 'CODE',
     label: 'Local execution',
-    src: '/this-device.png',
+    src: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/this-device.png`,
     checkboxes: [
       'Lessons execute in a kernel sandbox, so that code can not reach the rest of your system.',
       'Models run on your CPU or GPU. No API keys and no rate limiting.',
@@ -194,7 +194,7 @@ const FEATURE_SHOTS: FeatureShot[] = [
     icon: Code2,
     category: 'EDITOR',
     label: 'Familiar coding experience',
-    src: '/monaco-editor.png',
+    src: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/monaco-editor.png`,
     alt: 'Monaco editor inside a Tether Academy lesson, showing TypeScript code with IntelliSense and inline error underlines.',
     checkboxes: [
       'Monaco is bundled with the desktop app. No CDN.',
@@ -207,7 +207,7 @@ const FEATURE_SHOTS: FeatureShot[] = [
     icon: Network,
     category: 'P2P',
     label: 'Device pairing',
-    src: '/device-pairing.png',
+    src: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/device-pairing.png`,
     alt: 'Device pairing panel in Tether Academy, showing a local DHT pairing flow with another device.',
     checkboxes: [
       'Connects to other devices over a public DHT by their keypair.',
