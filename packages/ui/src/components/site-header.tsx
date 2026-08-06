@@ -37,7 +37,7 @@ export function SiteHeader() {
             <button
               type="button"
               onClick={openSignInPrompt}
-              className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas-muted px-3 py-1.5 text-sm font-medium text-canvas-foreground transition-colors hover:border-emerald-500/40 hover:bg-canvas"
+              className="desktop-only inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas-muted px-3 py-1.5 text-sm font-medium text-canvas-foreground transition-colors hover:border-emerald-500/40 hover:bg-canvas"
             >
               Sign in
             </button>
@@ -47,7 +47,7 @@ export function SiteHeader() {
         )}
         <Link
           href="/courses"
-          className="rounded-md px-2 py-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground sm:px-3"
+          className="desktop-only inline-flex rounded-md px-2 py-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground sm:px-3"
         >
           Courses
         </Link>
