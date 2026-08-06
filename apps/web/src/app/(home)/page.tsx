@@ -1,91 +1,470 @@
-import { StartCourseButton } from '@academy/ui';
-import { BookOpen, Code2, Sparkles } from 'lucide-react';
+'use client';
+
+import { COURSES, type Course, CURRICULUM } from '@academy/courses';
+import type { AcademyAPI } from '@academy/validation';
+import {
+  ArrowRight,
+  BookOpen,
+  Check,
+  Code2,
+  Cpu,
+  Lock,
+  type LucideIcon,
+  Network,
+  Sparkles,
+} from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { InstallCommand } from '../../../../../packages/ui/src/components/install-command';
+
+declare global {
+  interface Window {
+    academy?: AcademyAPI;
+  }
+}
+
+const INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh';
+const THISONEDEV_URL = 'https://github.com/thisonedev';
+
+interface FeatureItem {
+  icon: LucideIcon;
+  title: string;
+  body: string;
+}
+
+const FEATURES: FeatureItem[] = [
+  {
+    icon: BookOpen,
+    title: 'Learn by doing',
+    body: 'Every lesson = a short explanation, a small coding task, and instant feedback. No passive reading.',
+  },
+  {
+    icon: Code2,
+    title: 'Real SDK examples',
+    body: "We wrap the SDK's own examples. Never fork them. One source of truth, kept in sync automatically",
+  },
+  {
+    icon: Sparkles,
+    title: 'AI-native by design',
+    body: 'Every lesson doubles as high-quality training data. Agents can fetch the full curriculum via llms.txt.',
+  },
+];
+
+const TOOLS = [
+  'Pear Runtime',
+  'QVAC SDK',
+  'Hyperswarm',
+  'HyperDHT',
+  'Autobase',
+  'Bare',
+  'Keet Identity Key',
+  'Fumadocs',
+];
 
 export default function HomePage() {
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-12 sm:px-6 sm:py-20">
-      <div className="space-y-12 sm:space-y-16">
-        <div className="space-y-4 sm:space-y-6">
-          <h1 className="text-4xl font-bold leading-[1.1] tracking-tight sm:text-6xl">
-            Learn to build on
-            <br />
-            Tether&apos;s open-source stack.
-          </h1>
-          <p className="max-w-2xl text-lg leading-relaxed text-canvas-muted-foreground sm:text-xl">
-            An interactive code school for the Tether ecosystem. Short lessons, in-browser code,
-            instant feedback.
-          </p>
-          <div className="flex flex-wrap gap-3 pt-2">
-            <StartCourseButton />
-            <a
-              href="https://github.com/thisonedev/tether-academy"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-md border border-canvas-border px-5 py-2.5 text-sm font-semibold text-canvas-foreground transition-colors hover:bg-canvas-muted"
-            >
-              View on GitHub
-            </a>
-          </div>
-        </div>
-
-        <section className="grid gap-4 sm:grid-cols-3 sm:gap-6">
-          <FeatureCard
-            icon={<BookOpen className="size-5" />}
-            title="Learn by doing"
-            body="Every lesson = a short explanation, a small coding task, and instant pass/fail feedback. No passive reading."
-          />
-          <FeatureCard
-            icon={<Code2 className="size-5" />}
-            title="Real SDK examples"
-            body="We wrap the SDK's own examples. Never fork them. One source of truth, kept in sync automatically."
-          />
-          <FeatureCard
-            icon={<Sparkles className="size-5" />}
-            title="AI-native by design"
-            body="Every lesson doubles as high-quality training data. Agents can fetch the full curriculum via llms.txt."
-          />
-        </section>
-
-        <section className="rounded-lg border border-canvas-border bg-canvas-muted p-5 sm:p-6">
-          <h2 className="mb-3 text-lg font-semibold text-canvas-foreground sm:text-xl">
-            What's included
-          </h2>
-          <ul className="ml-5 list-disc space-y-1.5 text-sm text-canvas-muted-foreground sm:text-base">
-            <li>QVAC course: getting started, completion, RAG, speech, P2P, etc.</li>
-            <li>Interactive lesson runner with simulated live preview</li>
-            <li>Sample-sync against the upstream QVAC SDK examples</li>
-            <li>
-              <a
-                href="/tether-academy/courses/llms-full.txt"
-                className="font-mono text-emerald-400"
-              >
-                llms.txt
-              </a>{' '}
-              export of the full curriculum
-            </li>
-          </ul>
-        </section>
+    <main className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 sm:py-16">
+      <div className="space-y-14 sm:space-y-20">
+        <HeroWithInstall />
+        <ToolStrip />
+        <FeatureCards />
+        <CoursesSection />
+        <FeatureBlocks />
+        <Copyright />
       </div>
     </main>
   );
 }
 
-function FeatureCard({
-  icon,
-  title,
-  body,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  body: string;
-}) {
+function HeroWithInstall() {
   return (
-    <div className="rounded-lg border border-canvas-border bg-canvas-muted p-4 sm:p-5">
-      <div className="mb-3 inline-flex size-9 items-center justify-center rounded-md bg-canvas text-emerald-400">
-        {icon}
+    <div className="flex min-h-[calc(100vh-16rem)] flex-col justify-between gap-4 sm:gap-5">
+      <Hero />
+      <InstallRow />
+    </div>
+  );
+}
+
+function Hero() {
+  return (
+    <div className="flex flex-1 flex-col justify-center space-y-6 sm:space-y-8">
+      <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-emerald-400">
+        <Sparkles className="size-3" strokeWidth={2.5} />
+        The first P2P code academy
+      </p>
+      <h1 className="max-w-4xl text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
+        Learn to build on
+        <br />
+        Tether&apos;s open-source <br className="hidden sm:inline" />
+        stack
+      </h1>
+      <p className="max-w-2xl text-lg leading-relaxed text-canvas-muted-foreground sm:text-xl">
+        Fully local and private interactive code school for the Tether ecosystem. Short lessons,
+        industry standard editor, models and code that run on your machine.
+      </p>
+    </div>
+  );
+}
+
+function InstallRow() {
+  return (
+    <section id="install" className="max-w-md space-y-3 scroll-mt-24">
+      <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
+        Install via Terminal (macOS / Linux)
+      </p>
+      <InstallCommand command={INSTALL_COMMAND} />
+    </section>
+  );
+}
+
+function ToolStrip() {
+  return (
+    <div className="-mt-12 flex flex-wrap gap-2 sm:-mt-10">
+      {TOOLS.map((tool) => (
+        <span
+          key={tool}
+          className="font-mono text-xs px-3 py-1.5 rounded-full border border-canvas-border bg-canvas-muted text-canvas-muted-foreground"
+        >
+          {tool}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SectionDivider() {
+  return (
+    <div aria-hidden className="flex items-center gap-3">
+      <span className="h-0.5 w-10 rounded-full bg-emerald-500" />
+      <span className="h-px flex-1 bg-canvas-border" />
+    </div>
+  );
+}
+
+function FeatureCards() {
+  return (
+    <section className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {FEATURES.map((feature) => (
+          <FeatureCard key={feature.title} {...feature} />
+        ))}
       </div>
-      <h3 className="mb-1.5 text-base font-semibold text-canvas-foreground">{title}</h3>
+    </section>
+  );
+}
+
+function FeatureCard({ icon: Icon, title, body }: FeatureItem) {
+  return (
+    <div className="flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-5">
+      <Icon className="mb-4 size-5 text-emerald-400" />
+      <h3 className="mb-3 text-lg font-semibold leading-snug tracking-tight text-canvas-foreground sm:text-xl">
+        {title}
+      </h3>
       <p className="text-sm leading-relaxed text-canvas-muted-foreground">{body}</p>
     </div>
+  );
+}
+
+interface FeatureShot {
+  key: string;
+  icon: LucideIcon;
+  category: string;
+  label: string;
+  checkboxes: string[];
+  src?: string;
+  alt?: string;
+}
+
+const FEATURE_SHOTS: FeatureShot[] = [
+  {
+    key: 'run-locally',
+    icon: Cpu,
+    category: 'CODE',
+    label: 'Local execution',
+    src: '/this-device.png',
+    checkboxes: [
+      'Lessons execute in a kernel sandbox, so that code can not reach the rest of your system.',
+      'Models run on your CPU or GPU. No API keys and no rate limiting.',
+      'Peer-exec is refused on Windows. macOS and Linux only.',
+    ],
+  },
+  {
+    key: 'editor',
+    icon: Code2,
+    category: 'EDITOR',
+    label: 'Familiar coding experience',
+    src: '/monaco-editor.png',
+    alt: 'Monaco editor inside a Tether Academy lesson, showing TypeScript code with IntelliSense and inline error underlines.',
+    checkboxes: [
+      'Monaco is bundled with the desktop app. No CDN.',
+      'TypeScript, IntelliSense, and inline error messages are supported out of the box.',
+      'Loads from the same local bundle as the lesson runtime. No remote scripts.',
+    ],
+  },
+  {
+    key: 'pairing',
+    icon: Network,
+    category: 'P2P',
+    label: 'Device pairing',
+    src: '/device-pairing.png',
+    alt: 'Device pairing panel in Tether Academy, showing a local DHT pairing flow with another device.',
+    checkboxes: [
+      'Connects to other devices over a public DHT by their keypair.',
+      'Multiple layers of security. Every connection is end-to-end encrypted.',
+      'Rate-limited to one in-flight run per peer.',
+    ],
+  },
+];
+
+function FeatureBlocks() {
+  return (
+    <div className="space-y-14 sm:space-y-10">
+      <SectionDivider />
+      <h2 className="text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
+        Explore new way of learning
+      </h2>
+      <h3 className="max-w-2xl text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
+        The Academy is built on a local-first, peer-to-peer architecture. This allows a series of
+        features that are impossible in a traditional online coding academies, including local
+        execution, device pairing, private identity management, etc.
+      </h3>
+      <section className="space-y-14 sm:space-y-20">
+        {FEATURE_SHOTS.map((feature, index) => (
+          <FeatureBlock key={feature.key} feature={feature} index={index} />
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number }) {
+  const Icon = feature.icon;
+  const hasImage = Boolean(feature.src);
+  const reverse = index % 2 === 1;
+  const textOrder = hasImage ? (reverse ? 'md:order-1' : 'md:order-2') : 'md:col-span-2';
+  const imageOrder = hasImage ? (reverse ? 'md:order-2' : 'md:order-1') : '';
+  const text = (
+    <div
+      className={`relative flex flex-col justify-center gap-4 overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted p-6 sm:p-8 ${textOrder}`}
+    >
+      <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-400">
+        <Icon className="size-3" strokeWidth={2.5} aria-hidden />
+        {feature.category}
+      </p>
+      <h3 className="text-2xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-2xl">
+        {feature.label}
+      </h3>
+      {feature.checkboxes?.length ? (
+        <ul className="mt-2 space-y-2">
+          {feature.checkboxes.map((item) => (
+            <li
+              key={item}
+              className="flex items-start gap-2 text-sm text-canvas-foreground sm:text-base"
+            >
+              <span
+                aria-hidden
+                className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+              >
+                <Check className="size-3" strokeWidth={3} />
+              </span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+  const image = feature.src ? (
+    <div
+      className={`overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted ${imageOrder}`}
+    >
+      <div className="overflow-hidden rounded-xl">
+        {/* biome-ignore lint/performance/noImgElement: the home page is short, the screenshots are static, and next/image is not used anywhere else in apps/web/src/ */}
+        <img src={feature.src} alt={feature.alt ?? ''} loading="lazy" className="block w-full" />
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-2 md:gap-10">
+      {text}
+      {image}
+    </div>
+  );
+}
+
+/** True once the desktop bridge (window.academy) is confirmed present. Starts
+ *  false so SSR HTML matches the first client render, then flips after mount. */
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    setIsDesktop(typeof window !== 'undefined' && !!window.academy);
+  }, []);
+  return isDesktop;
+}
+
+/** Per-course accent palette, used until real logos exist. Mirrors
+ *  apps/web/src/app/courses/page.tsx so the two listings stay visually in sync. */
+function glyphPalette(slug: string): { bg: string; fg: string } {
+  switch (slug) {
+    case 'qvac':
+      return { bg: 'linear-gradient(135deg, #0d2620 0%, #1a5e4a 100%)', fg: '#34d399' };
+    case 'wdk':
+      return { bg: 'linear-gradient(135deg, #1a1d2e 0%, #2d3050 100%)', fg: '#a5a8d4' };
+    case 'pears':
+      return { bg: 'linear-gradient(135deg, #2e1a1d 0%, #5a2d30 100%)', fg: '#f5a5a5' };
+    default:
+      return { bg: 'var(--color-canvas)', fg: 'var(--color-canvas-foreground)' };
+  }
+}
+
+function CourseGlyph({ slug }: { slug: string }) {
+  const { bg, fg } = glyphPalette(slug);
+  return (
+    <span
+      className="flex size-12 items-center justify-center rounded-lg border text-sm font-bold sm:size-14 sm:text-base"
+      style={{ background: bg, color: fg, borderColor: 'transparent' }}
+      aria-hidden
+    >
+      {slug.slice(0, 3).toUpperCase()}
+    </span>
+  );
+}
+
+/** Counts chapters + lessons for a course. Only QVAC ships chapters today. */
+function courseCounts(slug: string): { chapters: number; lessons: number } {
+  if (slug !== 'qvac') return { chapters: 0, lessons: 0 };
+  return {
+    chapters: CURRICULUM.length,
+    lessons: CURRICULUM.reduce((sum, c) => sum + c.lessons.length, 0),
+  };
+}
+
+function CoursesSection() {
+  const isDesktop = useIsDesktop();
+  return (
+    <section className="space-y-10">
+      <SectionDivider />
+      <div className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">Courses</p>
+        <h2 className="text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
+          Pick a track
+        </h2>
+        <p className="max-w-2xl text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
+          Pick an open-source stack to learn. Each course is a series of short lessons with code to
+          read and run.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {COURSES.map((course) => (
+          <CourseCard key={course.slug} course={course} isDesktop={isDesktop} />
+        ))}
+      </div>
+      {isDesktop ? null : (
+        <p className="text-sm text-canvas-muted-foreground">
+          Courses run in the desktop app.{' '}
+          <a href="#install" className="font-semibold text-emerald-400 hover:underline">
+            Install it above
+          </a>{' '}
+          to start one.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean }) {
+  const counts = courseCounts(course.slug);
+  // Web visitors never get a clickable course, live or not: the app is where
+  // lessons actually run, so every card here should push toward installing it.
+  const locked = !isDesktop && !course.planned;
+
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <CourseGlyph slug={course.slug} />
+        {course.planned ? (
+          <span className="inline-flex items-center rounded-full border border-canvas-border bg-canvas px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+            Coming soon
+          </span>
+        ) : locked ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-canvas-border bg-canvas px-2.5 py-1 text-[11px] font-semibold tracking-wide text-canvas-muted-foreground">
+            <Lock className="size-3" strokeWidth={2.5} />
+            Desktop only
+          </span>
+        ) : (
+          <ArrowRight className="size-4 shrink-0 text-canvas-muted-foreground transition-colors group-hover:text-emerald-400" />
+        )}
+      </div>
+      <h3 className="mt-4 text-lg font-semibold text-canvas-foreground sm:text-xl">
+        {course.name}
+      </h3>
+      <p className="mt-1 text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
+        {course.description}
+      </p>
+      {counts.chapters > 0 ? (
+        <div className="mt-auto flex items-center gap-3 pt-4 text-xs text-canvas-muted-foreground">
+          <span className="font-mono">
+            {counts.chapters} {counts.chapters === 1 ? 'chapter' : 'chapters'}
+          </span>
+          <span aria-hidden className="text-canvas-border">
+            ·
+          </span>
+          <span className="font-mono">
+            {counts.lessons} {counts.lessons === 1 ? 'lesson' : 'lessons'}
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (course.planned) {
+    return (
+      <div
+        aria-disabled
+        className="flex h-full flex-col rounded-xl border border-dashed border-canvas-border bg-canvas-muted/40 p-4 opacity-70 sm:p-5"
+      >
+        {body}
+      </div>
+    );
+  }
+
+  if (locked) {
+    return (
+      <div
+        title="Install the desktop app to start this course"
+        className="flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-4 opacity-80 sm:p-5"
+      >
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={course.href}
+      className="group flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-4 transition-colors hover:border-emerald-500/50 hover:bg-canvas sm:p-5"
+    >
+      {body}
+    </Link>
+  );
+}
+
+function Copyright() {
+  return (
+    <footer className="flex flex-col items-center gap-2 pt-2 text-center text-xs text-canvas-muted-foreground sm:flex-row sm:justify-between sm:text-left">
+      <p>
+        © 2026{' '}
+        <a
+          href={THISONEDEV_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 font-mono transition-colors hover:text-emerald-400"
+        >
+          thisonedev
+        </a>
+      </p>
+    </footer>
   );
 }

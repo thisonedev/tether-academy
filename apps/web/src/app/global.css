@@ -287,3 +287,8 @@ html[data-platform="desktop"] .run-mode-select-web {
     flex: 1 1 0%;
   }
 }
+
+/* Hide desktop-only elements when running in the web build (no data-platform="desktop" on <html>) */
+html:not([data-platform="desktop"]) .desktop-only {
+  display: none;
+}
