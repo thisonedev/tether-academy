@@ -6,6 +6,9 @@ import type { ReactNode } from 'react';
 export const metadata = {
   title: 'Tether Academy',
   description: "Learn to build on Tether's open-source stack. Start with QVAC.",
+  icons: {
+    icon: [{ url: '/favicon.ico', type: 'image/x-icon', sizes: '32x32' }],
+  },
   other: {
     google: 'notranslate',
   },
