@@ -23,8 +23,7 @@ declare global {
   }
 }
 
-const INSTALL_COMMAND =
-  'curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh';
+const INSTALL_COMMAND = 'curl -fsSL https://tetheracademy.cc/install.sh | sh';
 const THISONEDEV_URL = 'https://github.com/thisonedev';
 
 interface FeatureItem {

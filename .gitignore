@@ -18,6 +18,9 @@ dist
 .env
 .env*.local
 
+# copied from apps/cli/install.sh by apps/web/scripts/copy-install-sh.mjs
+apps/web/public/install.sh
+
 # workspace migration tracker
 checkpoints/
 

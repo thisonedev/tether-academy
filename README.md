@@ -5,7 +5,7 @@ Interactive code school for the [Tether](https://tether.io) product suite. A pnp
 ## Install via terminal (Mac/Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh
+curl -fsSL https://tetheracademy.cc/install.sh | sh
 ```
 
 Installs to ~/.tether-academy and adds tether-academy to your PATH.

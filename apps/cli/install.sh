@@ -1,7 +1,7 @@
 #!/bin/sh
 # Bootstraps `tether-academy` on a machine with nothing installed yet.
 #
-#   curl -fsSL https://raw.githubusercontent.com/thisonedev/tether-academy/master/apps/cli/install.sh | sh
+#   curl -fsSL https://tetheracademy.cc/install.sh | sh
 #
 # Only job: get Node running against a checkout so apps/cli/src/install.js
 # (the actual install logic) can take over from there.
