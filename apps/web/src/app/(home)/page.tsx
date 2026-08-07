@@ -119,7 +119,7 @@ function InstallRow() {
 
 function ToolStrip() {
   return (
-    <div className="-mt-12 flex flex-wrap gap-2 sm:-mt-10">
+    <div className="-mt-10 flex flex-wrap gap-2">
       {TOOLS.map((tool) => (
         <span
           key={tool}
@@ -220,15 +220,17 @@ function FeatureBlocks() {
   return (
     <div className="space-y-14 sm:space-y-10">
       <SectionDivider />
-      <h2 className="text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
-        Explore new way of learning
-      </h2>
-      <h3 className="max-w-2xl text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
-        The Academy is built on a local-first, peer-to-peer architecture. This allows a series of
-        features that are impossible in a traditional online coding academies, including local
-        execution, device pairing, private identity management, etc.
-      </h3>
-      <section className="space-y-14 sm:space-y-20">
+      <div className="space-y-3">
+        <h2 className="text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
+          Explore new way of learning
+        </h2>
+        <h3 className="max-w-2xl text-sm leading-relaxed text-canvas-muted-foreground sm:text-base">
+          The Academy is built on a local-first, peer-to-peer architecture. This allows a series of
+          features that are impossible in a traditional online coding academies, including local
+          execution, device pairing, private identity management, etc.
+        </h3>
+      </div>
+      <section className="space-y-14 sm:space-y-10">
         {FEATURE_SHOTS.map((feature, index) => (
           <FeatureBlock key={feature.key} feature={feature} index={index} />
         ))}
