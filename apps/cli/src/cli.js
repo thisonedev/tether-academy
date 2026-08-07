@@ -23,7 +23,14 @@ const updateCmd = command('update', () => {
   require('./update').update().catch(fail);
 });
 
-const cli = command('tether-academy', startCmd, installCmd, updateCmd);
+const uninstallCmd = command(
+  'uninstall',
+  flag('--purge', 'also remove the profile encryption keys'),
+  flag('--yes', 'skip the confirmation prompt'),
+  (cmd) => require('./uninstall').uninstall({ purge: cmd.flags.purge, yes: cmd.flags.yes }).catch(fail),
+);
+
+const cli = command('tether-academy', startCmd, installCmd, updateCmd, uninstallCmd);
 
 function main(argv = process.argv.slice(2)) {
   try {

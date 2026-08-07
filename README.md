@@ -11,8 +11,10 @@ curl -fsSL https://tetheracademy.cc/install.sh | sh
 Installs to ~/.tether-academy and adds tether-academy to your PATH.
 
 ```bash
-tether-academy start     # launch the desktop app
-tether-academy update    # pull and safely build the latest version
+tether-academy start              # launch the desktop app
+tether-academy update             # pull and safely build the latest version
+tether-academy uninstall          # remove the academy app, CLI shim, and profile backups, but keep the profile key(s)
+tether-academy uninstall --purge  # remove everything, including profile key(s)
 ```
 
 ## Getting started
