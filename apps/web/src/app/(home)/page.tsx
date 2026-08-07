@@ -108,7 +108,7 @@ function Hero() {
 
 function InstallRow() {
   return (
-    <section id="install" className="max-w-md space-y-3 scroll-mt-24">
+    <section id="install" className="max-w-lg space-y-3 scroll-mt-24">
       <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
         Install via Terminal (macOS / Linux)
       </p>
