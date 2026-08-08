@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Declared, not cast: a `@type` assertion would silence mismatches instead
-// of failing `pnpm typecheck`.
+// `@type` would silence mismatches instead of failing `pnpm typecheck`.
 /** @type {import('@academy/validation').AcademyAPI} */
 const academy = {
   pkg: () => ipcRenderer.sendSync('pkg'),
@@ -30,9 +29,32 @@ const academy = {
     remove: (id) => ipcRenderer.invoke('academy:models:remove', id),
     removeAll: () => ipcRenderer.invoke('academy:models:removeAll'),
     verify: () => ipcRenderer.invoke('academy:models:verify'),
+    catalogue: () => ipcRenderer.invoke('academy:models:catalogue'),
+    recommend: (lessonKey) => ipcRenderer.invoke('academy:models:recommend', lessonKey),
+    forLesson: (lessonKey) => ipcRenderer.invoke('academy:models:for-lesson', lessonKey),
   },
   device: {
     info: () => ipcRenderer.invoke('academy:device:info'),
+  },
+  chat: {
+    ready: () => ipcRenderer.invoke('academy:chat:ready'),
+    currentModel: () => ipcRenderer.invoke('academy:chat:current-model'),
+    configuredModel: () => ipcRenderer.invoke('academy:chat:configured-model'),
+    docsStatus: () => ipcRenderer.invoke('academy:chat:docs-status'),
+    docsRefresh: () => ipcRenderer.invoke('academy:chat:docs-refresh'),
+    load: (modelHint) => ipcRenderer.invoke('academy:chat:load', modelHint),
+    send: (payload) => ipcRenderer.invoke('academy:chat:send', payload),
+    stop: (requestId) => ipcRenderer.invoke('academy:chat:stop', requestId),
+    onChunk: (callback) => {
+      const handler = (/** @type {unknown} */ _e, /** @type {any} */ chunk) => callback(chunk);
+      ipcRenderer.on('academy:chat:chunk', handler);
+      return () => ipcRenderer.removeListener('academy:chat:chunk', handler);
+    },
+    onLoadProgress: (callback) => {
+      const handler = (/** @type {unknown} */ _e, /** @type {any} */ progress) => callback(progress);
+      ipcRenderer.on('academy:chat:load-progress', handler);
+      return () => ipcRenderer.removeListener('academy:chat:load-progress', handler);
+    },
   },
   clipboard: {
     copy: (text, scrubAfterMs) =>

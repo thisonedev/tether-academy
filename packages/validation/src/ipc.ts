@@ -257,3 +257,48 @@ export function parseIpc<T>(schema: z.ZodType<T>, value: unknown, label: string)
   }
   return result.data;
 }
+
+export const chatMessageSchema = z.object({
+  role: z.enum(['system', 'user', 'assistant']),
+  content: z.string().min(1).max(32_000),
+});
+
+export const chatLessonKeySchema = z
+  .object({
+    chapter: z.string().min(1).max(64),
+    lesson: z.string().min(1).max(128),
+  })
+  .strict()
+  .nullable();
+
+// Bounded facts supplied by the renderer; the host does not guess a content API.
+export const chatLessonReferenceSchema = z.string().max(8_000).optional();
+
+// When true, the host fetches the public QVAC docs and injects them into the
+// system prompt. The renderer decides based on navigator.onLine + a user toggle.
+export const chatUseFullDocsSchema = z.boolean().optional();
+
+export const chatSendSchema = z
+  .object({
+    messages: z.array(chatMessageSchema).min(1).max(64),
+    lessonKey: chatLessonKeySchema,
+    lessonReference: chatLessonReferenceSchema,
+    useFullDocs: chatUseFullDocsSchema,
+    /**
+     * Filename of the catalogue model the renderer wants to use. When omitted,
+     * the host picks the smallest installed chat model automatically.
+     */
+    modelHint: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+export const chatRequestIdSchema = z.string().min(1).max(128);
+
+export const chatLoadSchema = z.string().min(1).max(256);
+
+export const modelLessonKeySchema = z
+  .object({
+    chapter: z.string().min(1).max(64),
+    lesson: z.string().min(1).max(128),
+  })
+  .strict();

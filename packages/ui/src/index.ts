@@ -5,6 +5,8 @@ export { CodeBlock } from './components/code-block.js';
 export { CourseHome } from './components/course-home.js';
 export { CurriculumStrip } from './components/curriculum-strip.js';
 export { HelpPanel } from './components/help-panel.js';
+export { AiAssistant, AiAssistantButton } from './components/ai-assistant.js';
+export type { AiAssistantLessonContext } from './components/ai-assistant.js';
 export { CopyButton, InstallCommand } from './components/install-command.js';
 export { LessonCompleteModal } from './components/lesson-complete-modal.js';
 export { LessonWorkspace } from './components/lesson-workspace.js';

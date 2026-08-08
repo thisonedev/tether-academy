@@ -1,7 +1,9 @@
 {
   "Llama-3.2-1B-Instruct-Q4_0.gguf": "Compact Llama 3.2 1B instruction-tuned model. Quick text generation for short prompts and chat.",
   "Qwen3-0.6B-Q4_0.gguf": "Compact Qwen3 0.6B model. Tiny text generation with low memory use.",
-  "Qwen3-4B-Q4_K_M.gguf": "Mid-size Qwen3 4B model. Drives text prompts in the FLUX.2-klein image pipeline.",
+  "Qwen3-1.7B-Q4_0.gguf": "Qwen3 1.7B instruction-tuned model. Better answer quality for the AI bot, with larger context for the lesson reference.",
+  "Qwen3-4B-Q4_K_M.gguf": "Mid-size Qwen3 4B model. Drives text prompts in the FLUX.2-klein image pipeline; usable as a chat preset on machines with ~12 GB RAM.",
+  "Qwen3-8B-Q4_K_M.gguf": "Qwen3 8B instruction-tuned model. Best answer quality for the AI bot; needs ~20 GB RAM.",
   "Qwen3.6-27B-UD-Q4_K_XL.gguf": "Large Qwen3.6 27B multimodal model. 4-bit quantized for lower memory use.",
   "ggml-bci-windowed.bin": "Whisper-style decoder for brain-computer interface signals. Reads sliding windows of neural recordings.",
   "abc845adefe27931": "BCI signal decoding set. Bundles the windowed decoder with its embedder weights.",

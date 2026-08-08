@@ -23,6 +23,7 @@ import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
 import { MonacoLessonEditor } from './monaco-lesson-editor.js';
 import { RunRow, useRunNotices } from './notification-center.js';
+import { AiAssistant, AiAssistantButton } from './ai-assistant.js';
 
 export interface LessonTest {
   id: string;
@@ -47,6 +48,7 @@ export interface LessonData {
   title: string;
   description?: string;
   startingCode: string;
+  lessonReference?: string;
   answer: string;
   tests: LessonTest[];
   hints: string[];
@@ -249,7 +251,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const selfPairCount = remotePeers.length - realRemotePeers.length;
   const localIsOnlyHost = remotePeers.length > 0 && remotePeers.every((p) => p.role === 'host');
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
-  // Auto-pick the most recently paired device when entering Paired-device mode with no selection.
   useEffect(() => {
     if (runMode !== 'remote') return;
     if (realRemotePeers.length === 0) return;
@@ -412,7 +413,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             hostProgress = cur.progress as Record<string, unknown>;
           }
         } catch {
-          // fall back to an empty merge base
         }
         const next = {
           ...hostProgress,
@@ -421,7 +421,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         try {
           await window.academy!.identity!.setProgress({ progress: next });
         } catch {
-          // ignore
         }
       })();
     }
@@ -513,7 +512,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         }
         return;
       }
-      // Falls through to the same this-device path, but with peerId in the payload.
+      // Remote run: same downstream path as this-device, with peerId set below.
     }
 
     const canRunForReal =
@@ -780,6 +779,16 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             lastRemoteRun={lastRemoteRun}
             clearLastRemoteRun={() => setLastRemoteRun(null)}
             stopRequested={stopRequested}
+            lessonContext={
+              data.currentChapter && data.currentLesson
+                ? {
+                    chapter: data.currentChapter.slug,
+                    lesson: data.currentLesson.slug,
+                    title: data.currentLesson.title,
+                    reference: data.lessonReference,
+                  }
+                : null
+            }
           />
         </section>
       </div>
@@ -887,6 +896,7 @@ function Runner({
   lastRemoteRun,
   clearLastRemoteRun,
   stopRequested = false,
+  lessonContext,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
@@ -934,10 +944,15 @@ function Runner({
     | null;
   clearLastRemoteRun: () => void;
   stopRequested?: boolean;
+  lessonContext: { chapter: string; lesson: string; title: string; reference?: string } | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [capturedCopiedKey, setCapturedCopiedKey] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  // AI assistant popover state. The button is part of the editor toolbar;
+  // the popover itself is portal-rendered, anchored to the button.
+  const [aiOpen, setAiOpen] = useState(false);
+  const aiButtonRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!lastRemoteRun) return;
     const id = setInterval(() => setTick((n) => n + 1), 1000);
@@ -970,7 +985,6 @@ function Runner({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // No-op: visual feedback just won't fire.
     }
   }, [userCode]);
 
@@ -993,7 +1007,6 @@ function Runner({
         setCapturedCopiedKey((current) => (current === slotName ? null : current));
       }, 1500);
     } catch {
-      // No-op
     }
   }, []);
 
@@ -1021,6 +1034,12 @@ function Runner({
             answer={answer}
             onReveal={() => setUserCode(answer)}
             disabled={readOnly || !answer}
+          />
+          <AiAssistantButton
+            ref={aiButtonRef}
+            open={aiOpen}
+            onToggle={() => setAiOpen((v) => !v)}
+            disabled={readOnly}
           />
           <button
             type="button"
@@ -1342,6 +1361,13 @@ function Runner({
         ) : null}
         {tab === 'tests' ? <TestsView results={testResults} tests={null as never} /> : null}
       </div>
+
+      <AiAssistant
+        open={aiOpen}
+        onClose={() => setAiOpen(false)}
+        anchorRef={aiButtonRef}
+        lessonContext={lessonContext}
+      />
     </div>
   );
 }

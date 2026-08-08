@@ -23,8 +23,9 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const { runExample } = require('../runner.cjs');
-const { listModels, removeModel, removeAllModels } = require('./models.cjs');
+const { listModels, removeModel, removeAllModels, catalogue, recommend, forLesson } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
+const chat = require('./chat.cjs');
 const { buildLesson } = require('./runner-process.cjs');
 const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
@@ -61,7 +62,7 @@ function handle(channel, fn) {
   });
 }
 
-// Shared Zod schemas from @academy/validation (ESM). Loaded once on first use.
+// Shared Zod schemas from @academy/validation (ESM). Cached after first load.
 let _ipcValidation = null;
 async function loadIpcValidation() {
   if (!_ipcValidation) {
@@ -419,14 +420,57 @@ handle('academy:models:remove', async (id) => removeModel(id));
 
 handle('academy:models:removeAll', async () => removeAllModels());
 
-// Full re-hash of the cache. Reads every cached byte, so a user asks for it.
 handle('academy:models:verify', async () => {
   const { verifyAllAsync } = require('../shared/model-integrity.cjs');
   const { verified, mismatched, recorded } = await verifyAllAsync();
   return { verified: verified.length, mismatched, recorded: recorded.length };
 });
 
+handle('academy:models:catalogue', async () => catalogue());
+
+handle('academy:models:recommend', async (lessonKey) => {
+  const hardware = await getDeviceInfo().catch(() => null);
+  return recommend(lessonKey, hardware);
+});
+
+handle('academy:models:for-lesson', async (lessonKey) => forLesson(lessonKey));
+
+// AI assistant chat. The renderer subscribes once on mount to academy:chat:chunk
+// and routes by requestId.
+handle('academy:chat:ready', async () => chat.isReady());
+handle('academy:chat:current-model', async () => chat.currentModel());
+handle('academy:chat:configured-model', async () => {
+  const store = await pearEnd.store();
+  return chat.currentModel() ?? (await store.get('ai.chat.model'));
+});
+handle('academy:chat:load', async (modelHint) => {
+  const result = await chat.load(modelHint);
+  const store = await pearEnd.store();
+  await store.set('ai.chat.model', result.modelName);
+  return result;
+});
+handle('academy:chat:send', async (parsed) => {
+  const result = await chat.send({
+    messages: parsed.messages,
+    lessonKey: parsed.lessonKey,
+    lessonReference: parsed.lessonReference,
+    useFullDocs: parsed.useFullDocs,
+    modelHint: parsed.modelHint,
+  });
+  return result;
+});
+handle('academy:chat:stop', async (requestId) => chat.stop(requestId));
+handle('academy:chat:docs-status', async () => chat.docsStatus());
+handle('academy:chat:docs-refresh', async () => chat.docsRefresh());
+
 handle('academy:device:info', async () => getDeviceInfo());
+
+// Forward chat events from the host process to every open BrowserWindow. The
+// renderer subscribes once on mount and dispatches by requestId. We register
+// the listeners at module load so they're live for the lifetime of the app;
+// late subscribers pick up chunks from any in-flight requests.
+chat.onChunk((chunk) => sendToAll('academy:chat:chunk', chunk));
+chat.onLoadProgress((progress) => sendToAll('academy:chat:load-progress', progress));
 
 handle('academy:peer:identity', async () => {
   const idm = pearEnd.identity();

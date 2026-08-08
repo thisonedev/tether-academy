@@ -48,11 +48,114 @@ export interface AcademyModelsVerifyResult {
   recorded: number;
 }
 
+/** How much of the model's recommended minimums this hardware can meet. */
+export type AcademyModelFit = 'fits' | 'tight' | 'too-big';
+
+/** A model in the installable catalogue (may or may not be on disk yet). */
+export interface AcademyModelCatalogueEntry {
+  /** Filename under the cache root, e.g. `Qwen3-0.6B-Q4_0.gguf`. */
+  name: string;
+  /** Stable id used in `usedIn` lookups; same as `name` today. */
+  id: string;
+  /** Best-effort byte size for the download, 0 when unknown. */
+  sizeBytes: number;
+  /** Plain-language description from model-descriptions.json; empty when unregistered. */
+  description: string;
+  /** Lessons in CURRICULUM that need this model. */
+  usedIn: AcademyModelLessonRef[];
+  /** "chat" for instruction-tuned text models, anything else for embeddings/audio/etc. */
+  family: 'chat' | 'embedding' | 'audio' | 'image' | 'video' | 'other';
+  /** Recommended minimum free RAM in bytes; 0 when not modelled. */
+  minRamBytes: number;
+  /** 'preferred' when GPU noticeably speeds it up, 'optional' otherwise. */
+  gpu: 'preferred' | 'optional' | 'none';
+}
+
+export interface AcademyModelRecommendation {
+  /** Best pick for this lesson on this hardware. null when no chat model fits. */
+  pick: string | null;
+  /** All catalogue entries, in the order: fits > tight > too-big, then by minRam ascending. */
+  ranked: AcademyModelCatalogueEntry[];
+  /** Why the pick was made; surfaced in the UI. */
+  reason: 'lesson-requires' | 'hardware-fits-best' | 'no-chat-models' | 'no-hardware-info';
+}
+
 export interface AcademyModelsAPI {
   list: () => Promise<AcademyModelEntry[]>;
   remove: (id: string) => Promise<AcademyModelsRemoveResult>;
   removeAll: () => Promise<AcademyModelsRemoveResult>;
   verify: () => Promise<AcademyModelsVerifyResult>;
+  /** All installable models the host knows about, regardless of whether they're on disk. */
+  catalogue: () => Promise<AcademyModelCatalogueEntry[]>;
+  /** Best chat-model pick for the given chapter/lesson + the current device's hardware. */
+  recommend: (lessonKey: { chapter: string; lesson: string } | null) => Promise<AcademyModelRecommendation>;
+  /** All catalogue entries tagged for a given chapter/lesson, in display order. */
+  forLesson: (lessonKey: { chapter: string; lesson: string }) => Promise<AcademyModelCatalogueEntry[]>;
+}
+
+/** One message in a chat conversation. */
+export interface AcademyChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+/** Streamed chunk from a chat completion. The renderer appends `delta` to the last assistant message. */
+export interface AcademyChatChunk {
+  /** Per-call request id; matches the one returned by `chat.send`. */
+  requestId: string;
+  delta: string;
+  /** True when this is the last chunk for the request. */
+  done: boolean;
+  /** Error message if the call failed; `done` is also true. */
+  error: string | null;
+  /** When true, the renderer replaces the last assistant message with `delta` instead of appending.
+   *  Used by the host to swap streamed text for a post-processed version (e.g. paragraph-split). */
+  replace?: boolean;
+}
+
+/** Result of starting a chat completion. The actual response arrives via `onChunk` events. */
+export interface AcademyChatSendResult {
+  requestId: string;
+  /** Filename of the model the host loaded for this request. */
+  modelName: string;
+}
+
+export interface AcademyChatAPI {
+  /** True if a model is loaded and ready to answer. */
+  ready: () => Promise<boolean>;
+  /** Which model the host has loaded right now (its filename), or null. */
+  currentModel: () => Promise<string | null>;
+  /** The model selected in Settings, whether or not it is loaded in this process. */
+  configuredModel: () => Promise<string | null>;
+  /** Status of the cached QVAC SDK documentation the host may inject into prompts. */
+  docsStatus: () => Promise<{ available: boolean; source: string; bytes: number; expiresAt: number }>;
+  /** Force-refresh the cached QVAC SDK documentation; resolves with the new status. */
+  docsRefresh: () => Promise<{ ok: boolean; available: boolean; source: string; bytes: number; expiresAt: number }>;
+  /**
+   * Pre-load a chat model without sending a completion. Returns once the
+   * model is loaded (or throws if it can't be). Used by the picker when
+   * the user picks a model, so the chat phase opens clean and the first
+   * real message is the one the user types.
+   */
+  load: (modelHint: string) => Promise<{ modelName: string }>;
+  /**
+   * Send a chat completion. The host streams `delta` chunks back via `onChunk`.
+   * If no model is loaded, the host picks the smallest installed chat model
+   * automatically; pass `modelHint` to force a specific filename.
+   */
+  send: (payload: {
+    messages: AcademyChatMessage[];
+    lessonKey: { chapter: string; lesson: string } | null;
+    lessonReference?: string;
+    useFullDocs?: boolean;
+    modelHint?: string;
+  }) => Promise<AcademyChatSendResult>;
+  /** Cancel an in-flight request. Returns true if a request was actually cancelled. */
+  stop: (requestId: string) => Promise<boolean>;
+  /** Subscribe to chat chunks. Returns an unsubscribe function. */
+  onChunk: (callback: (chunk: AcademyChatChunk) => void) => () => void;
+  /** Subscribe to model-loading progress (for the first-run "downloading model" UI). */
+  onLoadProgress: (callback: (event: { modelName: string; loaded: number; total: number }) => void) => () => void;
 }
 
 export interface AcademyDeviceInfo {
@@ -346,6 +449,7 @@ export interface AcademyAPI {
   window?: AcademyWindowAPI;
   models?: AcademyModelsAPI;
   device?: AcademyDeviceAPI;
+  chat?: AcademyChatAPI;
   peer?: AcademyPeerAPI;
   identity?: AcademyIdentityAPI;
   clipboard?: AcademyClipboardAPI;
