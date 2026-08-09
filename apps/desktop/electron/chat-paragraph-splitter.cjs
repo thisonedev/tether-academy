@@ -97,6 +97,16 @@ function splitSentences(normalised) {
       i += 1;
       continue;
     }
+    // Fixed lookahead: nextSentenceEnd truncates before the marker's own period.
+    if (isListMarker(normalised.slice(peek, peek + 6))) {
+      i += 1;
+      continue;
+    }
+    // Lowercase next = mid-identifier, not a sentence end; must precede the force-break below.
+    if (!/[A-Z0-9]/.test(next)) {
+      i += 1;
+      continue;
+    }
     // Force a break past a long paragraph: a long sentence stays whole,
     // but the paragraph doesn't grow past it.
     if (buffer.trim().length >= MAX_PARAGRAPH_LEN) {
@@ -105,15 +115,7 @@ function splitSentences(normalised) {
       i = peek;
       continue;
     }
-    if (!/[A-Z0-9]/.test(next)) {
-      i += 1;
-      continue;
-    }
     const nextSentence = normalised.slice(peek, nextSentenceEnd(normalised, peek));
-    if (isListMarker(nextSentence)) {
-      i += 1;
-      continue;
-    }
     if (nextSentence.length < MIN_NEXT_LEN) {
       i += 1;
       continue;

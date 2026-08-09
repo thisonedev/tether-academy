@@ -103,6 +103,16 @@ test('splitParagraphs - does not treat a bare list numeral as a sentence end', (
   t.ok(!out.split('\n').some((line) => /^\d+\.$/.test(line.trim()) || /:\s*\d+\.$/.test(line.trim())));
 });
 
+test('splitParagraphs - keeps a numbered list together even past MAX_PARAGRAPH_LEN', (t) => {
+  // Regression: buffer used to cross the force-break length right at "3.".
+  const text = 'To complete this lesson, you need to: 1. Create a history array with one user message, like { role: "user", content: "Explain quantum computing in one sentence." }. 2. Call completion() with your modelId, the history array, and set stream: true to enable token streaming. 3. Iterate over the returned tokenStream using for await (const token of result.tokenStream) and write each token to stdout with process.stdout.write(token).';
+  const out = splitParagraphs(text);
+  t.is(out.split('\n\n').length, 1, 'the whole list stays in one paragraph');
+  const lines = out.split('\n');
+  t.ok(lines.some((l) => l.startsWith('3. Iterate')), '"3." starts its own line intact');
+  t.ok(!out.includes('result.\n') && !out.includes('result. '), 'does not break mid code identifier');
+});
+
 test('splitParagraphs - puts bulleted list items on their own line', (t) => {
   const text = 'Key features follow. - The SDK reads tool lists. - The mcp field wires the client.';
   const out = splitParagraphs(text);
