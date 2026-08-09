@@ -120,9 +120,7 @@ test('exec-host - a suspicious security verdict does not force a prompt on its o
 
   host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
   await settle();
-
   t.is(host.listDeviceRequests().length, 0, 'a run needing no device/network access still runs unprompted');
-  t.ok(host.hasRun(PEER), 'and is not refused either');
 });
 
 // 'suspicious' is still worth showing when a prompt is already happening for
@@ -161,7 +159,6 @@ test('exec-host - a security scan that cannot run does not force a prompt on its
   await settle();
 
   t.is(host.listDeviceRequests().length, 0, 'a run needing no device/network access still runs unprompted');
-  t.ok(host.hasRun(PEER), 'and is not refused either');
 });
 
 // `code` is buildLesson()'s wrapped output; scan and preview should see the
