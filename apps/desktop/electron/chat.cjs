@@ -225,6 +225,18 @@ function approxTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
+// Small local models sometimes pad an answer with a fake conversation recap
+// ("Turn 1: user asks: ..."). It isn't wrapped in <think>, so the thinking
+// filter never catches it; drop any paragraph that starts with the pattern.
+function stripTurnRecap(text) {
+  if (typeof text !== 'string' || text.length === 0) return text;
+  return text
+    .split(/\n{2,}/)
+    .filter((para) => !/^▸?\s*turn\s+\d+\s*:/i.test(para.trim()))
+    .join('\n\n')
+    .trim();
+}
+
 function approxContextWindow(filename) {
   // Earlier llama.cpp builds cap at 1024 unless `modelConfig.ctx_size` is
   // honored. The 0.6B preset keeps the 1024 default and the lesson
@@ -359,7 +371,7 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
       // Replace the whole assistant message with the paragraph-split version
       // so the user sees visible paragraph breaks even when the model emits
       // one run-on paragraph.
-      const finalised = splitParagraphs(assembled);
+      const finalised = splitParagraphs(stripTurnRecap(assembled));
       if (finalised.length > 0 && (finalised !== assembled || !emitted)) {
         emitChunk({ requestId, delta: finalised, done: false, replace: true, error: null });
       }

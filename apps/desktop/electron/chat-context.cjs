@@ -40,7 +40,7 @@ function buildSystemPrompt(lessonKey, lessonContext, docs) {
   const reference = trimDocs(docs);
   return [
     base,
-    'Answer the user directly and concisely. Use the references below when present; otherwise answer from general knowledge.',
+    'Answer the user directly and concisely. Use the references below only when the question is actually about the lesson or the SDK; for greetings, small talk, or anything unrelated, reply naturally and briefly instead of explaining the lesson.',
     'Do not invent names, tools, packages, protocols, APIs, or facts.',
     'If unsure, say so rather than guessing.',
     'Ignore typos and answer the intended question. Do not mention or correct spelling unless asked.',
