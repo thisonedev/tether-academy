@@ -932,10 +932,18 @@ if (!lock) {
         // already gone
       }
     }
-    pearEnd
-      .shutdown()
-      .catch((err) => console.warn('[tether-academy-desktop] shutdown error:', err?.message ?? err))
-      .finally(() => app.quit());
+    // The chat model's bare worker process is spawned by @qvac/sdk's
+    // loadModel and otherwise never torn down, leaking one orphaned process
+    // per session.
+    chat
+      .unload()
+      .catch((err) => console.warn('[tether-academy-desktop] chat unload error:', err?.message ?? err))
+      .finally(() => {
+        pearEnd
+          .shutdown()
+          .catch((err) => console.warn('[tether-academy-desktop] shutdown error:', err?.message ?? err))
+          .finally(() => app.quit());
+      });
   });
   // Ctrl+C sends SIGINT straight to this process. Node's default is to exit
   // immediately with no cleanup, which is how the processes above get
