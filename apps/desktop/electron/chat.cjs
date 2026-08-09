@@ -284,21 +284,24 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
 
   // Inject docs only when the user is asking about an API. The 12 KiB cap
   // leaves room for the lesson reference plus a multi-paragraph answer.
-  const wantsApiDetails = /(\b[A-Z][A-Z0-9_]{2,}|@[\w./-]+|\bclass\b|\bfunction\b|\bapi\b|\bmethod\b|\bmodule\b|\btype\b|\binterface\b)/.test(
-    (messages[messages.length - 1]?.content || ''),
-  );
+  const lastUserContent = messages[messages.length - 1]?.content || '';
+  const wantsApiDetails =
+    /(\b[A-Z][A-Z0-9_]{2,}|@[\w./-]+|\bclass\b|\bfunction\b|\bapi\b|\bmethod\b|\bmodule\b|\btype\b|\binterface\b)/.test(
+      lastUserContent,
+    ) || /\b(?:what'?s|what is|define|explain)\s+(?:an?\s+|the\s+)?[\w().'-]{1,24}\s*\??\s*$/i.test(lastUserContent.trim());
   const docsBudget = Math.floor(ctxWindow / 4);
   const docs = useFullDocs && wantsApiDetails
     ? (getCachedDocs() || (await refreshDocs().catch(() => null)) || null)
     : null;
   const docsCapped = docs ? docs.slice(0, docsBudget * 4) : null;
+  const docsWereRequested = useFullDocs && wantsApiDetails;
 
-  let systemPrompt = buildSystemPrompt(lessonKey, lessonContext, docsCapped);
+  let systemPrompt = buildSystemPrompt(lessonKey, lessonContext, docsCapped, docsWereRequested);
   if (approxTokens(systemPrompt) > ctxWindow - 200) {
-    systemPrompt = buildSystemPrompt(lessonKey, lessonContext, null);
+    systemPrompt = buildSystemPrompt(lessonKey, lessonContext, null, docsWereRequested);
   }
   if (approxTokens(systemPrompt) > ctxWindow - 200) {
-    systemPrompt = buildSystemPrompt(lessonKey, null, null);
+    systemPrompt = buildSystemPrompt(lessonKey, null, null, docsWereRequested);
   }
 
   // Send only the last user turn when the window is tight, to keep the

@@ -40,6 +40,17 @@ test('chat-context - the prompt stays under the 0.6B context window', (t) => {
   t.ok(Math.ceil(prompt.length / 4) < 256, 'bare prompt fits in < 256 tokens');
 });
 
+test('chat-context - the model is told when docs were requested but empty', (t) => {
+  const silent = buildSystemPrompt({ chapter: 'text-generation', lesson: 'mcp' }, null, null);
+  t.absent(/no sdk documentation is loaded/i.test(silent), 'no caveat when docs were never requested');
+
+  const flagged = buildSystemPrompt({ chapter: 'text-generation', lesson: 'mcp' }, null, null, true);
+  t.ok(/no sdk documentation is loaded/i.test(flagged), 'caveat present when a doc lookup was attempted and came back empty');
+
+  const withDocs = buildSystemPrompt({ chapter: 'text-generation', lesson: 'mcp' }, null, 'MCP lets you plug in tools.', true);
+  t.absent(/no sdk documentation is loaded/i.test(withDocs), 'no caveat once real docs are present');
+});
+
 test('chat-context - the prompt tells the model to refuse typo chiding', (t) => {
   const prompt = buildSystemPrompt(
     { chapter: 'text-generation', lesson: 'mcp' },

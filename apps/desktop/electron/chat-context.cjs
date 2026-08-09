@@ -30,7 +30,8 @@ function trimDocs(docs) {
   return docs.slice(0, MAX_DOCS_PROMPT_BYTES);
 }
 
-function buildSystemPrompt(lessonKey, lessonContext, docs) {
+// `docsWereRequested` is true when the turn looked like an API/doc question.
+function buildSystemPrompt(lessonKey, lessonContext, docs, docsWereRequested = false) {
   const base = lessonKey
     ? `You are a helpful assistant inside a Tether Academy lesson (chapter: ${lessonKey.chapter}, lesson: ${lessonKey.lesson}).`
     : 'You are a helpful assistant inside Tether Academy, an interactive code school.';
@@ -48,7 +49,11 @@ function buildSystemPrompt(lessonKey, lessonContext, docs) {
     'Format: plain text only. No Markdown, no asterisks, no backticks, no headings, no bullet points, no numbered lists, no code blocks. Use real words and complete sentences.',
     'Structure the answer as short paragraphs. Separate paragraphs with a single blank line. One idea per paragraph. Do not write one long run-on paragraph.',
     lesson ? `LESSON REFERENCE:\n${lesson}` : '',
-    reference ? `SDK DOCUMENTATION REFERENCE:\n${reference}` : '',
+    reference
+      ? `SDK DOCUMENTATION REFERENCE:\n${reference}`
+      : docsWereRequested
+        ? 'No SDK documentation is loaded for this turn. Say you do not have the docs loaded right now rather than claiming something is undocumented.'
+        : '',
   ].filter(Boolean).join('\n');
 }
 
