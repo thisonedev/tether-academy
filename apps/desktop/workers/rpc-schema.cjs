@@ -112,6 +112,8 @@ const SCHEMAS = {
       object({
         network: optional(isString),
         device: optional(arrayOf(isString)),
+        lessonReference: optional(isString),
+        rawSource: optional(isString),
       }),
     ),
   }),

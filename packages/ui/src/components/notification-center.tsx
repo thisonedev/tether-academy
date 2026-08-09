@@ -117,32 +117,52 @@ function DeviceConsentRow({
   request: AcademyPeerDeviceRequest;
   onAnswer: (requestId: string, approved: boolean) => void;
 }) {
+  const hasAccessAsk = request.devices.length > 0 || !!request.network;
   const asks = consentAsks(request);
   const what = request.label ? `"${request.label}"` : 'A run';
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2.5 text-sm backdrop-blur">
-      <div className="min-w-0 flex-1 text-canvas-foreground">
-        <span className="font-medium">{what}</span> wants to use{' '}
-        <span className="font-medium">{asks}</span>
-        {request.network ? <span className="text-canvas-muted-foreground"> — {request.network}</span> : null}. It
-        stays blocked until you answer, and nothing is recorded or sent unless you allow it.
+    <div className="flex flex-col gap-2 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2.5 text-sm backdrop-blur">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 text-canvas-foreground">
+          {hasAccessAsk ? (
+            <>
+              <span className="font-medium">{what}</span> wants to use{' '}
+              <span className="font-medium">{asks}</span>
+              {request.network ? <span className="text-canvas-muted-foreground"> ({request.network})</span> : null}.{' '}
+            </>
+          ) : (
+            <span className="font-medium">{what}</span>
+          )}
+          {!hasAccessAsk && ' is waiting to run on this device. '}
+          It stays blocked until you answer, and nothing is recorded or sent unless you allow it.
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onAnswer(request.requestId, false)}
+            className="rounded-md border border-canvas-border px-3 py-1 text-canvas-foreground hover:bg-canvas-muted"
+          >
+            Deny
+          </button>
+          <button
+            type="button"
+            onClick={() => onAnswer(request.requestId, true)}
+            className="rounded-md bg-amber-500 px-3 py-1 font-medium text-black hover:bg-amber-400"
+          >
+            {hasAccessAsk ? `Allow ${asks}` : 'Allow'}
+          </button>
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onAnswer(request.requestId, false)}
-          className="rounded-md border border-canvas-border px-3 py-1 text-canvas-foreground hover:bg-canvas-muted"
-        >
-          Deny
-        </button>
-        <button
-          type="button"
-          onClick={() => onAnswer(request.requestId, true)}
-          className="rounded-md bg-amber-500 px-3 py-1 font-medium text-black hover:bg-amber-400"
-        >
-          Allow {asks}
-        </button>
-      </div>
+      {request.sourcePreview ? (
+        <details className="text-canvas-muted-foreground">
+          <summary className="cursor-pointer select-none text-canvas-foreground hover:underline">
+            View code
+          </summary>
+          <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-canvas-muted p-2 text-xs text-canvas-foreground">
+            {request.sourcePreview}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -277,6 +297,9 @@ export type RunNotice = {
   status: string;
   startedAt: number;
   endedAt: number | null;
+  /** Set on the 'started' event; carried forward through later updates
+   *  (finished/error events don't repeat it) so "View code" survives the run. */
+  sourcePreview?: string;
 };
 
 // Long enough to read after the run ends, short enough not to pile up.
@@ -336,7 +359,14 @@ export function useRunNotices() {
       setItems((prev) => {
         const rest = prev.filter((r) => r.id !== notice.id);
         const previous = prev.find((r) => r.id === notice.id);
-        return [...rest, { ...notice, startedAt: previous?.startedAt ?? notice.startedAt }];
+        return [
+          ...rest,
+          {
+            ...notice,
+            startedAt: previous?.startedAt ?? notice.startedAt,
+            sourcePreview: notice.sourcePreview ?? previous?.sourcePreview,
+          },
+        ];
       });
       if (notice.endedAt != null) scheduleDismiss(notice.id);
     });
@@ -374,6 +404,7 @@ function noticeFor(entry: AcademyPeerAuditEntry): RunNotice | null {
         direction: 'incoming',
         tone: 'running',
         status: 'Running',
+        sourcePreview: entry.sourcePreview,
       };
     case 'peer:exec:remote-started':
       return {
@@ -470,24 +501,36 @@ export function RunRow({
     );
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-canvas-border bg-canvas-muted/95 px-2 py-2 text-sm backdrop-blur">
-      {run.tone === 'running' ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-sky-400" />
-      ) : null}
-      <div className="min-w-0 flex-1 text-canvas-foreground">
-        {sentence}
-        {run.label ? <span className="text-canvas-muted-foreground"> · {run.label}</span> : null}
+    <div className="flex flex-col gap-1 border-b border-canvas-border bg-canvas-muted/95 px-2 py-2 text-sm backdrop-blur">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {run.tone === 'running' ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-sky-400" />
+        ) : null}
+        <div className="min-w-0 flex-1 text-canvas-foreground">
+          {sentence}
+          {run.label ? <span className="text-canvas-muted-foreground"> · {run.label}</span> : null}
+        </div>
+        <span className={`shrink-0 font-medium ${runToneClass(run.tone)}`}>{run.status}</span>
+        <span className="shrink-0 text-xs text-canvas-muted-foreground">{elapsed}</span>
+        <button
+          type="button"
+          onClick={() => onDismiss(run.id)}
+          aria-label="Dismiss"
+          className="shrink-0 rounded p-1 text-canvas-muted-foreground transition-colors hover:bg-canvas hover:text-canvas-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
       </div>
-      <span className={`shrink-0 font-medium ${runToneClass(run.tone)}`}>{run.status}</span>
-      <span className="shrink-0 text-xs text-canvas-muted-foreground">{elapsed}</span>
-      <button
-        type="button"
-        onClick={() => onDismiss(run.id)}
-        aria-label="Dismiss"
-        className="shrink-0 rounded p-1 text-canvas-muted-foreground transition-colors hover:bg-canvas hover:text-canvas-foreground"
-      >
-        <X className="size-3.5" />
-      </button>
+      {run.sourcePreview ? (
+        <details className="font-mono text-xs text-canvas-muted-foreground">
+          <summary className="cursor-pointer select-none hover:text-canvas-foreground hover:underline">
+            View code
+          </summary>
+          <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-canvas p-2 text-canvas-foreground">
+            {run.sourcePreview}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }

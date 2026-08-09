@@ -40,6 +40,8 @@ export const academyRunPayloadSchema = z.object({
   label: z.string().max(200).optional(),
   /** Temp file name on the host. Internal; must be a safe basename. */
   fileName: fileNameSchema,
+  /** Forwarded to a paired peer as `declared.lessonReference`. Only meaningful with `peerId`. */
+  lessonReference: z.string().max(8_000).optional(),
 });
 
 export const academyRunResultSchema = z.object({
@@ -305,7 +307,20 @@ export const chatVerifySchema = z
     tests: z.array(chatVerifyTestSchema).min(1).max(32),
     lessonKey: chatLessonKeySchema,
     lessonReference: chatLessonReferenceSchema,
+    /** Canonical solution; omitted for lessons with no vendored answer file. */
+    answer: z.string().max(20_000).optional(),
     /** Filename of the catalogue model to grade with; omitted uses whatever the host already has loaded/configured. */
+    modelHint: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+/** Payload for the pre-flight security scan a submission gets before it may
+ *  ship to a paired device. Mirrors chatVerifySchema minus the checklist. */
+export const chatSecuritySchema = z
+  .object({
+    code: z.string().min(1).max(20_000),
+    lessonKey: chatLessonKeySchema,
+    lessonReference: chatLessonReferenceSchema,
     modelHint: z.string().min(1).max(256).optional(),
   })
   .strict();

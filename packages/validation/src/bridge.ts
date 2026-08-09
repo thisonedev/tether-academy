@@ -120,19 +120,24 @@ export interface AcademyChatSendResult {
   modelName: string;
 }
 
-/** Per-checklist-item grade from the AI verification pass. 'unknown' means the model's
- *  response didn't cover this item (parse mismatch, not a real judgment). */
-export type ChatVerifyVerdict = 'pass' | 'partial' | 'fail' | 'unknown';
+/**
+ * Whole-submission verdict from the AI review pass; only reached once a
+ * client-side match check already found a real difference.
+ * - 'complete': functionally finished and correct, just written differently.
+ * - 'different-but-valid': a genuine alternate approach that still satisfies the lesson.
+ * - 'unfinished': started but not done (stub, TODO, partial logic).
+ * - 'wrong': attempted fully but incorrect or off-task.
+ */
+export type ChatVerifyVerdict = 'complete' | 'different-but-valid' | 'unfinished' | 'wrong';
 
-export interface ChatVerifyItemResult {
-  id: string;
-  verdict: ChatVerifyVerdict;
-  reason: string;
-}
+/** `ChatVerifyVerdict` plus the client-only 'match' value for an exact
+ *  match, which never calls the AI. */
+export type MatchStatus = ChatVerifyVerdict | 'match';
 
 export interface ChatVerifyResult {
-  items: ChatVerifyItemResult[];
-  summary: string;
+  verdict: ChatVerifyVerdict;
+  /** One to a few sentences. Empty is valid for 'complete' when there's nothing more to say. */
+  reason: string;
 }
 
 /** Delivered once via `onVerifyResult`, keyed by the `requestId` `chat.verify` returned.
@@ -143,6 +148,28 @@ export interface AcademyChatVerifyChunk {
   /** Error message if the call failed or the model's output couldn't be parsed; `result` is null in that case. */
   error: string | null;
   result: ChatVerifyResult | null;
+}
+
+/** Verdict from the pre-flight security scan; only 'malicious' blocks a run. */
+export type SecurityVerdict = 'clean' | 'suspicious' | 'malicious';
+
+export interface ChatSecurityConcern {
+  summary: string;
+  /** Short excerpt of the code the concern is about, for the human reviewing it. */
+  snippet: string;
+}
+
+export interface ChatSecurityResult {
+  verdict: SecurityVerdict;
+  concerns: ChatSecurityConcern[];
+}
+
+/** Delivered once via `onSecurityResult`, keyed by the `requestId` `chat.securityScan` returned. */
+export interface AcademyChatSecurityChunk {
+  requestId: string;
+  done: true;
+  error: string | null;
+  result: ChatSecurityResult | null;
 }
 
 export interface AcademyChatAPI {
@@ -185,6 +212,16 @@ export interface AcademyChatAPI {
     tests: Array<{ id: string; description: string }>;
     lessonKey: { chapter: string; lesson: string } | null;
     lessonReference?: string;
+    /** Canonical solution, so the grader judges functional equivalence rather than keyword coverage alone. */
+    answer?: string;
+    modelHint?: string;
+  }) => Promise<AcademyChatSendResult>;
+  /** Pre-flight scan before a submission ships to a paired device; verdict
+   *  arrives once via `onSecurityResult`. */
+  securityScan: (payload: {
+    code: string;
+    lessonKey: { chapter: string; lesson: string } | null;
+    lessonReference?: string;
     modelHint?: string;
   }) => Promise<AcademyChatSendResult>;
   /** Cancel an in-flight request. Returns true if a request was actually cancelled. */
@@ -193,6 +230,8 @@ export interface AcademyChatAPI {
   onChunk: (callback: (chunk: AcademyChatChunk) => void) => () => void;
   /** Subscribe to verify results. Returns an unsubscribe function. */
   onVerifyResult: (callback: (chunk: AcademyChatVerifyChunk) => void) => () => void;
+  /** Subscribe to security scan results. Returns an unsubscribe function. */
+  onSecurityResult: (callback: (chunk: AcademyChatSecurityChunk) => void) => () => void;
   /** Subscribe to model-loading progress (for the first-run "downloading model" UI). */
   onLoadProgress: (callback: (event: { modelName: string; loaded: number; total: number }) => void) => () => void;
 }
@@ -289,6 +328,9 @@ export interface AcademyPeerAuditEntry {
   identityVerified?: boolean;
   /** On a host-identity-mismatch rejection: what the invite link claimed. */
   claimed?: string;
+  /** Code preview, local-only. Named `sourcePreview` since `code` above
+   *  already means the process exit code. */
+  sourcePreview?: string;
 }
 
 export interface AcademyPeerIdentity {
@@ -440,6 +482,12 @@ export interface AcademyPeerDeviceRequest {
   label: string | null;
   userData: unknown;
   requestedAt: number;
+  /** Findings from the security scan, when it ran and found something worth a
+   *  second look (including "scan unavailable on this device"). Empty when clean. */
+  concerns?: string[];
+  /** The code about to run, capped to a preview length, so the human approving
+   *  device/network access (or a scan-unavailable flag) can read it first. */
+  sourcePreview?: string;
 }
 
 export interface AcademyPeerAPI {

@@ -7,7 +7,7 @@
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { createThinkingFilter } = require('./chat-thinking-filter.cjs');
-const { buildSystemPrompt, buildVerifySystemPrompt } = require('./chat-context.cjs');
+const { buildSystemPrompt, buildVerifySystemPrompt, buildSecuritySystemPrompt } = require('./chat-context.cjs');
 const { refreshDocs, getCachedDocs } = require('./chat-docs.cjs');
 const { createMarkdownStripper } = require('./chat-strip-markdown.cjs');
 const { splitParagraphs } = require('./chat-paragraph-splitter.cjs');
@@ -402,48 +402,41 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
   return { requestId, modelName: current.filename };
 }
 
-const VERIFY_VERDICTS = new Set(['pass', 'partial', 'fail']);
+const VERIFY_VERDICTS = new Set(['complete', 'different-but-valid', 'unfinished', 'wrong']);
 
 // Extracts the model's JSON verdict from its raw text output (some local
 // models wrap JSON in prose or markdown fences despite instructions not to).
-// Returns null on any shape mismatch; the caller reports that as an error
-// rather than showing a mis-parsed result.
-function parseVerifyResponse(text, tests) {
+// Returns null on any shape mismatch or unrecognized verdict; the caller
+// reports that as an error rather than showing a mis-parsed result.
+function parseVerifyResponse(text) {
   if (typeof text !== 'string' || text.length === 0) return null;
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
+  let parsed = null;
+  if (start !== -1 && end !== -1 && end > start) {
+    try {
+      parsed = JSON.parse(text.slice(start, end + 1));
+    } catch {
+      parsed = null;
+    }
   }
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) return null;
-
-  // Whitelist against the tests we actually sent; the model's ids are
-  // untrusted input, and mismatched/duplicate/extra ids are silently dropped.
-  const knownIds = new Set(tests.map((t) => t.id));
-  const byId = new Map();
-  for (const raw of parsed.items) {
-    if (!raw || typeof raw !== 'object') continue;
-    const id = typeof raw.id === 'string' ? raw.id : null;
-    if (!id || !knownIds.has(id)) continue;
-    const verdict = VERIFY_VERDICTS.has(raw.verdict) ? raw.verdict : 'unknown';
-    const reason = typeof raw.reason === 'string' ? raw.reason.slice(0, 500) : '';
-    byId.set(id, { id, verdict, reason });
+  if (!parsed || typeof parsed !== 'object') {
+    // A cutoff mid-generation usually still leaves the verdict field intact
+    // even when reason trails off unterminated; recover it directly.
+    const verdictMatch = /"verdict"\s*:\s*"([a-z-]+)"/.exec(text);
+    if (!verdictMatch) return null;
+    const reasonMatch = /"reason"\s*:\s*"([^"]*)/.exec(text);
+    parsed = { verdict: verdictMatch[1], reason: reasonMatch ? reasonMatch[1] : '' };
   }
-  const items = tests.map(
-    (t) => byId.get(t.id) ?? { id: t.id, verdict: 'unknown', reason: 'The AI did not evaluate this item.' },
-  );
-  const summary = typeof parsed.summary === 'string' ? parsed.summary.slice(0, 1000) : '';
-  return { items, summary };
+  if (!VERIFY_VERDICTS.has(parsed.verdict)) return null;
+  const reason = typeof parsed.reason === 'string' ? parsed.reason.slice(0, 500) : '';
+  return { verdict: parsed.verdict, reason };
 }
 
 // Semantic grading pass on top of the lesson's regex/contains checks. Only
 // called once those already pass, so this judges whether the code is
 // actually correct rather than merely containing the right keywords.
-async function verify({ code, tests, lessonKey, lessonReference, modelHint }) {
+async function verify({ code, tests, lessonKey, lessonReference, answer, modelHint }) {
   const sdk = require('@qvac/sdk');
   if (typeof sdk.completion !== 'function') {
     throw new Error('@qvac/sdk does not export completion in this build');
@@ -452,23 +445,41 @@ async function verify({ code, tests, lessonKey, lessonReference, modelHint }) {
   const requestId = newRequestId();
   const modelName = await resolveModel(modelHint);
   const ctxWindow = approxContextWindow(modelName);
-  // Reasoning models (the Qwen3 presets all think by default) can spend
-  // most of a small budget inside <think>...</think> before ever reaching
-  // the JSON answer; if predict runs out first, chat-thinking-filter.cjs
-  // discards the whole in-progress thinking block and parseVerifyResponse
-  // gets nothing. Half the context window gives real room for both.
-  const predictBudget = Math.max(300, Math.floor(ctxWindow / 2));
+  // Target output is one short verdict now, not a whole checklist, so a
+  // third of the window covers thinking + answer with less reserved than before.
+  const predictBudget = Math.max(250, Math.floor(ctxWindow / 3));
 
-  const lessonBudget = Math.max(64, Math.floor((ctxWindow - predictBudget) / 4));
-  const lessonContext =
-    typeof lessonReference === 'string' && lessonReference.length > 0
-      ? { content: lessonReference.slice(0, lessonBudget * 4) }
-      : null;
+  // Minimum code budget worth sending; below this the request isn't useful.
+  const MIN_CODE_BUDGET = 200;
+  const maxPromptTokens = Math.max(0, ctxWindow - predictBudget - MIN_CODE_BUDGET);
 
-  const systemPrompt = buildVerifySystemPrompt(lessonKey, lessonContext, tests);
+  // The answer gets first claim on the budget; splitting evenly with the
+  // lesson description used to truncate long answers to a couple of import lines.
+  const hasLessonRef = typeof lessonReference === 'string' && lessonReference.length > 0;
+  const hasAnswer = typeof answer === 'string' && answer.length > 0;
+  let lessonContext = null;
+  let answerCapped = null;
+  if (hasAnswer) {
+    const answerShare = Math.min(maxPromptTokens, Math.max(64, Math.ceil(answer.length / 4)));
+    answerCapped = answer.slice(0, answerShare * 4);
+  } else if (hasLessonRef) {
+    const lessonShare = Math.max(64, Math.floor(maxPromptTokens / 2));
+    lessonContext = { content: lessonReference.slice(0, lessonShare * 4) };
+  }
+
+  let systemPrompt = buildVerifySystemPrompt(lessonKey, lessonContext, tests, answerCapped);
+  if (approxTokens(systemPrompt) > maxPromptTokens && answerCapped) {
+    // A genuinely large answer: shrink further rather than dropping to null.
+    const shrinkTo = Math.max(64, Math.floor(maxPromptTokens * 0.7));
+    systemPrompt = buildVerifySystemPrompt(lessonKey, null, tests, answerCapped.slice(0, shrinkTo * 4));
+  }
+  if (approxTokens(systemPrompt) > maxPromptTokens) {
+    // Last resort: nothing fits; grade against the checklist descriptions alone.
+    systemPrompt = buildVerifySystemPrompt(lessonKey, null, tests, null);
+  }
   const promptTokens = approxTokens(systemPrompt);
   // Headroom matches predictBudget so prompt + response actually fit ctxWindow.
-  const codeBudget = Math.max(200, ctxWindow - promptTokens - predictBudget);
+  const codeBudget = Math.max(MIN_CODE_BUDGET, ctxWindow - promptTokens - predictBudget);
   const codeCapped = code.slice(0, codeBudget * 4);
 
   const history = [
@@ -479,9 +490,8 @@ async function verify({ code, tests, lessonKey, lessonReference, modelHint }) {
   const controller = new AbortController();
   inflight.set(requestId, controller);
 
-  // Unlike send(), the renderer doesn't need token-by-token text — only the
-  // final structured verdict — so deltas are collected silently and only
-  // the assembled result is emitted, once, via a dedicated event.
+  // Unlike send(), only the final verdict matters, so deltas are collected
+  // silently and emitted once via a dedicated event.
   (async () => {
     const thinkingFilter = createThinkingFilter();
     let assembled = '';
@@ -506,7 +516,7 @@ async function verify({ code, tests, lessonKey, lessonReference, modelHint }) {
         }
       }
       assembled += thinkingFilter.flush();
-      const parsed = parseVerifyResponse(assembled, tests);
+      const parsed = parseVerifyResponse(assembled);
       if (!parsed) {
         emitVerifyResult({
           requestId,
@@ -537,6 +547,123 @@ function onVerifyResult(callback) {
   return () => events.off('verifyResult', callback);
 }
 
+const SECURITY_VERDICTS = new Set(['clean', 'suspicious', 'malicious']);
+const MAX_SECURITY_CONCERNS = 10;
+
+// A shape mismatch returns null rather than coercing to "clean", so a parse
+// failure never looks like a real verdict.
+function parseSecurityResponse(text) {
+  if (typeof text !== 'string' || text.length === 0) return null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || !SECURITY_VERDICTS.has(parsed.verdict)) return null;
+  const rawConcerns = Array.isArray(parsed.concerns) ? parsed.concerns : [];
+  const concerns = rawConcerns
+    .filter((c) => c && typeof c === 'object' && typeof c.summary === 'string')
+    .slice(0, MAX_SECURITY_CONCERNS)
+    .map((c) => ({
+      summary: c.summary.slice(0, 300),
+      snippet: typeof c.snippet === 'string' ? c.snippet.slice(0, 300) : '',
+    }));
+  return { verdict: parsed.verdict, concerns };
+}
+
+// One completion call, parsed to a verdict. Wrapped by securityScan() below,
+// and called directly by peer exec-host.cjs via the worker-client.cjs RPC bridge.
+async function runSecurityScan({ code, lessonKey, lessonReference, modelHint }) {
+  const sdk = require('@qvac/sdk');
+  if (typeof sdk.completion !== 'function') {
+    throw new Error('@qvac/sdk does not export completion in this build');
+  }
+
+  const modelName = await resolveModel(modelHint);
+  const ctxWindow = approxContextWindow(modelName);
+  const predictBudget = Math.max(300, Math.floor(ctxWindow / 2));
+
+  const lessonBudget = Math.max(64, Math.floor((ctxWindow - predictBudget) / 4));
+  const lessonContext =
+    typeof lessonReference === 'string' && lessonReference.length > 0
+      ? { content: lessonReference.slice(0, lessonBudget * 4) }
+      : null;
+
+  const systemPrompt = buildSecuritySystemPrompt(lessonKey, lessonContext);
+  const promptTokens = approxTokens(systemPrompt);
+  const codeBudget = Math.max(200, ctxWindow - promptTokens - predictBudget);
+  const codeCapped = code.slice(0, codeBudget * 4);
+
+  const history = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `STUDENT CODE:\n${codeCapped}` },
+  ];
+
+  const thinkingFilter = createThinkingFilter();
+  let assembled = '';
+  const result = sdk.completion({
+    modelId: current.modelId,
+    history,
+    stream: true,
+    captureThinking: false,
+    generationParams: { predict: predictBudget, temp: 0.2 },
+  });
+  for await (const event of result.events) {
+    if (!event || typeof event !== 'object') continue;
+    const type = event.type;
+    if ((type === 'contentDelta' || type === 'rawDelta') && typeof event.text === 'string' && event.text.length > 0) {
+      assembled += thinkingFilter.push(event.text);
+    } else if (type === 'toolError' && typeof event.error === 'string') {
+      throw new Error(`tool error: ${event.error}`);
+    }
+  }
+  assembled += thinkingFilter.flush();
+  const parsed = parseSecurityResponse(assembled);
+  if (!parsed) {
+    throw new Error('The AI security reviewer returned an unexpected response.');
+  }
+  return { modelName, result: parsed };
+}
+
+// IPC-facing wrapper mirroring verify(): returns immediately with a
+// requestId, the actual verdict arrives once via onSecurityResult.
+async function securityScan({ code, lessonKey, lessonReference, modelHint }) {
+  const requestId = newRequestId();
+  const controller = new AbortController();
+  inflight.set(requestId, controller);
+
+  let modelName = current.filename;
+  (async () => {
+    try {
+      const outcome = await runSecurityScan({ code, lessonKey, lessonReference, modelHint });
+      modelName = outcome.modelName;
+      if (controller.signal.aborted) return;
+      emitSecurityResult({ requestId, done: true, error: null, result: outcome.result });
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const message = err instanceof Error ? err.message : String(err);
+      emitSecurityResult({ requestId, done: true, error: message, result: null });
+    } finally {
+      inflight.delete(requestId);
+    }
+  })();
+
+  return { requestId, modelName };
+}
+
+function emitSecurityResult(payload) {
+  events.emit('securityResult', payload);
+}
+
+function onSecurityResult(callback) {
+  events.on('securityResult', callback);
+  return () => events.off('securityResult', callback);
+}
+
 function stop(requestId) {
   const controller = inflight.get(requestId);
   if (!controller) return false;
@@ -561,9 +688,13 @@ module.exports = {
   load,
   send,
   verify,
+  securityScan,
+  // Called by electron/pear-end/worker-client.cjs, which bridges it to the pear-end worker.
+  runSecurityScan,
   stop,
   onChunk,
   onVerifyResult,
+  onSecurityResult,
   onLoadProgress,
   unload,
   docsStatus: () => docsStatusFromCache(),
@@ -573,6 +704,7 @@ module.exports = {
   },
   // Exposed for tests.
   _inflight: inflight,
+  parseVerifyResponse,
 };
 
 function docsStatusFromCache() {

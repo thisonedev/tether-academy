@@ -74,6 +74,18 @@ function buildMainRouter() {
     emitter?.emit('error', new Error(error?.message || 'exec error'));
     return toJson({ ok: true });
   });
+  // The worker (Bare, no @qvac/sdk) asks main to run the actual peer-exec
+  // security scan, since chat.cjs's model machinery only exists here.
+  router.respond(CMD.SECURITY_SCAN, async (_req, data) => {
+    try {
+      const chat = require('../chat.cjs');
+      const payload = fromJson(data) || {};
+      const result = await chat.runSecurityScan(payload);
+      return toJson({ ok: true, result });
+    } catch (err) {
+      return toJson({ ok: false, error: { message: err?.message || String(err) } });
+    }
+  });
   return router;
 }
 

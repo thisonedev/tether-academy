@@ -28,4 +28,5 @@ module.exports = {
   EXEC_CHUNK: 102,
   EXEC_EXIT: 103,
   EXEC_ERROR: 104,
+  SECURITY_SCAN: 105,
 };

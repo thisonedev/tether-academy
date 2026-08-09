@@ -1159,6 +1159,9 @@ type ExecRunRow = {
   tone: 'running' | 'ok' | 'err' | 'info';
   ts: number;
   duration: string | null;
+  /** Set on the 'started' row so a run is inspectable even when it never
+   *  triggered a device/network consent prompt. */
+  sourcePreview?: string;
 };
 
 function useExecRunRows(peer: AcademyPeerInfo, audit: AcademyPeerAuditEntry[]): ExecRunRow[] {
@@ -1183,7 +1186,14 @@ function useExecRunRows(peer: AcademyPeerInfo, audit: AcademyPeerAuditEntry[]): 
       if (isStarted) {
         openStartByRun.set(`run-${runIndex}`, e.timestamp);
         const { text, tone } = execEventLabel(e, peer.role, peerName);
-        result.push({ key: `start-${e.timestamp}-${runIndex}`, label: text, tone, ts: e.timestamp, duration: null });
+        result.push({
+          key: `start-${e.timestamp}-${runIndex}`,
+          label: text,
+          tone,
+          ts: e.timestamp,
+          duration: null,
+          sourcePreview: e.sourcePreview,
+        });
         runIndex += 1;
         continue;
       }
@@ -1238,6 +1248,14 @@ export function ExecRunList({
             {row.duration ? ` · ${row.duration}` : ''}
           </div>
           <div className={execEventToneClass(row.tone)}>{row.label}</div>
+          {row.sourcePreview ? (
+            <details>
+              <summary className="cursor-pointer select-none hover:underline">View code</summary>
+              <pre className="mt-1 max-h-48 overflow-auto rounded bg-canvas-border/40 p-2 text-canvas-foreground">
+                {row.sourcePreview}
+              </pre>
+            </details>
+          ) : null}
         </li>
       ))}
     </ul>

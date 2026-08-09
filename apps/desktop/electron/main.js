@@ -218,6 +218,13 @@ async function runAcademy(parsed, evt) {
         label: parsed.label || null,
         argv: parsed.argv ?? [],
         cwd: COURSES_DIR,
+        // Hint only, for the receiver's security scan and code preview; the
+        // structural checks stay authoritative against the wrapped `code` above.
+        declared: {
+          ...(parsed.lessonReference ? { lessonReference: parsed.lessonReference } : {}),
+          // Pre-buildLesson() source, so review sees what was written.
+          rawSource: parsed.source,
+        },
       });
     } catch (err) {
       return { ok: false, output: `[peer-exec] ${formatRunError(err)}` };
@@ -465,6 +472,16 @@ handle('academy:chat:verify', async (parsed) => {
     tests: parsed.tests,
     lessonKey: parsed.lessonKey,
     lessonReference: parsed.lessonReference,
+    answer: parsed.answer,
+    modelHint: parsed.modelHint,
+  });
+  return result;
+});
+handle('academy:chat:security-scan', async (parsed) => {
+  const result = await chat.securityScan({
+    code: parsed.code,
+    lessonKey: parsed.lessonKey,
+    lessonReference: parsed.lessonReference,
     modelHint: parsed.modelHint,
   });
   return result;
@@ -481,6 +498,7 @@ handle('academy:device:info', async () => getDeviceInfo());
 // late subscribers pick up chunks from any in-flight requests.
 chat.onChunk((chunk) => sendToAll('academy:chat:chunk', chunk));
 chat.onVerifyResult((result) => sendToAll('academy:chat:verify-result', result));
+chat.onSecurityResult((result) => sendToAll('academy:chat:security-result', result));
 chat.onLoadProgress((progress) => sendToAll('academy:chat:load-progress', progress));
 
 handle('academy:peer:identity', async () => {

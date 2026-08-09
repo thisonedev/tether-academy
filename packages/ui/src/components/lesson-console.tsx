@@ -1,7 +1,7 @@
 'use client';
 
-import type { AcademyChatChunk, AcademyChatMessage, ChatVerifyVerdict } from '@academy/validation';
-import { AlertTriangle, ArrowUp, Check, ChevronDown, Loader2, Square, X } from 'lucide-react';
+import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
+import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { OutputLine } from './lesson-workspace.js';
 
@@ -18,23 +18,27 @@ export interface ConsoleCheckResult {
   passed: boolean;
 }
 
-export interface ConsoleCheckAiItem {
-  verdict: ChatVerifyVerdict;
-  reason: string;
-}
-
 /** One block in the timeline: chat bubble, run card, or check card. */
 export type ConsoleEntry =
   | { kind: 'chat-user'; id: string; content: string }
   | { kind: 'chat-assistant'; id: string; content: string; streaming: boolean }
-  | { kind: 'run'; id: string; lines: OutputLine[]; status: 'running' | 'ok' | 'err' | 'stopped' }
+  | {
+      kind: 'run';
+      id: string;
+      lines: OutputLine[];
+      status: 'running' | 'ok' | 'err' | 'stopped';
+      /** Paired device's display name; unset/null means this device. */
+      deviceLabel?: string | null;
+    }
   | {
       kind: 'check';
       id: string;
       structural: ConsoleCheckResult[];
       ai: 'idle' | 'loading' | 'done' | 'error' | 'unavailable';
-      aiItems?: Record<string, ConsoleCheckAiItem>;
-      aiSummary?: string;
+      /** 'match' means a formatting-only comparison against the answer
+       *  matched, decided client-side without calling the AI. */
+      aiVerdict?: MatchStatus;
+      aiReason?: string;
       aiError?: string;
     };
 
@@ -171,7 +175,6 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
           <TimelineRow key={entry.id}>
             <div className="space-y-2">
               <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
-              {entry.ai === 'done' && entry.aiSummary ? <AssistantBubble content={entry.aiSummary} /> : null}
             </div>
           </TimelineRow>
         );
@@ -539,6 +542,28 @@ function AssistantBubble({ content }: { content: string }) {
   return <p className="whitespace-pre-wrap px-1 font-mono text-xs text-canvas-muted-foreground">{content}</p>;
 }
 
+// Label shown for each whole-submission verdict. 'match' is set client-side
+// (no AI call); the rest come from the AI's own reply.
+const VERDICT_WORD: Record<MatchStatus, string> = {
+  match: 'Matches',
+  complete: 'Complete',
+  'different-but-valid': 'Valid',
+  unfinished: 'Unfinished',
+  wrong: 'Not right yet',
+};
+
+// Bare period for anything the AI grades; a fixed filler phrase would
+// drown out the AI's own one-sentence reason, which carries the real detail.
+const VERDICT_REST: Record<MatchStatus, string> = {
+  match: ' the reference solution.',
+  complete: '.',
+  'different-but-valid': '.',
+  unfinished: '.',
+  wrong: '.',
+};
+
+const PASSING_VERDICTS = new Set<MatchStatus>(['match', 'complete', 'different-but-valid']);
+
 function CheckCard({
   entry,
   onStop,
@@ -546,38 +571,45 @@ function CheckCard({
   entry: Extract<ConsoleEntry, { kind: 'check' }>;
   onStop: () => void;
 }) {
+  const verdictPassed = entry.aiVerdict ? PASSING_VERDICTS.has(entry.aiVerdict) : false;
   return (
     <EntryCard label="check">
-      <div className="px-3 py-2.5">
+      <div className="px-3 py-2.5 font-mono text-xs">
       <ul className="space-y-1.5">
-        {entry.structural.map((r) => {
-          const aiItem = entry.aiItems?.[r.id];
-          const flagged = r.passed && entry.ai === 'done' && aiItem && aiItem.verdict !== 'pass';
-          return (
-            <li key={r.id}>
-              <div className="flex items-start gap-2">
-                <span
-                  className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm border ${
-                    r.passed
-                      ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-400'
-                      : 'border-canvas-border text-canvas-muted-foreground'
-                  }`}
-                >
-                  {r.passed ? <Check className="size-3" /> : <X className="size-3" />}
-                </span>
-                <span className={r.passed ? 'text-canvas-foreground' : 'text-canvas-muted-foreground'}>
-                  {r.description}
-                </span>
-              </div>
-              {flagged ? (
-                <div className="ml-6 mt-1 flex items-start gap-1.5 text-xs text-amber-400">
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                  <span>{aiItem.reason}</span>
-                </div>
-              ) : null}
-            </li>
-          );
-        })}
+        {entry.structural.map((r) => (
+          <li key={r.id} className="flex items-start gap-2">
+            <span
+              className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm border ${
+                r.passed
+                  ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-400'
+                  : 'border-canvas-border text-canvas-muted-foreground'
+              }`}
+            >
+              {r.passed ? <Check className="size-3" /> : <X className="size-3" />}
+            </span>
+            <span className={r.passed ? 'text-canvas-foreground' : 'text-canvas-muted-foreground'}>
+              {r.description}
+            </span>
+          </li>
+        ))}
+        {entry.ai === 'done' && entry.aiVerdict ? (
+          <li className="flex items-start gap-2">
+            <span
+              className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm border ${
+                verdictPassed
+                  ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-400'
+                  : 'border-canvas-border text-canvas-muted-foreground'
+              }`}
+            >
+              {verdictPassed ? <Check className="size-3" /> : <X className="size-3" />}
+            </span>
+            <span className={verdictPassed ? 'text-canvas-foreground' : 'text-canvas-muted-foreground'}>
+              <span className="font-semibold">AI reviewer:</span> {VERDICT_WORD[entry.aiVerdict]}
+              {VERDICT_REST[entry.aiVerdict]}
+              {entry.aiReason ? ` ${entry.aiReason}` : ''}
+            </span>
+          </li>
+        ) : null}
       </ul>
       {entry.ai === 'loading' ? (
         <div className="mt-2 flex items-center gap-2 text-xs text-canvas-muted-foreground">
@@ -594,7 +626,7 @@ function CheckCard({
       ) : null}
       {entry.ai === 'unavailable' ? (
         <p className="mt-2 text-xs text-canvas-muted-foreground">
-          AI review unavailable — showing structural checks only.
+          AI review unavailable. Showing structural checks only.
         </p>
       ) : null}
       {entry.ai === 'error' ? (
@@ -605,9 +637,14 @@ function CheckCard({
   );
 }
 
+// No "View code" here: the editor is right next to it. That's for the
+// receiving device instead (notification-center.tsx, devices-panel.tsx).
 function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
   return (
-    <EntryCard label="run" icon={entry.status === 'running' ? <Loader2 className="size-2.5 animate-spin" /> : undefined}>
+    <EntryCard
+      label={entry.deviceLabel ? `run · ${entry.deviceLabel}` : 'run'}
+      icon={entry.status === 'running' ? <Loader2 className="size-2.5 animate-spin" /> : undefined}
+    >
       <div className="max-h-72 overflow-auto rounded-md border border-canvas-border font-mono text-xs">
         <OutputView lines={entry.lines} isAnimating={entry.status === 'running'} />
       </div>

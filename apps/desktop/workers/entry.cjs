@@ -51,6 +51,23 @@ function pushRequest(command, payload) {
   req.reply().catch(() => {});
 }
 
+// Unlike pushRequest, this awaits and returns main's actual reply. Used
+// where the worker needs a real result back, not just an ack.
+async function requestFromMain(command, payload) {
+  if (!rpc) throw new Error('worker: rpc not initialized');
+  const req = rpc.request(command);
+  req.send(toJson(payload));
+  const res = fromJson(await req.reply());
+  if (!res || !res.ok) throw new Error((res && res.error && res.error.message) || 'main request failed');
+  return res.result;
+}
+
+// Passed into peer.init() so exec-host.cjs's security scan (running under
+// Bare, no access to electron/chat.cjs) can reach the real model call on main.
+function runSecurityScanViaMain(payload) {
+  return requestFromMain(CMD.SECURITY_SCAN, payload);
+}
+
 // One subscription per process; a second listener would push every peer event to main twice.
 let eventsBound = false;
 
@@ -65,6 +82,7 @@ respond(CMD.INIT, async (args) => {
     attestation: args.attestation ?? null,
     revokedDevices: args.revokedDevices ?? null,
     auditPath: args.auditPath ?? null,
+    runSecurityScan: runSecurityScanViaMain,
   });
   if (!eventsBound) {
     eventsBound = true;

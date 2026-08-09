@@ -2,7 +2,7 @@
 
 import { useUserStore } from '@academy/core';
 import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
-import type { AcademyAPI, AcademyRunChunk } from '@academy/validation';
+import type { AcademyAPI, AcademyRunChunk, ChatSecurityResult, MatchStatus } from '@academy/validation';
 // Subpath, not the package root: the root re-exports the MDX frontmatter config, pulling fumadocs-mdx's fs/promises import into the browser bundle.
 import {
   ArrowLeft,
@@ -22,7 +22,6 @@ import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
 import { MonacoLessonEditor } from './monaco-lesson-editor.js';
-import { RunRow, useRunNotices } from './notification-center.js';
 import { ChatInputBar, LessonConsole } from './lesson-console.js';
 import type { ConsoleEntry } from './lesson-console.js';
 
@@ -75,6 +74,39 @@ const ARGV_CAPTURED_PREFIX = 'argv.captured.';
 const CAPTURE_MARKERS: Array<{ pattern: RegExp; target: string }> = [
   { pattern: /▸\s+Provider Public Key:\s+([a-f0-9]{64})/i, target: 'lastProviderPublicKey' },
 ];
+
+// Whitespace-insensitive equality: detects an untouched starter file and
+// fast-paths a formatting-only match against the answer without the AI.
+function normalizeForCompare(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+// Which check-entry verdicts count as the lesson being done. 'match' is set
+// client-side by normalizeForCompare, never returned by the AI itself.
+const PASSING_MATCH_STATUSES = new Set<MatchStatus>(['match', 'complete', 'different-but-valid']);
+
+// Streamed chunks rarely align with real newlines; treating each chunk as
+// its own line inserted a phantom space at every boundary once rejoined.
+function appendChunkLines(lines: OutputLine[], chunk: { stream: OutputLine['stream']; data: string }): OutputLine[] {
+  const segments = chunk.data.split('\n');
+  const last = lines[lines.length - 1];
+  const merged =
+    last && last.stream === chunk.stream
+      ? [...lines.slice(0, -1), { stream: chunk.stream, line: last.line + segments[0] }]
+      : [...lines, { stream: chunk.stream, line: segments[0] }];
+  for (let i = 1; i < segments.length; i++) {
+    merged.push({ stream: chunk.stream, line: segments[i] });
+  }
+  return merged;
+}
+
+// Matches the label shown in the device picker below, so a run's "ran on X"
+// header always agrees with what X was called when it was selected.
+function peerDisplayName(p: { discoveryKey: string; userData: unknown }): string {
+  return p.userData && typeof p.userData === 'object' && 'name' in p.userData
+    ? String((p.userData as { name: unknown }).name)
+    : p.discoveryKey.slice(0, 8);
+}
 
 function overrideKey(slotName: string): string {
   return `${ARGV_OVERRIDE_PREFIX}${slotName}`;
@@ -394,14 +426,13 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   }, [entries]);
 
   const structuralPassed = latestCheck?.structural.every((r) => r.passed) ?? false;
-  // AI review gates completion once it finishes, but never blocks completion
-  // when it can't run at all (no model, web build, or the call errored) —
-  // otherwise the feature would brick lessons whenever AI is unavailable.
+  // AI review gates completion, but never blocks it when unavailable (no
+  // model, web build, error); otherwise it'd brick lessons outright.
   const aiGate =
     !latestCheck || latestCheck.ai === 'unavailable' || latestCheck.ai === 'error'
       ? true
       : latestCheck.ai === 'done'
-        ? Object.values(latestCheck.aiItems ?? {}).every((i) => i.verdict === 'pass')
+        ? PASSING_MATCH_STATUSES.has(latestCheck.aiVerdict ?? 'wrong')
         : false;
   const allPassed = structuralPassed && aiGate;
 
@@ -419,10 +450,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           if (payload.error || !payload.result) {
             return { ...e, ai: 'error', aiError: payload.error ?? 'AI review failed.' };
           }
-          const aiItems = Object.fromEntries(
-            payload.result.items.map((item) => [item.id, { verdict: item.verdict, reason: item.reason }]),
-          );
-          return { ...e, ai: 'done', aiItems, aiSummary: payload.result.summary };
+          return { ...e, ai: 'done', aiVerdict: payload.result.verdict, aiReason: payload.result.reason };
         }),
       );
     });
@@ -482,6 +510,8 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   ]);
 
   const check = useCallback(() => {
+    // A second click while one's already loading orphaned the first entry.
+    if (latestCheck?.ai === 'loading') return;
     const structural = runTests(userCode, data.tests).map((r) => ({
       id: r.id,
       description: r.description,
@@ -491,8 +521,35 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     setEntries((prev) => [...prev, { kind: 'check', id: entryId, structural, ai: 'idle' }]);
 
     // Only worth a semantic review once the cheap structural checks already
-    // pass — that's the case that can currently go green while being wrong.
+    // pass. That's the case that can currently go green while being wrong.
     if (!structural.every((r) => r.passed)) return;
+
+    // A formatting-only match is real; skip the AI call entirely for it.
+    const hasAnswer = typeof data.answer === 'string' && data.answer.length > 0;
+    if (hasAnswer && normalizeForCompare(userCode) === normalizeForCompare(data.answer)) {
+      setEntries((prev) =>
+        prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'done', aiVerdict: 'match', aiReason: '' } : e)),
+      );
+      return;
+    }
+
+    // A leftover numbered TODO is a free, reliable "unfinished" signal even
+    // when the structural checks above only cover an earlier TODO.
+    if (/^\s*\/\/\s*\d+:/m.test(userCode)) {
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === entryId && e.kind === 'check'
+            ? {
+                ...e,
+                ai: 'done',
+                aiVerdict: 'unfinished',
+                aiReason: "There's still a numbered TODO comment in the code.",
+              }
+            : e,
+        ),
+      );
+      return;
+    }
 
     const canVerify = isDesktop && typeof window !== 'undefined' && !!window.academy?.chat;
     if (!canVerify) {
@@ -519,6 +576,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
               ? { chapter: data.currentChapter.slug, lesson: data.currentLesson.slug }
               : null,
           lessonReference: data.lessonReference,
+          answer: data.answer || undefined,
         });
         pendingVerifyRef.current = { requestId, entryId };
       } catch (err) {
@@ -528,7 +586,16 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         );
       }
     })();
-  }, [userCode, data.tests, data.currentChapter, data.currentLesson, data.lessonReference, isDesktop]);
+  }, [
+    userCode,
+    data.tests,
+    data.currentChapter,
+    data.currentLesson,
+    data.lessonReference,
+    data.answer,
+    isDesktop,
+    latestCheck,
+  ]);
 
   const stopCheck = useCallback((entryId: string) => {
     const pending = pendingVerifyRef.current;
@@ -540,19 +607,68 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     );
   }, []);
 
+  // Advisory only; null (unavailable/timeout/error) is treated as 'clean'.
+  // The receiving device's own scan is the actual gate.
+  const awaitSecurityScan = useCallback(
+    async (code: string): Promise<ChatSecurityResult | null> => {
+      if (typeof window === 'undefined' || !window.academy?.chat?.securityScan || !window.academy.chat.onSecurityResult) {
+        return null;
+      }
+      const chatApi = window.academy.chat;
+      return new Promise<ChatSecurityResult | null>((resolve) => {
+        let settled = false;
+        let off: (() => void) | undefined;
+        const timer = setTimeout(() => settle(null), 20_000);
+        function settle(value: ChatSecurityResult | null) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          off?.();
+          resolve(value);
+        }
+        chatApi
+          .securityScan({
+            code,
+            lessonKey:
+              data.currentChapter && data.currentLesson
+                ? { chapter: data.currentChapter.slug, lesson: data.currentLesson.slug }
+                : null,
+            lessonReference: data.lessonReference,
+          })
+          .then(({ requestId }) => {
+            off = chatApi.onSecurityResult((payload) => {
+              if (payload.requestId !== requestId) return;
+              settle(payload.error ? null : payload.result);
+            });
+          })
+          .catch(() => settle(null));
+      });
+    },
+    [data.currentChapter, data.currentLesson, data.lessonReference],
+  );
+
   const run = useCallback(async () => {
     const runEntryId = crypto.randomUUID();
-    setEntries((prev) => [...prev, { kind: 'run', id: runEntryId, lines: [], status: 'running' }]);
+    // Null when this isn't a resolved remote run (this-device, or remote
+    // with no device picked yet). RunCard reads that as "this device".
+    const targetPeer =
+      runMode === 'remote' && selectedPeerId
+        ? realRemotePeers.find((p) => p.discoveryKey === selectedPeerId)
+        : undefined;
+    const deviceLabel = targetPeer ? peerDisplayName(targetPeer) : null;
+    setEntries((prev) => [
+      ...prev,
+      { kind: 'run', id: runEntryId, lines: [], status: 'running', deviceLabel },
+    ]);
     const finalizeRunEntry = (lines: OutputLine[], status: 'ok' | 'err' | 'stopped') => {
       setEntries((prev) =>
         prev.map((e) => (e.id === runEntryId && e.kind === 'run' ? { ...e, lines, status } : e)),
       );
     };
 
-    // Skip the run when TODOs are still empty, so the panel doesn't go blank and the button doesn't look broken.
-    const unchangedFromStarter =
-      userCode === data.startingCode ||
-      (/^\s*\/\/\s*\d+:/m.test(userCode) && /^\s*await\s+unloadModel\s*\(/m.test(userCode));
+    // Whitespace-normalized, not a leftover-TODO heuristic: finishing TODO 1
+    // but not 2 is a real change even with boilerplate still present.
+    const unchangedFromStarter = normalizeForCompare(userCode) === normalizeForCompare(data.startingCode);
     if (unchangedFromStarter) {
       finalizeRunEntry(
         [
@@ -638,6 +754,34 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       }
       // Streamed as chunks arrive so 30-60s finetune runs don't look frozen.
       const streamBuffer: OutputLine[] = [];
+
+      // Advisory only; the paired device runs its own authoritative scan.
+      if (isRemoteRun) {
+        const scan = await awaitSecurityScan(userCode);
+        if (scan?.verdict === 'malicious') {
+          const lines: OutputLine[] = [
+            { stream: 'stderr', line: '[security] This code was not sent to the paired device.' },
+            ...scan.concerns.map((c) => ({ stream: 'stderr' as const, line: `  - ${c.summary}` })),
+            { stream: 'stdout', line: 'Edit the code to remove the flagged content, then click Run again.' },
+          ];
+          finalizeRunEntry(lines, 'err');
+          if (selectedPeerId) {
+            setLastRemoteRun({
+              kind: 'err',
+              peerId: selectedPeerId,
+              startedAt: runStartedAt,
+              endedAt: Date.now(),
+              code: null,
+              signal: null,
+              message: 'blocked by security review',
+            });
+          }
+          setIsAnimating(false);
+          return;
+        }
+        // 'suspicious' doesn't warn here either; only 'malicious' above is reliable.
+      }
+
       const captured = new Set<string>();
       const scanForCaptures = (text: string) => {
         if (!isDesktop || !text) return;
@@ -654,13 +798,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         }
       };
       const unsubscribe = window.academy?.onRunChunk?.((chunk) => {
-        const newLines = chunk.data.split('\n').map((line) => ({
-          stream: chunk.stream,
-          line,
-        }));
-        streamBuffer.push(...newLines);
+        streamBuffer.splice(0, streamBuffer.length, ...appendChunkLines(streamBuffer, chunk));
         setEntries((prev) =>
-          prev.map((e) => (e.id === runEntryId && e.kind === 'run' ? { ...e, lines: [...e.lines, ...newLines] } : e)),
+          prev.map((e) => (e.id === runEntryId && e.kind === 'run' ? { ...e, lines: appendChunkLines(e.lines, chunk) } : e)),
         );
         if (chunk.stream === 'stdout') scanForCaptures(chunk.data);
       });
@@ -773,16 +913,19 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     // Fall back to test results so the panel isn't blank when the run produces nothing.
     if (producedOutput.length === 0 && data.tests.length > 0) {
       const results = runTests(userCode, data.tests);
+      const allPassed = results.every((r) => r.passed);
       const summary = results.map((r) =>
         r.passed ? `  \u2713 ${r.description}` : `  \u2717 ${r.description}`,
       );
       producedOutput = [
         {
           stream: 'stdout',
-          line: 'No output produced by the run. The checks below tell you which part is missing:',
+          line: allPassed
+            ? "No output produced by the run, even though the checks below matched. These checks only cover part of the lesson. The code that would actually produce output is probably still missing or unreachable."
+            : 'No output produced by the run. The checks below tell you which part is missing:',
         },
-        { stream: 'stdout', line: '' },
-        ...summary.map((line) => ({ stream: 'stdout' as const, line })),
+        // A blank line between items keeps OutputView's paragraph mode from space-joining them.
+        ...summary.flatMap((line) => [{ stream: 'stdout' as const, line: '' }, { stream: 'stdout' as const, line }]),
       ];
     }
 
@@ -805,6 +948,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     selfPairCount,
     localIsOnlyHost,
     selectedPeerId,
+    awaitSecurityScan,
   ]);
 
   const reset = useCallback(() => {
@@ -866,7 +1010,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             onStop={stopRun}
             stopRequested={stopRequested}
             onCheck={check}
-            checkDisabled={data.tests.length === 0}
+            checkDisabled={data.tests.length === 0 || latestCheck?.ai === 'loading'}
             onReset={reset}
             platforms={data.platforms}
             readOnly={data.readOnly}
@@ -1201,17 +1345,11 @@ function Runner({
               }
             >
               {remotePeers.length === 0 ? <option value="">No paired devices</option> : null}
-              {remotePeers.map((p) => {
-                const name =
-                  p.userData && typeof p.userData === 'object' && 'name' in p.userData
-                    ? String((p.userData as { name: unknown }).name)
-                    : p.discoveryKey.slice(0, 8);
-                return (
-                  <option key={p.discoveryKey} value={p.discoveryKey}>
-                    {name}
-                  </option>
-                );
-              })}
+              {remotePeers.map((p) => (
+                <option key={p.discoveryKey} value={p.discoveryKey}>
+                  {peerDisplayName(p)}
+                </option>
+              ))}
             </select>
           ) : null}
           {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static string, no user input */}
@@ -1429,26 +1567,10 @@ function Runner({
           </div>
         </div>
       ) : (
-        <>
-          {runMode === 'remote' ? (
-            <div className="shrink-0 border-t border-canvas-border bg-canvas-muted px-3 py-1.5 font-mono text-sm text-canvas-foreground">
-              <GuestRunStrip />
-            </div>
-          ) : null}
-          <LessonConsole entries={entries} onStopCheck={onStopCheck} />
-        </>
+        <LessonConsole entries={entries} onStopCheck={onStopCheck} />
       )}
     </div>
   );
-}
-
-// Outgoing runs (a guest's remote execution) render inside the output panel, next to the bytes they're producing.
-function GuestRunStrip() {
-  const { items, dismiss } = useRunNotices();
-  const outgoing = items.filter((run) => run.direction === 'outgoing');
-  return outgoing.map((run) => (
-    <RunRow key={run.id} run={run} onDismiss={dismiss} />
-  ));
 }
 
 type RemoteRunState =

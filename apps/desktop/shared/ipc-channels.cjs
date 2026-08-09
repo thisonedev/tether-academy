@@ -32,6 +32,7 @@ const IPC_CHANNELS = Object.freeze({
   'academy:chat:load': 'chatLoadSchema',
   'academy:chat:send': 'chatSendSchema',
   'academy:chat:verify': 'chatVerifySchema',
+  'academy:chat:security-scan': 'chatSecuritySchema',
   'academy:chat:stop': 'chatRequestIdSchema',
   'academy:chat:docs-status': null,
   'academy:chat:docs-refresh': null,
