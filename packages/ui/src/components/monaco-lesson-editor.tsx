@@ -8,17 +8,7 @@ export const MonacoLessonEditor = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div
-        style={{
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: '#0a0a0a',
-          color: '#9ca3af',
-          fontSize: 13,
-        }}
-      >
+      <div className="flex h-full items-center justify-center bg-canvas text-sm text-canvas-muted-foreground">
         Loading editor...
       </div>
     ),
