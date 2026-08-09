@@ -1,7 +1,7 @@
 'use client';
 
 import type { AcademyChatChunk, AcademyChatMessage, ChatVerifyVerdict } from '@academy/validation';
-import { AlertTriangle, ArrowUp, Check, ChevronDown, Loader2, Sparkles, Square, X } from 'lucide-react';
+import { AlertTriangle, ArrowUp, Check, ChevronDown, Loader2, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { OutputLine } from './lesson-workspace.js';
 
@@ -23,8 +23,7 @@ export interface ConsoleCheckAiItem {
   reason: string;
 }
 
-/** One block in the unified timeline. Different kinds render as different block
- *  types (chat bubble, run card, check card) in the same chronological feed. */
+/** One block in the timeline: chat bubble, run card, or check card. */
 export type ConsoleEntry =
   | { kind: 'chat-user'; id: string; content: string }
   | { kind: 'chat-assistant'; id: string; content: string; streaming: boolean }
@@ -39,18 +38,16 @@ export type ConsoleEntry =
       aiError?: string;
     };
 
-/** The output/timeline panel: run cards, check cards, and chat messages, in
- *  the order they happened. Lives in the editor column. Typing happens in
- *  the separate `ChatInputBar`, which appends into the same `entries`. */
+/** Timeline panel. Typing happens in the separate `ChatInputBar`, which
+ *  appends into the same `entries`. */
 export interface LessonConsoleProps {
   entries: ConsoleEntry[];
   /** Cancels an in-progress AI review for the given check entry. */
   onStopCheck: (entryId: string) => void;
 }
 
-/** Compact chat input, meant to sit in the bottom nav between Previous/Next.
- *  Owns the model/send/stop machinery; replies land in the shared `entries`
- *  array, which the `LessonConsole` panel elsewhere on the page renders. */
+/** Chat input for the bottom nav. Owns the model/send/stop machinery;
+ *  replies land in the shared `entries` array. */
 export interface ChatInputBarProps {
   entries: ConsoleEntry[];
   setEntries: React.Dispatch<React.SetStateAction<ConsoleEntry[]>>;
@@ -80,6 +77,61 @@ function newId(): string {
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+// Rotating word so a slow model doesn't look frozen.
+const SHUFFLE_WORDS = [
+  'Thinking',
+  'Strategizing',
+  'Analyzing',
+  'Reasoning',
+  'Considering',
+  'Advancing',
+  'Processing',
+  'Reflecting',
+  'Pondering',
+  'Adjusting',
+  'Distilling',
+  'Synthesizing',
+  'Working',
+  'Computing',
+  'Crunching',
+];
+
+function useShuffleWord(active: boolean): string {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setIndex(0);
+      return;
+    }
+    const id = setInterval(() => setIndex((i) => (i + 1) % SHUFFLE_WORDS.length), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return SHUFFLE_WORDS[index];
+}
+
+function ShuffleWord({ active, className = '' }: { active: boolean; className?: string }) {
+  const word = useShuffleWord(active);
+  return (
+    <span key={word} className={`inline-block animate-in fade-in slide-in-from-left-2 duration-200 ${className}`}>
+      {word}…
+    </span>
+  );
+}
+
+// Gutter dot + connecting line threading AI-side entries into one turn.
+// User messages skip this, keeping only their background bubble.
+function TimelineRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <div className="relative flex w-3 shrink-0 justify-center">
+        <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-canvas-muted-foreground/40" />
+        <span className="absolute inset-x-0 top-3.5 bottom-0 left-1/2 w-px -translate-x-1/2 bg-canvas-border" />
+      </div>
+      <div className="min-w-0 flex-1 pb-0.5">{children}</div>
+    </div>
+  );
+}
+
 export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -98,17 +150,30 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
       {entries.map((entry) => {
         if (entry.kind === 'chat-user') return <UserBubble key={entry.id} content={entry.content} />;
         if (entry.kind === 'chat-assistant') {
-          if (entry.streaming && entry.content.length === 0) {
-            return <ThinkingIndicator key={entry.id} />;
-          }
-          return <AssistantBubble key={entry.id} content={entry.content} />;
+          return (
+            <TimelineRow key={entry.id}>
+              {entry.streaming && entry.content.length === 0 ? (
+                <ThinkingIndicator />
+              ) : (
+                <AssistantBubble content={entry.content} />
+              )}
+            </TimelineRow>
+          );
         }
-        if (entry.kind === 'run') return <RunCard key={entry.id} entry={entry} />;
+        if (entry.kind === 'run') {
+          return (
+            <TimelineRow key={entry.id}>
+              <RunCard entry={entry} />
+            </TimelineRow>
+          );
+        }
         return (
-          <div key={entry.id} className="space-y-2">
-            <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
-            {entry.ai === 'done' && entry.aiSummary ? <AssistantBubble content={entry.aiSummary} /> : null}
-          </div>
+          <TimelineRow key={entry.id}>
+            <div className="space-y-2">
+              <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
+              {entry.ai === 'done' && entry.aiSummary ? <AssistantBubble content={entry.aiSummary} /> : null}
+            </div>
+          </TimelineRow>
         );
       })}
     </div>
@@ -215,8 +280,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
     [modelName],
   );
 
-  // Free-form chat replies stream in via onChunk; matched to the entry that's
-  // waiting for them by requestId, same protocol the old popover used.
+  // Chat replies stream in via onChunk, matched to the waiting entry by requestId.
   useEffect(() => {
     const offChunk = window.academy?.chat?.onChunk?.((chunk: AcademyChatChunk) => {
       if (chunk.requestId !== pendingChatRequestIdRef.current) return;
@@ -433,27 +497,19 @@ function ModelSwitcher({
   );
 }
 
-// Every entry kind (run, check, user, assistant) shares this shape — a
-// small uppercase label bar over content — so the timeline reads as one
-// consistent surface instead of code-output cards next to chat bubbles.
+// Small uppercase label above content, no card/background.
 function EntryCard({
   label,
   icon,
-  accent = false,
   children,
 }: {
   label: string;
   icon?: React.ReactNode;
-  accent?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="max-w-full overflow-hidden rounded-lg border border-canvas-border bg-canvas">
-      <div
-        className={`flex items-center gap-1.5 border-b border-canvas-border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
-          accent ? 'text-emerald-400' : 'text-canvas-muted-foreground'
-        }`}
-      >
+    <div className="max-w-full overflow-hidden">
+      <div className="flex items-center gap-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
         {icon}
         <span>{label}</span>
       </div>
@@ -464,26 +520,23 @@ function EntryCard({
 
 function ThinkingIndicator() {
   return (
-    <EntryCard label="assistant" icon={<Loader2 className="size-2.5 animate-spin" />} accent>
-      <p className="px-3 py-2 font-mono text-xs text-canvas-muted-foreground">Thinking…</p>
-    </EntryCard>
+    <div className="flex items-center gap-1.5 font-mono text-xs text-canvas-muted-foreground">
+      <Loader2 className="size-3 animate-spin" />
+      <ShuffleWord active />
+    </div>
   );
 }
 
 function UserBubble({ content }: { content: string }) {
   return (
-    <EntryCard label="you">
-      <p className="whitespace-pre-wrap px-3 py-2 font-mono text-xs text-canvas-muted-foreground">{content}</p>
-    </EntryCard>
+    <div className="max-w-full overflow-hidden rounded-lg bg-canvas-border px-3 py-2">
+      <p className="whitespace-pre-wrap font-mono text-xs text-canvas-foreground">{content}</p>
+    </div>
   );
 }
 
 function AssistantBubble({ content }: { content: string }) {
-  return (
-    <EntryCard label="assistant" icon={<Sparkles className="size-2.5" />} accent>
-      <p className="whitespace-pre-wrap px-3 py-2 font-mono text-xs text-canvas-muted-foreground">{content}</p>
-    </EntryCard>
-  );
+  return <p className="whitespace-pre-wrap px-1 font-mono text-xs text-canvas-muted-foreground">{content}</p>;
 }
 
 function CheckCard({
@@ -555,7 +608,7 @@ function CheckCard({
 function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
   return (
     <EntryCard label="run" icon={entry.status === 'running' ? <Loader2 className="size-2.5 animate-spin" /> : undefined}>
-      <div className="max-h-72 overflow-auto font-mono text-xs">
+      <div className="max-h-72 overflow-auto rounded-md border border-canvas-border font-mono text-xs">
         <OutputView lines={entry.lines} isAnimating={entry.status === 'running'} />
       </div>
     </EntryCard>
@@ -570,8 +623,7 @@ function EmptyState() {
   );
 }
 
-// --- Run output rendering, moved here from lesson-workspace.tsx: this is the
-// console's job now that run output is a card in the timeline, not a tab. ---
+// --- Run output rendering ---
 
 // Every write logs `[saved] <absolute path>`, which the footer makes clickable.
 const SAVED_LINE = /^\[saved\]\s+(.+)$/;
@@ -704,35 +756,6 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
       completed,
     };
   })();
-  // Rotating word indicator so a slow first-token latency doesn't look like a frozen run.
-  const THINKING_WORDS = [
-    'Thinking',
-    'Strategizing',
-    'Analyzing',
-    'Reasoning',
-    'Considering',
-    'Advancing',
-    'Processing',
-    'Reflecting',
-    'Pondering',
-    'Adjusting',
-    'Distilling',
-    'Synthesizing',
-    'Working',
-    'Computing',
-    'Crunching',
-  ];
-  const [wordIndex, setWordIndex] = useState(0);
-  useEffect(() => {
-    if (!isAnimating) {
-      setWordIndex(0);
-      return;
-    }
-    const id = setInterval(() => {
-      setWordIndex((i) => (i + 1) % THINKING_WORDS.length);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [isAnimating]);
 
   return (
     <div className="space-y-1 p-4 text-canvas-muted-foreground">
@@ -764,7 +787,7 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
         </div>
       ) : null}
       {(() => {
-        // Collapses single newlines to spaces and keeps double as paragraph breaks; falls back to line-by-line when finetune progress lines are present.
+        // Falls back to line-by-line when finetune progress lines are present.
         const hasFinetuneProgress = lines.some((e) => e.stream === 'stdout' && /^▸\s+epoch=/.test(e.line));
 
         if (hasFinetuneProgress) {
@@ -823,13 +846,8 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
         );
       })()}
       {isAnimating ? (
-        <p className="text-emerald-400">
-          <span
-            key={wordIndex}
-            className="inline-block animate-pulse animate-in fade-in slide-in-from-left-2 duration-200"
-          >
-            {THINKING_WORDS[wordIndex]}...
-          </span>
+        <p className="text-canvas-muted-foreground">
+          <ShuffleWord active={isAnimating} className="animate-pulse" />
         </p>
       ) : null}
       {savedFiles.length > 0 ? <SavedFilesBar files={savedFiles} /> : null}

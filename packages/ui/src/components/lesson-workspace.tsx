@@ -556,10 +556,10 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     if (unchangedFromStarter) {
       finalizeRunEntry(
         [
-          { stream: 'stdout', line: 'Looks like you haven\u2019t started yet.' },
+          { stream: 'stdout', line: 'Looks like you haven\u2019t made any changes yet.' },
           {
             stream: 'stdout',
-            line: 'The starting code has numbered TODOs (// 1:, // 2:, \u2026). Fill those in, then click Run again.',
+            line: 'The starting code has numbered TODOs. Follow the lesson to write the code for each one, then click Run again.',
           },
         ],
         'ok',
