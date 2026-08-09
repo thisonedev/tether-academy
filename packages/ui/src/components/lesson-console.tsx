@@ -322,9 +322,9 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
               void handleSend();
             }
           }}
-          placeholder={disabledReason ?? 'Ask about this lesson…'}
-          className="min-w-0 flex-1 resize-none bg-transparent font-mono text-xs text-canvas-muted-foreground outline-none placeholder:text-canvas-muted-foreground/60 disabled:cursor-not-allowed"
-          style={{ height: '20px' }}
+          placeholder={disabledReason ?? 'How can I help you today?'}
+          className="min-w-0 flex-1 resize-none bg-transparent font-mono text-xs leading-4 text-canvas-muted-foreground outline-none placeholder:text-canvas-muted-foreground/60 disabled:cursor-not-allowed"
+          style={{ height: '16px' }}
         />
         <ModelSwitcher
           modelName={modelName}
@@ -386,19 +386,22 @@ function ModelSwitcher({
   if (!modelName && options.length === 0) return null;
 
   return (
-    <div ref={ref} className="relative min-w-0 shrink-0" style={{ height: '24px' }}>
+    <div ref={ref} className="relative min-w-0 shrink-0" style={{ height: '24px', marginBottom: '5px' }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={busy || options.length === 0}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="inline-flex max-w-[8rem] items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 font-mono text-[9px] uppercase tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-        style={{ height: '24px', width: '100%', boxSizing: 'border-box' }}
+        className="inline-flex max-w-[8rem] items-center gap-1 rounded bg-emerald-500/15 px-1.5 font-mono text-[9px] uppercase leading-none tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+        style={{ height: '24px', width: '100%', boxSizing: 'border-box', lineHeight: '1' }}
       >
-        {busy ? <Loader2 className="size-2.5 shrink-0 animate-spin" /> : null}
         <span className="truncate">{modelName ? shortName(modelName) : 'Pick model'}</span>
-        {options.length > 0 ? <ChevronDown className="size-2.5 shrink-0" /> : null}
+        {busy ? (
+          <Loader2 className="size-2.5 shrink-0 animate-spin" />
+        ) : options.length > 0 ? (
+          <ChevronDown className="size-2.5 shrink-0" />
+        ) : null}
       </button>
       {open ? (
         <div
@@ -561,7 +564,7 @@ function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
 
 function EmptyState() {
   return (
-    <p className="px-1 py-1 text-xs text-canvas-muted-foreground">
+    <p className="px-1 py-1 font-mono text-xs text-canvas-muted-foreground">
       Run your code, check your answer, or ask a question. It all shows up here.
     </p>
   );
