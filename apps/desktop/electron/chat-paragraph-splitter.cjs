@@ -16,6 +16,7 @@
 //      line (a single newline, not a blank-line break).
 
 const MIN_NEXT_LEN = 20;
+const MIN_PARAGRAPH_LEN = 180;
 const MAX_PARAGRAPH_LEN = 240;
 const ABBREVIATIONS = new Set([
   'e.g', 'i.e', 'etc', 'mr', 'mrs', 'ms', 'dr', 'st', 'jr', 'sr',
@@ -60,15 +61,17 @@ function breakListItems(paragraph) {
 
 function splitParagraphs(text) {
   if (typeof text !== 'string' || text.length === 0) return '';
-  if (/\n\s*\n/.test(text)) {
-    return text
-      .split(/\n\s*\n/)
-      .map((p) => breakListItems(p.replace(/\s+/g, ' ').trim()))
-      .filter((p) => p.length > 0)
-      .join('\n\n');
-  }
-  const normalised = text.replace(/\s+/g, ' ').trim();
-  if (normalised.length === 0) return '';
+  const blocks = /\n\s*\n/.test(text)
+    ? text.split(/\n\s*\n/).map((p) => p.replace(/\s+/g, ' ').trim())
+    : [text.replace(/\s+/g, ' ').trim()];
+  const paragraphs = blocks.filter((p) => p.length > 0).flatMap(splitSentences);
+  return paragraphs.map(breakListItems).join('\n\n');
+}
+
+// Splits a single blank-line-delimited block into paragraphs on real
+// sentence-boundary topic changes.
+function splitSentences(normalised) {
+  if (normalised.length === 0) return [];
   const out = [];
   let buffer = '';
   let i = 0;
@@ -115,12 +118,16 @@ function splitParagraphs(text) {
       i += 1;
       continue;
     }
+    if (buffer.trim().length < MIN_PARAGRAPH_LEN) {
+      i += 1;
+      continue;
+    }
     out.push(buffer.trim());
     buffer = '';
     i = peek;
   }
   if (buffer.trim().length > 0) out.push(buffer.trim());
-  return out.map(breakListItems).join('\n\n');
+  return out;
 }
 
 function nextSentenceEnd(text, from) {

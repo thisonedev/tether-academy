@@ -3,26 +3,33 @@
 const test = require('brittle');
 const { splitParagraphs } = require('../../electron/chat-paragraph-splitter.cjs');
 
-test('splitParagraphs - splits on `. ` followed by a capital letter', (t) => {
-  const input = 'The MCP is a protocol. The key function is routing. Other functions are not detailed. For specific use cases, see the docs.';
+test('splitParagraphs - splits on `. ` followed by a capital letter once the paragraph is long enough', (t) => {
+  const input = 'The Model Context Protocol standardises how an assistant discovers and calls external tools. Each server declares the tools it exposes, and the client routes calls to the matching server automatically. Once a session starts, the model can call any declared tool without further setup on the client side. For specific use cases, such as combining multiple servers, see the docs for routing details.';
   const out = splitParagraphs(input);
   const paras = out.split('\n\n');
-  t.is(paras.length, 4);
-  t.ok(paras[0].endsWith('protocol.'));
-  t.ok(paras[1].endsWith('routing.'));
+  t.is(paras.length, 2);
+  t.ok(paras[0].endsWith('automatically.'));
 });
 
-test('splitParagraphs - splits on `?` followed by capital letter', (t) => {
-  const out = splitParagraphs('Why is this hard? Because the model splits chunks. So the splitter must handle that.');
+test('splitParagraphs - splits on `?` followed by capital letter once the paragraph is long enough', (t) => {
+  const input = 'Why is streaming text hard to format into paragraphs? Because the model splits its own output into arbitrary chunks that rarely line up with sentence or paragraph boundaries. So the splitter has to reassemble the stream and infer real paragraph breaks after the fact. This keeps the reader from seeing one unbroken wall of text regardless of how the model happened to chunk its response.';
+  const out = splitParagraphs(input);
   const paras = out.split('\n\n');
-  t.is(paras.length, 3);
-  t.ok(paras[0].endsWith('hard?'));
+  t.is(paras.length, 2);
+  t.ok(paras[0].endsWith('the fact.'));
 });
 
-test('splitParagraphs - splits on `!` followed by capital letter', (t) => {
-  const out = splitParagraphs('Watch out! The next sentence starts capital. And so does this one.');
+test('splitParagraphs - splits on `!` followed by capital letter once the paragraph is long enough', (t) => {
+  const input = 'Watch out for streamed text that never contains a blank line at all! The next sentence still starts with a capital letter, which is the only signal the splitter has to work with here. And so does this one, which pushes the running paragraph past the minimum length needed before a break is allowed.';
+  const out = splitParagraphs(input);
   const paras = out.split('\n\n');
-  t.is(paras.length, 3);
+  t.is(paras.length, 2);
+});
+
+test('splitParagraphs - does not split a short run of sentences into one-sentence paragraphs', (t) => {
+  const input = 'The query parameter defines the question. The topK parameter controls result count. Scores rank the results by relevance.';
+  const out = splitParagraphs(input);
+  t.is(out.split('\n\n').length, 1);
 });
 
 test('splitParagraphs - collapses internal whitespace', (t) => {
