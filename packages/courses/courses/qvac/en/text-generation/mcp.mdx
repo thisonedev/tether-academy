@@ -9,6 +9,12 @@ tests:
   - id: mcp-has-client
     description: 'mcp entry has a `client` field'
     pattern: "client\\s*:"
+  - id: iterates-events
+    description: 'Iterates `result.events` with `for await`'
+    pattern: "for\\s+await\\s*\\(\\s*const\\s+\\w+\\s+of\\s+result\\.events"
+  - id: handles-tool-call
+    description: 'Checks for `toolCall` events'
+    pattern: "event\\.type\\s*===?\\s*[\"']toolCall[\"']"
 hints:
   - "Pass mcp: [{ client, includeResources: false }] to completion(). The SDK reads the client's tool list and makes them available to the model as if you'd defined them by hand."
   - "MCP is a separate protocol. You bring your own MCP server (DuckDuckGo search, filesystem access, anything). The mcp-websearch.ts example uses npx -y @oevortex/ddg_search as a starter."
