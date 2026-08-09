@@ -44,11 +44,17 @@ const academy = {
     docsRefresh: () => ipcRenderer.invoke('academy:chat:docs-refresh'),
     load: (modelHint) => ipcRenderer.invoke('academy:chat:load', modelHint),
     send: (payload) => ipcRenderer.invoke('academy:chat:send', payload),
+    verify: (payload) => ipcRenderer.invoke('academy:chat:verify', payload),
     stop: (requestId) => ipcRenderer.invoke('academy:chat:stop', requestId),
     onChunk: (callback) => {
       const handler = (/** @type {unknown} */ _e, /** @type {any} */ chunk) => callback(chunk);
       ipcRenderer.on('academy:chat:chunk', handler);
       return () => ipcRenderer.removeListener('academy:chat:chunk', handler);
+    },
+    onVerifyResult: (callback) => {
+      const handler = (/** @type {unknown} */ _e, /** @type {any} */ result) => callback(result);
+      ipcRenderer.on('academy:chat:verify-result', handler);
+      return () => ipcRenderer.removeListener('academy:chat:verify-result', handler);
     },
     onLoadProgress: (callback) => {
       const handler = (/** @type {unknown} */ _e, /** @type {any} */ progress) => callback(progress);

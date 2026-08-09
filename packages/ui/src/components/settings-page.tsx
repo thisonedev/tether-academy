@@ -59,6 +59,7 @@ const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
 // whether they're downloaded yet, so users on stronger hardware have a
 // visible upgrade path. Order matters: rendered smallest to largest.
 const AI_BOT_MODEL_NAMES = [
+  'Qwen3-0.6B-Q4_0.gguf',
   'Qwen3-1.7B-Q4_0.gguf',
   'Qwen3-4B-Q4_K_M.gguf',
   'Qwen3-8B-Q4_K_M.gguf',

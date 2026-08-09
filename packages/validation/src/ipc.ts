@@ -292,6 +292,24 @@ export const chatSendSchema = z
   })
   .strict();
 
+export const chatVerifyTestSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    description: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const chatVerifySchema = z
+  .object({
+    code: z.string().min(1).max(20_000),
+    tests: z.array(chatVerifyTestSchema).min(1).max(32),
+    lessonKey: chatLessonKeySchema,
+    lessonReference: chatLessonReferenceSchema,
+    /** Filename of the catalogue model to grade with; omitted uses whatever the host already has loaded/configured. */
+    modelHint: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
 export const chatRequestIdSchema = z.string().min(1).max(128);
 
 export const chatLoadSchema = z.string().min(1).max(256);

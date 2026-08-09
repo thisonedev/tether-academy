@@ -23,7 +23,8 @@ import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
 import { MonacoLessonEditor } from './monaco-lesson-editor.js';
 import { RunRow, useRunNotices } from './notification-center.js';
-import { AiAssistant, AiAssistantButton } from './ai-assistant.js';
+import { ChatInputBar, LessonConsole } from './lesson-console.js';
+import type { ConsoleEntry } from './lesson-console.js';
 
 export interface LessonTest {
   id: string;
@@ -64,9 +65,6 @@ export interface LessonData {
   readOnly?: boolean;
   argv?: LessonArgvSlot[];
 }
-
-const TABS = ['output', 'tests'] as const;
-type Tab = (typeof TABS)[number];
 
 const RUN_MODES = ['simulated', 'this-device', 'remote'] as const;
 type RunMode = (typeof RUN_MODES)[number];
@@ -161,7 +159,6 @@ declare global {
 export function LessonWorkspace({ data, children }: { data: LessonData; children: ReactNode }) {
   const [userCode, setUserCode] = useState(data.startingCode);
   const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');
-  const [tab, setTab] = useState<Tab>('output');
   // Deferred to useEffect so the first client render matches the SSR'd HTML.
   const [isDesktop, setIsDesktop] = useState(false);
   useEffect(() => {
@@ -258,13 +255,15 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     const latest = realRemotePeers.reduce((a, b) => (a.pairedAt >= b.pairedAt ? a : b));
     setSelectedPeerId(latest.discoveryKey);
   }, [runMode, realRemotePeers, selectedPeerId]);
-  const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
-  const [outputLines, setOutputLines] = useState<OutputLine[]>([]);
+  const [entries, setEntries] = useState<ConsoleEntry[]>([]);
+  // Tracks the AI verify call the most recent Check Answer kicked off, so a
+  // later click can cancel a still-running review instead of leaving it
+  // orphaned, and so onVerifyResult knows which entry to update.
+  const pendingVerifyRef = useRef<{ requestId: string; entryId: string } | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [stopRequested, setStopRequested] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [hasShownModal, setHasShownModal] = useState(false);
-  const [outputKey, setOutputKey] = useState(0);
   const [argvOverrides, setArgvOverrides] = useState<Record<string, string>>({});
   const [argvCaptured, setArgvCaptured] = useState<Record<string, string>>({});
   const [lastRemoteRun, setLastRemoteRun] = useState<
@@ -288,9 +287,8 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     } else {
       setUserCode(data.startingCode);
     }
-    setTestResults(null);
-    setOutputLines([]);
-    setTab('output');
+    setEntries([]);
+    pendingVerifyRef.current = null;
     setRunMode(isDesktop ? 'this-device' : 'simulated');
     setShowCompleteModal(false);
     setHasShownModal(false);
@@ -385,7 +383,53 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     return out;
   }, [data.argv, argvOverrides, isDesktop]);
 
-  const allPassed = testResults?.every((r) => r.passed) ?? false;
+  // The most recent 'check' entry drives completion; earlier ones (from a
+  // prior Check Answer click) are history, not the gate.
+  const latestCheck = useMemo(() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.kind === 'check') return e;
+    }
+    return null;
+  }, [entries]);
+
+  const structuralPassed = latestCheck?.structural.every((r) => r.passed) ?? false;
+  // AI review gates completion once it finishes, but never blocks completion
+  // when it can't run at all (no model, web build, or the call errored) —
+  // otherwise the feature would brick lessons whenever AI is unavailable.
+  const aiGate =
+    !latestCheck || latestCheck.ai === 'unavailable' || latestCheck.ai === 'error'
+      ? true
+      : latestCheck.ai === 'done'
+        ? Object.values(latestCheck.aiItems ?? {}).every((i) => i.verdict === 'pass')
+        : false;
+  const allPassed = structuralPassed && aiGate;
+
+  // Subscribed for the workspace's lifetime (not just while checking) so a
+  // review that's still running when the user navigates away is ignored
+  // cleanly rather than updating a stale entry.
+  useEffect(() => {
+    const off = window.academy?.chat?.onVerifyResult?.((payload) => {
+      const pending = pendingVerifyRef.current;
+      if (!pending || pending.requestId !== payload.requestId) return;
+      pendingVerifyRef.current = null;
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.id !== pending.entryId || e.kind !== 'check') return e;
+          if (payload.error || !payload.result) {
+            return { ...e, ai: 'error', aiError: payload.error ?? 'AI review failed.' };
+          }
+          const aiItems = Object.fromEntries(
+            payload.result.items.map((item) => [item.id, { verdict: item.verdict, reason: item.reason }]),
+          );
+          return { ...e, ai: 'done', aiItems, aiSummary: payload.result.summary };
+        }),
+      );
+    });
+    return () => {
+      off?.();
+    };
+  }, []);
 
   // Section = the chapter. The modal only fires on the last lesson of a chapter.
   const isLastLessonOfChapter =
@@ -438,27 +482,88 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   ]);
 
   const check = useCallback(() => {
-    setTab('tests');
-    setTestResults(runTests(userCode, data.tests));
-  }, [userCode, data.tests]);
+    const structural = runTests(userCode, data.tests).map((r) => ({
+      id: r.id,
+      description: r.description,
+      passed: r.passed,
+    }));
+    const entryId = crypto.randomUUID();
+    setEntries((prev) => [...prev, { kind: 'check', id: entryId, structural, ai: 'idle' }]);
+
+    // Only worth a semantic review once the cheap structural checks already
+    // pass — that's the case that can currently go green while being wrong.
+    if (!structural.every((r) => r.passed)) return;
+
+    const canVerify = isDesktop && typeof window !== 'undefined' && !!window.academy?.chat;
+    if (!canVerify) {
+      setEntries((prev) =>
+        prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'unavailable' } : e)),
+      );
+      return;
+    }
+    setEntries((prev) => prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'loading' } : e)));
+
+    // Cancel any review still running from a previous Check Answer click.
+    if (pendingVerifyRef.current) {
+      void window.academy?.chat?.stop?.(pendingVerifyRef.current.requestId).catch(() => undefined);
+      pendingVerifyRef.current = null;
+    }
+
+    void (async () => {
+      try {
+        const { requestId } = await window.academy!.chat!.verify({
+          code: userCode,
+          tests: data.tests.map((t) => ({ id: t.id, description: t.description })),
+          lessonKey:
+            data.currentChapter && data.currentLesson
+              ? { chapter: data.currentChapter.slug, lesson: data.currentLesson.slug }
+              : null,
+          lessonReference: data.lessonReference,
+        });
+        pendingVerifyRef.current = { requestId, entryId };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not reach the local model.';
+        setEntries((prev) =>
+          prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'error', aiError: message } : e)),
+        );
+      }
+    })();
+  }, [userCode, data.tests, data.currentChapter, data.currentLesson, data.lessonReference, isDesktop]);
+
+  const stopCheck = useCallback((entryId: string) => {
+    const pending = pendingVerifyRef.current;
+    if (!pending || pending.entryId !== entryId) return;
+    void window.academy?.chat?.stop?.(pending.requestId).catch(() => undefined);
+    pendingVerifyRef.current = null;
+    setEntries((prev) =>
+      prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'error', aiError: 'Stopped.' } : e)),
+    );
+  }, []);
 
   const run = useCallback(async () => {
-    setTab('output');
-    setOutputLines([]);
-    setOutputKey((prev) => prev + 1);
+    const runEntryId = crypto.randomUUID();
+    setEntries((prev) => [...prev, { kind: 'run', id: runEntryId, lines: [], status: 'running' }]);
+    const finalizeRunEntry = (lines: OutputLine[], status: 'ok' | 'err' | 'stopped') => {
+      setEntries((prev) =>
+        prev.map((e) => (e.id === runEntryId && e.kind === 'run' ? { ...e, lines, status } : e)),
+      );
+    };
 
     // Skip the run when TODOs are still empty, so the panel doesn't go blank and the button doesn't look broken.
     const unchangedFromStarter =
       userCode === data.startingCode ||
       (/^\s*\/\/\s*\d+:/m.test(userCode) && /^\s*await\s+unloadModel\s*\(/m.test(userCode));
     if (unchangedFromStarter) {
-      setOutputLines([
-        { stream: 'stdout', line: 'Looks like you haven\u2019t started yet.' },
-        {
-          stream: 'stdout',
-          line: 'The starting code has numbered TODOs (// 1:, // 2:, \u2026). Fill those in, then click Run again.',
-        },
-      ]);
+      finalizeRunEntry(
+        [
+          { stream: 'stdout', line: 'Looks like you haven\u2019t started yet.' },
+          {
+            stream: 'stdout',
+            line: 'The starting code has numbered TODOs (// 1:, // 2:, \u2026). Fill those in, then click Run again.',
+          },
+        ],
+        'ok',
+      );
       return;
     }
 
@@ -492,24 +597,21 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                   line: '[paired] No paired devices. Open Settings to pair one, then come back.',
                 },
               ];
-        setOutputLines(lines);
-        if (isLastLessonOfChapter && !data.readOnly) {
-          setTab('tests');
-          setTestResults(runTests(userCode, data.tests));
-        }
+        finalizeRunEntry(lines, 'ok');
+        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
       if (!selectedPeerId) {
-        setOutputLines([
-          {
-            stream: 'stdout',
-            line: '[paired] Pick a paired device from the picker next to Run, then click Run again.',
-          },
-        ]);
-        if (isLastLessonOfChapter && !data.readOnly) {
-          setTab('tests');
-          setTestResults(runTests(userCode, data.tests));
-        }
+        finalizeRunEntry(
+          [
+            {
+              stream: 'stdout',
+              line: '[paired] Pick a paired device from the picker next to Run, then click Run again.',
+            },
+          ],
+          'ok',
+        );
+        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
       // Remote run: same downstream path as this-device, with peerId set below.
@@ -524,6 +626,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
 
     // The "no output produced" fallback below reads this, not a stale state read.
     let producedOutput: OutputLine[] = [];
+    let runStatus: 'ok' | 'err' | 'stopped' = 'ok';
 
     if (canRunForReal) {
       setIsAnimating(true);
@@ -556,7 +659,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           line,
         }));
         streamBuffer.push(...newLines);
-        setOutputLines((prev) => [...prev, ...newLines]);
+        setEntries((prev) =>
+          prev.map((e) => (e.id === runEntryId && e.kind === 'run' ? { ...e, lines: [...e.lines, ...newLines] } : e)),
+        );
         if (chunk.stream === 'stdout') scanForCaptures(chunk.data);
       });
       try {
@@ -573,6 +678,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             ...streamBuffer,
             { stream: 'stdout', line: '[error] no run result returned' },
           ];
+          runStatus = 'err';
           if (isRemoteRun && selectedPeerId) {
             setLastRemoteRun({
               kind: 'err',
@@ -605,6 +711,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
               : '[exit non-zero]';
           const tail = unstreamed(result.output ?? '', streamBuffer) || note;
           producedOutput = [...streamBuffer, { stream: 'stdout', line: tail }];
+          runStatus = result.stopRequested ? 'stopped' : 'err';
           if (isRemoteRun && selectedPeerId) {
             setLastRemoteRun({
               kind: 'err',
@@ -627,6 +734,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             line: `[error] ${err instanceof Error ? err.message : String(err)}`,
           },
         ];
+        runStatus = 'err';
         if (isRemoteRun && selectedPeerId) {
           setLastRemoteRun({
             kind: 'err',
@@ -678,11 +786,10 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       ];
     }
 
-    setOutputLines(producedOutput);
+    finalizeRunEntry(producedOutput, runStatus);
 
     if (isLastLessonOfChapter && !data.readOnly) {
-      setTab('tests');
-      setTestResults(runTests(userCode, data.tests));
+      check();
     }
   }, [
     runMode,
@@ -693,6 +800,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     isLastLessonOfChapter,
     resolveArgv,
     isDesktop,
+    check,
     realRemotePeers,
     selfPairCount,
     localIsOnlyHost,
@@ -701,8 +809,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
 
   const reset = useCallback(() => {
     setUserCode(data.startingCode);
-    setTestResults(null);
-    setOutputLines([]);
+    setEntries([]);
   }, [data.startingCode]);
 
   const stopRun = useCallback(() => {
@@ -749,22 +856,22 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             setUserCode={setUserCode}
             platform={platform}
             setPlatform={setPlatform}
-            tab={tab}
-            setTab={setTab}
             runMode={runMode}
             setRunMode={setRunMode}
             isDesktop={isDesktop}
-            testResults={testResults}
-            outputLines={outputLines}
+            entries={entries}
+            onStopCheck={stopCheck}
             isAnimating={isAnimating}
             onRun={run}
             onStop={stopRun}
+            stopRequested={stopRequested}
+            onCheck={check}
+            checkDisabled={data.tests.length === 0}
             onReset={reset}
             platforms={data.platforms}
             readOnly={data.readOnly}
             hints={data.hints}
             answer={data.answer}
-            outputKey={outputKey}
             argv={data.argv}
             argvOverrides={argvOverrides}
             argvCaptured={argvCaptured}
@@ -778,24 +885,13 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             localIsOnlyHost={localIsOnlyHost}
             lastRemoteRun={lastRemoteRun}
             clearLastRemoteRun={() => setLastRemoteRun(null)}
-            stopRequested={stopRequested}
-            lessonContext={
-              data.currentChapter && data.currentLesson
-                ? {
-                    chapter: data.currentChapter.slug,
-                    lesson: data.currentLesson.slug,
-                    title: data.currentLesson.title,
-                    reference: data.lessonReference,
-                  }
-                : null
-            }
           />
         </section>
       </div>
 
       {data.currentChapter ? (
         <nav className="sticky bottom-0 z-10 shrink-0 border-t border-canvas-border bg-canvas/95 backdrop-blur supports-[backdrop-filter]:bg-canvas/85 lg:static">
-          <div className="flex items-center gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-3.5">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-3.5">
             {data.prevUrl ? (
               <Link
                 href={data.prevUrl}
@@ -811,15 +907,21 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                   No code in this section
                 </span>
               ) : (
-                <button
-                  type="button"
-                  onClick={check}
-                  disabled={data.tests.length === 0}
-                  className="mx-auto inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
-                >
-                  <Check className="size-4" />
-                  <span>Check Answer</span>
-                </button>
+                <ChatInputBar
+                  entries={entries}
+                  setEntries={setEntries}
+                  lessonContext={
+                    data.currentChapter && data.currentLesson
+                      ? {
+                          chapter: data.currentChapter.slug,
+                          lesson: data.currentLesson.slug,
+                          title: data.currentLesson.title,
+                          reference: data.lessonReference,
+                        }
+                      : null
+                  }
+                  readOnly={data.readOnly}
+                />
               )
             ) : data.firstLessonHref ? (
               <Link
@@ -866,22 +968,22 @@ function Runner({
   setUserCode,
   platform,
   setPlatform,
-  tab,
-  setTab,
   runMode,
   setRunMode,
   isDesktop = false,
-  testResults,
-  outputLines,
+  entries,
+  onStopCheck,
   isAnimating,
   onRun,
   onStop,
+  stopRequested = false,
+  onCheck,
+  checkDisabled,
   onReset,
   platforms,
   readOnly = false,
   hints,
   answer,
-  outputKey,
   argv,
   argvOverrides,
   argvCaptured,
@@ -895,29 +997,27 @@ function Runner({
   localIsOnlyHost,
   lastRemoteRun,
   clearLastRemoteRun,
-  stopRequested = false,
-  lessonContext,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
   platform: LessonData['platforms'][number];
   setPlatform: (p: LessonData['platforms'][number]) => void;
-  tab: Tab;
-  setTab: (t: Tab) => void;
   runMode: RunMode;
   setRunMode: (m: RunMode) => void;
   isDesktop?: boolean;
-  testResults: null | ReturnType<typeof runTests>;
-  outputLines: OutputLine[];
+  entries: ConsoleEntry[];
+  onStopCheck: (entryId: string) => void;
   isAnimating: boolean;
   onRun: () => void;
   onStop?: () => void;
+  stopRequested?: boolean;
+  onCheck: () => void;
+  checkDisabled: boolean;
   onReset: () => void;
   platforms: LessonData['platforms'];
   readOnly?: boolean;
   hints: string[];
   answer: string;
-  outputKey: number;
   argv?: LessonArgvSlot[];
   argvOverrides: Record<string, string>;
   argvCaptured: Record<string, string>;
@@ -943,16 +1043,10 @@ function Runner({
       }
     | null;
   clearLastRemoteRun: () => void;
-  stopRequested?: boolean;
-  lessonContext: { chapter: string; lesson: string; title: string; reference?: string } | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [capturedCopiedKey, setCapturedCopiedKey] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  // AI assistant popover state. The button is part of the editor toolbar;
-  // the popover itself is portal-rendered, anchored to the button.
-  const [aiOpen, setAiOpen] = useState(false);
-  const aiButtonRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!lastRemoteRun) return;
     const id = setInterval(() => setTick((n) => n + 1), 1000);
@@ -1029,27 +1123,42 @@ function Runner({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
-          <HelpPanel
-            hints={hints}
-            answer={answer}
-            onReveal={() => setUserCode(answer)}
-            disabled={readOnly || !answer}
-          />
-          <AiAssistantButton
-            ref={aiButtonRef}
-            open={aiOpen}
-            onToggle={() => setAiOpen((v) => !v)}
-            disabled={readOnly}
-          />
           <button
             type="button"
-            aria-label="Reset code"
-            onClick={onReset}
-            disabled={readOnly}
-            className="rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title="Reset to starting code"
+            onClick={isAnimating ? onStop : onRun}
+            disabled={readOnly || (isAnimating ? stopRequested || !onStop : false)}
+            className={
+              isAnimating
+                ? stopRequested
+                  ? 'inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
+                  : 'inline-flex items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
+                : 'inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
+            }
+            title={stopRequested ? 'Stopping…' : isAnimating ? 'Stop run' : 'Run code (R)'}
+            aria-label={stopRequested ? 'Stopping' : isAnimating ? 'Stop run' : 'Run code'}
           >
-            <RotateCcw className="size-4" />
+            {isAnimating ? (
+              stopRequested ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <span>Stopping…</span>
+                </>
+              ) : (
+                <Square className="size-4 fill-current" />
+              )
+            ) : (
+              <Play className="size-4 fill-current" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={onCheck}
+            disabled={readOnly || checkDisabled}
+            className="rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            title="Check answer"
+            aria-label="Check answer"
+          >
+            <Check className="size-4" />
           </button>
           <select
             id="run-mode-select-desktop"
@@ -1124,32 +1233,21 @@ function Runner({
           >
             <option value="simulated">Simulated</option>
           </select>
+          <HelpPanel
+            hints={hints}
+            answer={answer}
+            onReveal={() => setUserCode(answer)}
+            disabled={readOnly || !answer}
+          />
           <button
             type="button"
-            onClick={isAnimating ? onStop : onRun}
-            disabled={readOnly || (isAnimating ? stopRequested || !onStop : false)}
-            className={
-              isAnimating
-                ? stopRequested
-                  ? 'inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
-                  : 'inline-flex items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
-                : 'inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
-            }
-            title={stopRequested ? 'Stopping…' : isAnimating ? 'Stop run' : 'Run code (R)'}
-            aria-label={stopRequested ? 'Stopping' : isAnimating ? 'Stop run' : 'Run code'}
+            aria-label="Reset code"
+            onClick={onReset}
+            disabled={readOnly}
+            className="rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            title="Reset to starting code"
           >
-            {isAnimating ? (
-              stopRequested ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  <span>Stopping…</span>
-                </>
-              ) : (
-                <Square className="size-4 fill-current" />
-              )
-            ) : (
-              <Play className="size-4 fill-current" />
-            )}
+            <RotateCcw className="size-4" />
           </button>
           <button
             type="button"
@@ -1275,99 +1373,71 @@ function Runner({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 border-t border-canvas-border bg-canvas px-2 pt-1.5 pb-1">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={`relative px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
-              tab === t
-                ? 'text-emerald-400'
-                : 'text-canvas-muted-foreground hover:text-canvas-foreground'
-            }`}
-          >
-            {t}
-            {tab === t ? (
-              <span className="absolute inset-x-0 bottom-0 mx-auto h-0.5 w-8 bg-emerald-400" />
-            ) : null}
-          </button>
-        ))}
-      </div>
-
-      <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted font-mono text-sm text-canvas-foreground">
-        {tab === 'output' ? (
-          runMode === 'remote' && remotePeers.length === 0 ? (
-            <div className="flex h-full items-center justify-center font-sans text-sm text-canvas-muted-foreground">
-              <div className="flex max-w-sm flex-col items-center gap-2 text-center">
-                {localIsOnlyHost ? (
-                  <>
-                    <div className="text-canvas-foreground">
-                      This device is the host in every pair.
-                    </div>
-                    <div>
-                      Hosts accept runs from guests; they don&apos;t forward them. Pair a second
-                      device (or run{' '}
-                      <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
-                        pnpm dev:host
-                      </code>{' '}
-                      in another terminal) and have it accept the invite, then come back.
-                    </div>
-                  </>
-                ) : selfPairCount > 0 ? (
-                  <>
-                    <div className="text-canvas-foreground">
-                      The only paired device is this device.
-                    </div>
-                    <div>
-                      Two app instances sharing a userData directory pair as the same identity, but
-                      the exec channel can&apos;t route between matching keys. Run{' '}
-                      <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
-                        pnpm dev:host
-                      </code>{' '}
-                      in a second terminal to launch an isolated host, then pair it from{' '}
-                      <Link
-                        href="/settings"
-                        className="text-emerald-400 underline-offset-2 hover:underline"
-                      >
-                        Settings
-                      </Link>
-                      .
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-canvas-foreground">No paired devices yet.</div>
-                    <div>
-                      Pair another device in{' '}
-                      <Link
-                        href="/settings"
-                        className="text-emerald-400 underline-offset-2 hover:underline"
-                      >
-                        Settings
-                      </Link>{' '}
-                      to run this lesson there.
-                    </div>
-                  </>
-                )}
-              </div>
+      {runMode === 'remote' && remotePeers.length === 0 ? (
+        <div className="flex h-[280px] shrink-0 items-center justify-center border-t border-canvas-border bg-canvas-muted font-sans text-sm text-canvas-muted-foreground">
+          <div className="flex max-w-sm flex-col items-center gap-2 text-center">
+            {localIsOnlyHost ? (
+              <>
+                <div className="text-canvas-foreground">
+                  This device is the host in every pair.
+                </div>
+                <div>
+                  Hosts accept runs from guests; they don&apos;t forward them. Pair a second
+                  device (or run{' '}
+                  <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
+                    pnpm dev:host
+                  </code>{' '}
+                  in another terminal) and have it accept the invite, then come back.
+                </div>
+              </>
+            ) : selfPairCount > 0 ? (
+              <>
+                <div className="text-canvas-foreground">
+                  The only paired device is this device.
+                </div>
+                <div>
+                  Two app instances sharing a userData directory pair as the same identity, but
+                  the exec channel can&apos;t route between matching keys. Run{' '}
+                  <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
+                    pnpm dev:host
+                  </code>{' '}
+                  in a second terminal to launch an isolated host, then pair it from{' '}
+                  <Link
+                    href="/settings"
+                    className="text-emerald-400 underline-offset-2 hover:underline"
+                  >
+                    Settings
+                  </Link>
+                  .
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-canvas-foreground">No paired devices yet.</div>
+                <div>
+                  Pair another device in{' '}
+                  <Link
+                    href="/settings"
+                    className="text-emerald-400 underline-offset-2 hover:underline"
+                  >
+                    Settings
+                  </Link>{' '}
+                  to run this lesson there.
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {runMode === 'remote' ? (
+            <div className="shrink-0 border-t border-canvas-border bg-canvas-muted px-3 py-1.5 font-mono text-sm text-canvas-foreground">
+              <GuestRunStrip />
             </div>
-          ) : (
-            <>
-              {runMode === 'remote' ? <GuestRunStrip /> : null}
-              <OutputView key={outputKey} lines={outputLines} isAnimating={isAnimating} />
-            </>
-          )
-        ) : null}
-        {tab === 'tests' ? <TestsView results={testResults} tests={null as never} /> : null}
-      </div>
-
-      <AiAssistant
-        open={aiOpen}
-        onClose={() => setAiOpen(false)}
-        anchorRef={aiButtonRef}
-        lessonContext={lessonContext}
-      />
+          ) : null}
+          <LessonConsole entries={entries} onStopCheck={onStopCheck} />
+        </>
+      )}
     </div>
   );
 }
@@ -1404,336 +1474,6 @@ function formatDuration(ms: number): string {
   const hr = Math.floor(min / 60);
   const m2 = min % 60;
   return `${hr}h ${m2}m`;
-}
-
-// Every write logs `[saved] <absolute path>`, which the footer makes clickable.
-const SAVED_LINE = /^\[saved\]\s+(.+)$/;
-
-function savedFilesFrom(lines: OutputLine[]): string[] {
-  const out: string[] = [];
-  for (const { line } of lines) {
-    const m = line.match(SAVED_LINE);
-    if (m?.[1] && !out.includes(m[1])) out.push(m[1]);
-  }
-  return out;
-}
-
-function SavedFilesBar({ files }: { files: string[] }) {
-  const home = files[0]?.match(/^(\/Users\/[^/]+|\/home\/[^/]+|[A-Z]:\\Users\\[^\\]+)/)?.[1];
-  const pretty = (p: string) => (home && p.startsWith(home) ? `~${p.slice(home.length)}` : p);
-  return (
-    <div className="mt-3 space-y-2 border-t border-canvas-border pt-2 font-sans text-xs">
-      {files.map((file) => (
-        <SavedPreview key={`preview-${file}`} file={file} />
-      ))}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-xs">
-        <span className="text-canvas-muted-foreground">
-          Saved {files.length === 1 ? 'file' : `${files.length} files`} to
-        </span>
-        {files.map((file) => (
-          <button
-            key={file}
-            type="button"
-            onClick={() => void window.academy?.reveal?.(file)}
-            className="max-w-full truncate rounded border border-canvas-border px-2 py-0.5 text-canvas-foreground hover:bg-canvas-muted"
-            title={`Show ${file} in your file manager`}
-          >
-            {pretty(file)}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const PREVIEWABLE_EXTS = new Set([
-  'png',
-  'jpg',
-  'jpeg',
-  'webp',
-  'gif',
-  'mp4',
-  'webm',
-  'mov',
-  'avi',
-  'mp3',
-  'wav',
-]);
-
-function isPreviewable(file: string): boolean {
-  const m = file.toLowerCase().match(/[^./]+\.([a-z0-9]+)$/);
-  return !!m && PREVIEWABLE_EXTS.has(m[1]);
-}
-
-function SavedPreview({ file }: { file: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [kind, setKind] = useState<'image' | 'video' | 'audio' | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSrc(null);
-    setKind(null);
-    if (!isPreviewable(file)) return () => {};
-    if (typeof window === 'undefined' || !window.academy?.readSaved) return () => {};
-    void window.academy
-      .readSaved(file)
-      .then((res) => {
-        if (cancelled || !res) return;
-        const lower = file.toLowerCase();
-        if (
-          lower.endsWith('.png') ||
-          lower.endsWith('.jpg') ||
-          lower.endsWith('.jpeg') ||
-          lower.endsWith('.webp') ||
-          lower.endsWith('.gif')
-        ) {
-          setKind('image');
-        } else if (
-          lower.endsWith('.mp4') ||
-          lower.endsWith('.webm') ||
-          lower.endsWith('.mov') ||
-          lower.endsWith('.avi')
-        ) {
-          setKind('video');
-        } else if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
-          setKind('audio');
-        }
-        setSrc(`data:${res.mime};base64,${res.base64}`);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [file]);
-
-  if (!kind || !src) return null;
-  if (kind === 'image') {
-    return (
-      <img
-        src={src}
-        alt="Saved by this run"
-        className="max-h-72 max-w-full rounded"
-      />
-    );
-  }
-  if (kind === 'video') {
-    return (
-      <video
-        src={src}
-        controls
-        className="max-h-72 max-w-full rounded"
-      />
-    );
-  }
-  return (
-    <audio src={src} controls className="w-full" />
-  );
-}
-
-function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {
-  const savedFiles = savedFilesFrom(lines);
-  // Find the latest finetune tick. Format: `▸ epoch=1 step=1 batch=1/16 ...`.
-  const tickPattern = /epoch=(\d+)\s+step=(\d+)\s+batch=(\d+)\/(\d+)/;
-  // The trainer skips a tick on the last step, so without this the bar caps below 100%.
-  const completedPattern = /(Training completed through step \d+|status:\s*COMPLETED)/;
-  const progress = (() => {
-    let latestStep = 0;
-    let latestEpoch = 1;
-    let totalBatches = 0;
-    let completed = false;
-    for (const { line } of lines) {
-      const m = line.match(tickPattern);
-      if (m) {
-        latestEpoch = Number(m[1]);
-        latestStep = Number(m[2]);
-        if (Number(m[4]) > totalBatches) totalBatches = Number(m[4]);
-      }
-      if (completedPattern.test(line)) completed = true;
-    }
-    if (totalBatches === 0) return null;
-    const totalEpochs = Math.max(1, Math.ceil(latestStep / totalBatches));
-    const totalSteps = totalEpochs * totalBatches;
-    const percent = completed ? 100 : Math.min(100, Math.round((latestStep / totalSteps) * 100));
-    return {
-      currentStep: latestStep,
-      totalSteps,
-      epoch: latestEpoch,
-      totalEpochs,
-      percent,
-      completed,
-    };
-  })();
-  // Rotating word indicator so a slow first-token latency doesn't look like a frozen run.
-  const THINKING_WORDS = [
-    'Thinking',
-    'Strategizing',
-    'Analyzing',
-    'Reasoning',
-    'Considering',
-    'Advancing',
-    'Processing',
-    'Reflecting',
-    'Pondering',
-    'Adjusting',
-    'Distilling',
-    'Synthesizing',
-    'Working',
-    'Computing',
-    'Crunching',
-  ];
-  const [wordIndex, setWordIndex] = useState(0);
-  useEffect(() => {
-    if (!isAnimating) {
-      setWordIndex(0);
-      return;
-    }
-    const id = setInterval(() => {
-      setWordIndex((i) => (i + 1) % THINKING_WORDS.length);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [isAnimating]);
-
-  return (
-    <div className="space-y-1 p-4 text-canvas-muted-foreground">
-      {lines.length === 0 && !isAnimating ? (
-        <>
-          <p className="text-emerald-400">$ Run your code to see results</p>
-          <p>
-            <span className="text-emerald-400">$</span>
-            <span className="ml-1 inline-block h-3 w-2 animate-pulse bg-emerald-400 align-middle" />
-          </p>
-        </>
-      ) : null}
-      {progress ? (
-        <div className="mb-2 rounded border border-canvas-border bg-canvas/50 p-2">
-          <div className="mb-1 flex items-center justify-between font-mono text-xs">
-            <span className="text-emerald-400">
-              {progress.completed
-                ? 'Training complete'
-                : `Training: step ${progress.currentStep} / ${progress.totalSteps} (epoch ${progress.epoch} / ${progress.totalEpochs})`}
-            </span>
-            <span className="text-canvas-muted-foreground">{progress.percent}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-canvas-muted">
-            <div
-              className="h-full bg-emerald-500 transition-all duration-300 ease-out"
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
-        </div>
-      ) : null}
-      {(() => {
-        // Collapses single newlines to spaces and keeps double as paragraph breaks; falls back to line-by-line when finetune progress lines are present.
-        const hasFinetuneProgress = lines.some(
-          (e) => e.stream === 'stdout' && /^▸\s+epoch=/.test(e.line),
-        );
-
-        if (hasFinetuneProgress) {
-          const firstBlank = lines.findIndex((e) => e.stream === 'stdout' && e.line === '');
-          const prefixEnd = firstBlank === -1 ? lines.length : firstBlank;
-          return lines.map((entry, i) => {
-            const isStderr = entry.stream === 'stderr';
-            const isPrefix = !isStderr && i < prefixEnd;
-            const className =
-              isStderr || isPrefix
-                ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
-                : 'whitespace-pre-wrap';
-            return (
-              <p key={i} className={className}>
-                {entry.line}
-              </p>
-            );
-          });
-        }
-
-        const stdoutText = lines
-          .filter((e) => e.stream === 'stdout')
-          .map((e) => e.line)
-          .join('\n');
-        const stdoutParagraphs = stdoutText
-          .split(/\n{2,}/)
-          .map((p) => p.replace(/\n+/g, ' ').trim())
-          .filter(Boolean);
-        const dimFirstStdout = stdoutParagraphs.length > 1;
-
-        const stderrLines = lines.filter((e) => e.stream === 'stderr');
-
-        const renderStdout = stdoutParagraphs.map((para, i) => {
-          const isPrefix = dimFirstStdout && i === 0;
-          return (
-            <p
-              key={`out-${i}`}
-              className={
-                isPrefix
-                  ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
-                  : 'whitespace-pre-wrap'
-              }
-            >
-              {para}
-            </p>
-          );
-        });
-
-        const renderStderr = stderrLines.map((entry, i) => (
-          <p
-            key={`err-${i}`}
-            className="whitespace-pre-wrap text-canvas-muted-foreground/60 italic"
-          >
-            {entry.line}
-          </p>
-        ));
-
-        return (
-          <>
-            {renderStdout}
-            {renderStderr}
-          </>
-        );
-      })()}
-      {isAnimating ? (
-        <p className="text-emerald-400">
-          <span
-            key={wordIndex}
-            className="inline-block animate-pulse animate-in fade-in slide-in-from-left-2 duration-200"
-          >
-            {THINKING_WORDS[wordIndex]}...
-          </span>
-        </p>
-      ) : null}
-      {savedFiles.length > 0 ? <SavedFilesBar files={savedFiles} /> : null}
-    </div>
-  );
-}
-
-function TestsView({ results }: { results: null | ReturnType<typeof runTests>; tests: never }) {
-  if (!results) {
-    return (
-      <p className="p-4 text-canvas-muted-foreground">
-        Click <span className="text-emerald-400">Check Answer</span> in the tutorial to run the
-        tests.
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-1.5 p-4 text-canvas-foreground">
-      {results.map((r) => (
-        <li key={r.id} className="flex items-start gap-2">
-          <span
-            className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm border ${
-              r.passed
-                ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-400'
-                : 'border-canvas-border text-canvas-muted-foreground'
-            }`}
-          >
-            {r.passed ? <Check className="size-3" /> : <X className="size-3" />}
-          </span>
-          <span className={r.passed ? 'text-canvas-foreground' : 'text-canvas-muted-foreground'}>
-            {r.description}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 // Pattern flags must match the runner's logic so a passing test here also passes the browser's Check Answer.

@@ -459,6 +459,16 @@ handle('academy:chat:send', async (parsed) => {
   });
   return result;
 });
+handle('academy:chat:verify', async (parsed) => {
+  const result = await chat.verify({
+    code: parsed.code,
+    tests: parsed.tests,
+    lessonKey: parsed.lessonKey,
+    lessonReference: parsed.lessonReference,
+    modelHint: parsed.modelHint,
+  });
+  return result;
+});
 handle('academy:chat:stop', async (requestId) => chat.stop(requestId));
 handle('academy:chat:docs-status', async () => chat.docsStatus());
 handle('academy:chat:docs-refresh', async () => chat.docsRefresh());
@@ -470,6 +480,7 @@ handle('academy:device:info', async () => getDeviceInfo());
 // the listeners at module load so they're live for the lifetime of the app;
 // late subscribers pick up chunks from any in-flight requests.
 chat.onChunk((chunk) => sendToAll('academy:chat:chunk', chunk));
+chat.onVerifyResult((result) => sendToAll('academy:chat:verify-result', result));
 chat.onLoadProgress((progress) => sendToAll('academy:chat:load-progress', progress));
 
 handle('academy:peer:identity', async () => {

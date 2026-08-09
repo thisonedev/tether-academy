@@ -7,7 +7,7 @@
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { createThinkingFilter } = require('./chat-thinking-filter.cjs');
-const { buildSystemPrompt } = require('./chat-context.cjs');
+const { buildSystemPrompt, buildVerifySystemPrompt } = require('./chat-context.cjs');
 const { refreshDocs, getCachedDocs } = require('./chat-docs.cjs');
 const { createMarkdownStripper } = require('./chat-strip-markdown.cjs');
 const { splitParagraphs } = require('./chat-paragraph-splitter.cjs');
@@ -236,16 +236,10 @@ function approxContextWindow(filename) {
   return 2048;
 }
 
-async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHint }) {
-  const sdk = require('@qvac/sdk');
-  if (typeof sdk.completion !== 'function') {
-    throw new Error('@qvac/sdk does not export completion in this build');
-  }
-
-  const requestId = newRequestId();
-
-  // Pick a model in priority order: explicit hint from the renderer, anything
-  // already loaded, otherwise the smallest installed chat model.
+// Pick a model in priority order: explicit hint from the renderer, anything
+// already loaded, otherwise the smallest installed chat model. Shared by
+// send() and verify() so the priority order only lives in one place.
+async function resolveModel(modelHint) {
   if (modelHint && modelHint !== current.filename) {
     await ensureLoaded(modelHint);
   } else if (!current.modelId) {
@@ -256,8 +250,17 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
       throw new Error('no model loaded; pick one in the AI assistant panel first');
     }
   }
+  return current.filename;
+}
 
-  const modelName = current.filename;
+async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHint }) {
+  const sdk = require('@qvac/sdk');
+  if (typeof sdk.completion !== 'function') {
+    throw new Error('@qvac/sdk does not export completion in this build');
+  }
+
+  const requestId = newRequestId();
+  const modelName = await resolveModel(modelHint);
   const ctxWindow = approxContextWindow(modelName);
 
   // Carve out a third of the window for the lesson reference. The system
@@ -384,6 +387,141 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
   return { requestId, modelName: current.filename };
 }
 
+const VERIFY_VERDICTS = new Set(['pass', 'partial', 'fail']);
+
+// Extracts the model's JSON verdict from its raw text output (some local
+// models wrap JSON in prose or markdown fences despite instructions not to).
+// Returns null on any shape mismatch; the caller reports that as an error
+// rather than showing a mis-parsed result.
+function parseVerifyResponse(text, tests) {
+  if (typeof text !== 'string' || text.length === 0) return null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) return null;
+
+  // Whitelist against the tests we actually sent; the model's ids are
+  // untrusted input, and mismatched/duplicate/extra ids are silently dropped.
+  const knownIds = new Set(tests.map((t) => t.id));
+  const byId = new Map();
+  for (const raw of parsed.items) {
+    if (!raw || typeof raw !== 'object') continue;
+    const id = typeof raw.id === 'string' ? raw.id : null;
+    if (!id || !knownIds.has(id)) continue;
+    const verdict = VERIFY_VERDICTS.has(raw.verdict) ? raw.verdict : 'unknown';
+    const reason = typeof raw.reason === 'string' ? raw.reason.slice(0, 500) : '';
+    byId.set(id, { id, verdict, reason });
+  }
+  const items = tests.map(
+    (t) => byId.get(t.id) ?? { id: t.id, verdict: 'unknown', reason: 'The AI did not evaluate this item.' },
+  );
+  const summary = typeof parsed.summary === 'string' ? parsed.summary.slice(0, 1000) : '';
+  return { items, summary };
+}
+
+// Semantic grading pass on top of the lesson's regex/contains checks. Only
+// called once those already pass, so this judges whether the code is
+// actually correct rather than merely containing the right keywords.
+async function verify({ code, tests, lessonKey, lessonReference, modelHint }) {
+  const sdk = require('@qvac/sdk');
+  if (typeof sdk.completion !== 'function') {
+    throw new Error('@qvac/sdk does not export completion in this build');
+  }
+
+  const requestId = newRequestId();
+  const modelName = await resolveModel(modelHint);
+  const ctxWindow = approxContextWindow(modelName);
+  // Reasoning models (the Qwen3 presets all think by default) can spend
+  // most of a small budget inside <think>...</think> before ever reaching
+  // the JSON answer; if predict runs out first, chat-thinking-filter.cjs
+  // discards the whole in-progress thinking block and parseVerifyResponse
+  // gets nothing. Half the context window gives real room for both.
+  const predictBudget = Math.max(300, Math.floor(ctxWindow / 2));
+
+  const lessonBudget = Math.max(64, Math.floor((ctxWindow - predictBudget) / 4));
+  const lessonContext =
+    typeof lessonReference === 'string' && lessonReference.length > 0
+      ? { content: lessonReference.slice(0, lessonBudget * 4) }
+      : null;
+
+  const systemPrompt = buildVerifySystemPrompt(lessonKey, lessonContext, tests);
+  const promptTokens = approxTokens(systemPrompt);
+  // Headroom matches predictBudget so prompt + response actually fit ctxWindow.
+  const codeBudget = Math.max(200, ctxWindow - promptTokens - predictBudget);
+  const codeCapped = code.slice(0, codeBudget * 4);
+
+  const history = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `STUDENT CODE:\n${codeCapped}` },
+  ];
+
+  const controller = new AbortController();
+  inflight.set(requestId, controller);
+
+  // Unlike send(), the renderer doesn't need token-by-token text — only the
+  // final structured verdict — so deltas are collected silently and only
+  // the assembled result is emitted, once, via a dedicated event.
+  (async () => {
+    const thinkingFilter = createThinkingFilter();
+    let assembled = '';
+    try {
+      const result = sdk.completion({
+        modelId: current.modelId,
+        history,
+        stream: true,
+        captureThinking: false,
+        signal: controller.signal,
+        generationParams: { predict: predictBudget, temp: 0.2 },
+      });
+      for await (const event of result.events) {
+        if (controller.signal.aborted) break;
+        if (!event || typeof event !== 'object') continue;
+        const type = event.type;
+        if ((type === 'contentDelta' || type === 'rawDelta') && typeof event.text === 'string' && event.text.length > 0) {
+          assembled += thinkingFilter.push(event.text);
+        } else if (type === 'toolError' && typeof event.error === 'string') {
+          emitVerifyResult({ requestId, done: true, error: `tool error: ${event.error}`, result: null });
+          return;
+        }
+      }
+      assembled += thinkingFilter.flush();
+      const parsed = parseVerifyResponse(assembled, tests);
+      if (!parsed) {
+        emitVerifyResult({
+          requestId,
+          done: true,
+          error: 'The AI reviewer returned an unexpected response. Try Check Answer again.',
+          result: null,
+        });
+        return;
+      }
+      emitVerifyResult({ requestId, done: true, error: null, result: parsed });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      emitVerifyResult({ requestId, done: true, error: message, result: null });
+    } finally {
+      inflight.delete(requestId);
+    }
+  })();
+
+  return { requestId, modelName };
+}
+
+function emitVerifyResult(payload) {
+  events.emit('verifyResult', payload);
+}
+
+function onVerifyResult(callback) {
+  events.on('verifyResult', callback);
+  return () => events.off('verifyResult', callback);
+}
+
 function stop(requestId) {
   const controller = inflight.get(requestId);
   if (!controller) return false;
@@ -407,8 +545,10 @@ module.exports = {
   currentModel,
   load,
   send,
+  verify,
   stop,
   onChunk,
+  onVerifyResult,
   onLoadProgress,
   unload,
   docsStatus: () => docsStatusFromCache(),

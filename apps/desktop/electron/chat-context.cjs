@@ -52,10 +52,30 @@ function buildSystemPrompt(lessonKey, lessonContext, docs) {
   ].filter(Boolean).join('\n');
 }
 
+function buildVerifySystemPrompt(lessonKey, lessonContext, tests) {
+  const base = lessonKey
+    ? `You are grading a student's code for a Tether Academy lesson (chapter: ${lessonKey.chapter}, lesson: ${lessonKey.lesson}).`
+    : "You are grading a student's code for a Tether Academy lesson.";
+  const lesson = trimLessonContext(lessonContext);
+  const checklist = tests.map((t) => `- ${t.id}: ${t.description}`).join('\n');
+  return [
+    base,
+    "The code already matched the lesson's required keywords or patterns. Your job is to judge whether it is actually correct and complete, not just superficially present.",
+    'For EACH checklist item below, decide exactly one verdict: "pass" (correctly and fully implemented), "partial" (attempted but incomplete, a stub, a TODO, or logically wrong), or "fail" (not implemented at all).',
+    'A function or keyword being present with an empty body, a placeholder return, or a comment instead of real logic is "partial", never "pass".',
+    'Give one short sentence of reason per item. Do not restate or reveal the full correct solution; describe what is missing or wrong instead.',
+    'Respond with ONLY minified JSON matching exactly this shape, nothing else, no markdown fences, no commentary before or after it:',
+    '{"items":[{"id":"<test id>","verdict":"pass"|"partial"|"fail","reason":"<one sentence>"}],"summary":"<1-3 sentences on what remains to finish the lesson>"}',
+    lesson ? `LESSON REFERENCE:\n${lesson}` : '',
+    `CHECKLIST:\n${checklist}`,
+  ].filter(Boolean).join('\n');
+}
+
 module.exports = {
   MAX_LESSON_CONTEXT_BYTES,
   MAX_DOCS_PROMPT_BYTES,
   trimLessonContext,
   trimDocs,
   buildSystemPrompt,
+  buildVerifySystemPrompt,
 };

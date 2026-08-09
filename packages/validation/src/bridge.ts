@@ -120,6 +120,31 @@ export interface AcademyChatSendResult {
   modelName: string;
 }
 
+/** Per-checklist-item grade from the AI verification pass. 'unknown' means the model's
+ *  response didn't cover this item (parse mismatch, not a real judgment). */
+export type ChatVerifyVerdict = 'pass' | 'partial' | 'fail' | 'unknown';
+
+export interface ChatVerifyItemResult {
+  id: string;
+  verdict: ChatVerifyVerdict;
+  reason: string;
+}
+
+export interface ChatVerifyResult {
+  items: ChatVerifyItemResult[];
+  summary: string;
+}
+
+/** Delivered once via `onVerifyResult`, keyed by the `requestId` `chat.verify` returned.
+ *  Unlike `AcademyChatChunk`, this is a single structured result, not a streamed delta. */
+export interface AcademyChatVerifyChunk {
+  requestId: string;
+  done: true;
+  /** Error message if the call failed or the model's output couldn't be parsed; `result` is null in that case. */
+  error: string | null;
+  result: ChatVerifyResult | null;
+}
+
 export interface AcademyChatAPI {
   /** True if a model is loaded and ready to answer. */
   ready: () => Promise<boolean>;
@@ -150,10 +175,24 @@ export interface AcademyChatAPI {
     useFullDocs?: boolean;
     modelHint?: string;
   }) => Promise<AcademyChatSendResult>;
+  /**
+   * Run the AI grading pass over a checklist that already passed its regex/contains
+   * checks. The host streams nothing back for this call; the verdict arrives once,
+   * via `onVerifyResult`, keyed by the returned `requestId`.
+   */
+  verify: (payload: {
+    code: string;
+    tests: Array<{ id: string; description: string }>;
+    lessonKey: { chapter: string; lesson: string } | null;
+    lessonReference?: string;
+    modelHint?: string;
+  }) => Promise<AcademyChatSendResult>;
   /** Cancel an in-flight request. Returns true if a request was actually cancelled. */
   stop: (requestId: string) => Promise<boolean>;
   /** Subscribe to chat chunks. Returns an unsubscribe function. */
   onChunk: (callback: (chunk: AcademyChatChunk) => void) => () => void;
+  /** Subscribe to verify results. Returns an unsubscribe function. */
+  onVerifyResult: (callback: (chunk: AcademyChatVerifyChunk) => void) => () => void;
   /** Subscribe to model-loading progress (for the first-run "downloading model" UI). */
   onLoadProgress: (callback: (event: { modelName: string; loaded: number; total: number }) => void) => () => void;
 }
