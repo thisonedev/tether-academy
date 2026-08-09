@@ -922,11 +922,27 @@ if (!lock) {
         // already gone
       }
     }
+    // A lesson Run in flight has its own detached process group (so killGroup
+    // also reaches the QVAC worker it spawns). It outlives the app unless
+    // aborted here.
+    if (currentRun) {
+      try {
+        currentRun.abort();
+      } catch {
+        // already gone
+      }
+    }
     pearEnd
       .shutdown()
       .catch((err) => console.warn('[tether-academy-desktop] shutdown error:', err?.message ?? err))
       .finally(() => app.quit());
   });
+  // Ctrl+C sends SIGINT straight to this process. Node's default is to exit
+  // immediately with no cleanup, which is how the processes above get
+  // orphaned. Routing both through app.quit() gives them the same
+  // before-quit teardown as a normal Quit.
+  process.on('SIGINT', () => app.quit());
+  process.on('SIGTERM', () => app.quit());
   app.whenReady().then(async () => {
     const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
     if (fsSync().existsSync(path.join(staticDir, 'index.html'))) {
