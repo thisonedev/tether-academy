@@ -96,12 +96,14 @@ function confinedPaths(userData, home = os.homedir()) {
  */
 function defaultTemplateVars(overrides = {}) {
   const appRoot = path.resolve(__dirname, '..', '..');
-  const coursesDir = path.resolve(appRoot, '..', '..', 'packages', 'courses');
+  const workspaceRoot = path.resolve(appRoot, '..', '..');
+  const coursesDir = path.resolve(workspaceRoot, 'packages', 'courses');
   const home = os.homedir();
   const tmpDir = realpathSafe(os.tmpdir());
   return {
     projectDir: overrides.projectDir || process.cwd(),
     appRoot,
+    workspaceRoot,
     coursesDir,
     homeDir: home,
     tmpDir,
@@ -329,6 +331,10 @@ const CAPABILITIES = {
         'LIN:/usr/share/locale',
         'LIN:/usr/share/zoneinfo',
         'LIN:/usr/share/icu',
+        // apps/desktop/node_modules symlinks hoisted deps into the pnpm
+        // workspace root's store, outside appRoot. Packaged builds ship a
+        // flat node_modules and never need this.
+        'LIN:<%= workspaceRoot %>/node_modules/.pnpm',
         'COM:/etc/resolv.conf',
         'COM:/etc/hosts',
         'COM:/etc/localtime',

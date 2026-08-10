@@ -5,6 +5,8 @@
 export interface TemplateVars {
   projectDir?: string;
   appRoot: string;
+  /** pnpm workspace root (appRoot's grandparent); Linux binds hoisted deps from here. */
+  workspaceRoot: string;
   coursesDir: string;
   homeDir: string;
   tmpDir: string;

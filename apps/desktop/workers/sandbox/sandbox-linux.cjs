@@ -116,6 +116,12 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
   args.push('--die-with-parent');
   args.push('--new-session');
 
+  // Empty tmpfs root: unbound host paths are absent, not inherited with
+  // full host permissions. --remount-ro below locks it in; --proc is
+  // needed since an empty root has no procfs for the runtime to start.
+  args.push('--tmpfs', '/');
+  args.push('--proc', '/proc');
+
   // Scratch tmpfs so writes don't persist past the child; must precede the binds (bwrap applies ops in order).
   args.push('--tmpfs', '/tmp');
   args.push('--tmpfs', '/home');
@@ -151,6 +157,10 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     args.push('--dev-bind-try', '/dev/video0', '/dev/video0');
     warnings.push('linux sandbox: camera access granted to this run');
   }
+
+  // Non-recursive: locks the root, but /tmp, /home, and their bind-mounted
+  // writable subdirs (separate mounts) stay writable.
+  args.push('--remount-ro', '/');
 
   // unshare-all drops net; share only when mode isn't 'none'. bwrap can't
   // filter by domain, so 'all'/'localhost' both share the host net.
