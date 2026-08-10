@@ -6,6 +6,8 @@
 // every other bwrap flag is per-path or per-namespace. An architecture not
 // named in SYSCALLS gets no filter, and the caller refuses the spawn.
 
+const process = require('process');
+
 const OFFSET_NR = 0;
 const OFFSET_ARCH = 4;
 
