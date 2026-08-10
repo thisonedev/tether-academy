@@ -250,6 +250,19 @@ function pathToExecRegex(dir) {
   return `^${escaped}/.*`;
 }
 
+// node/npm/npx style installs resolve to a symlink into a whole package
+// tree (e.g. .../lib/node_modules/npm/bin/npx-cli.js), which requires
+// sibling files across that package; binding just the file's own directory
+// leaves those requires unresolved. Walk up to the package root instead.
+function packageRootFor(p) {
+  const parts = p.split(path.sep);
+  const idx = parts.lastIndexOf('node_modules');
+  if (idx === -1 || idx + 1 >= parts.length) return null;
+  const nameParts = parts[idx + 1].startsWith('@') ? 2 : 1;
+  if (idx + nameParts >= parts.length) return null;
+  return parts.slice(0, idx + 1 + nameParts).join(path.sep);
+}
+
 function appendExtraExec(cap, paths, regexes = []) {
   const list = (paths ?? []).filter(Boolean);
   const reList = (regexes ?? []).filter(Boolean);
@@ -260,7 +273,7 @@ function appendExtraExec(cap, paths, regexes = []) {
     for (const variant of new Set([p, realpathSafe(p)])) {
       readExtra.push(variant);
       try {
-        readExtra.push(path.dirname(variant));
+        readExtra.push(packageRootFor(variant) ?? path.dirname(variant));
       } catch {}
     }
   }
