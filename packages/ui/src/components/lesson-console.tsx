@@ -560,7 +560,7 @@ const VERDICT_WORD: Record<MatchStatus, string> = {
   complete: 'Complete',
   'different-but-valid': 'Valid',
   unfinished: 'Unfinished',
-  wrong: 'Not right yet',
+  wrong: 'Not there yet',
 };
 
 // Bare period for anything the AI grades; a fixed filler phrase would
