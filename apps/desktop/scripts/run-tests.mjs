@@ -100,7 +100,9 @@ for (const file of files) {
     // refusal message and would otherwise never show up here.
     const relevant = out
       .split('\n')
-      .filter((line) => /^\s*not ok|^Error:|^TypeError:/.test(line) || (/^\[peer\]/.test(line) && !/^\[peer\] ready/.test(line)))
+      .filter((line) =>
+        /^\s*not ok|^Error:|^TypeError:|^\s*(actual|expected|operator):/.test(line)
+        || (/^\[peer\]/.test(line) && !/^\[peer\] ready/.test(line)))
       .slice(0, 40);
     for (const line of relevant) console.log(`        ${line.trim()}`);
   }
