@@ -107,11 +107,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # A single client.init() resolves fine standalone (confirmed
-      # separately), so reproduce the full two-worker pairing handshake
-      # pairForExec actually does, outside brittle/run-tests.mjs where
-      # nothing can swallow the error.
-      - name: check worker-client pairing
+      # Pairing alone works fine standalone (confirmed separately), so probe
+      # one step further: a real exec over the paired channel, matching what
+      # every failing test actually does.
+      - name: check worker-client exec
         if: runner.os == 'Linux'
         working-directory: apps/desktop
         run: |
@@ -180,8 +179,17 @@ jobs:
             });
 
             console.log('waiting for peer:paired on both sides...');
-            await Promise.all([hostPaired, guestPaired]);
-            console.log('paired');
+            const [, guestEvent] = await Promise.all([hostPaired, guestPaired]);
+            console.log('paired, discoveryKey =', guestEvent.discoveryKey);
+
+            console.log('probing exec channel...');
+            const execResult = await new Promise((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error('exec probe timed out after 15000ms')), 15_000);
+              const emitter = guest.exec({ peerId: guestEvent.discoveryKey, mode: 'inline', code: 'null' });
+              emitter.on('exit', (info) => { clearTimeout(timer); resolve(info); });
+              emitter.on('error', (err) => { clearTimeout(timer); reject(err); });
+            });
+            console.log('exec resolved:', JSON.stringify(execResult));
 
             await host.shutdownWorker();
             await guest.shutdownWorker();
