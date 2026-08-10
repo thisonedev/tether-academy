@@ -1,8 +1,5 @@
-// Local-model chat backend for the AI assistant popover. Streams
-// `completion()` deltas back to the renderer over IPC events.
-//
-// The host does not drive model downloads. If the model file is not on
-// disk, `send()` throws a clear error and the UI falls back to the picker.
+// The host does not drive model downloads: `send()` throws if the model
+// file is not on disk, and the UI falls back to the picker.
 
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
@@ -47,7 +44,7 @@ let current = {
   preset: null,
 };
 
-// In-flight requests, keyed by requestId. Used to cancel a stream mid-flight.
+// Keyed by requestId so stop() can find and cancel a stream.
 const inflight = new Map();
 
 function emitChunk(chunk) {
@@ -143,6 +140,40 @@ async function adoptLoadedFromSdk() {
   }
 }
 
+// Dedupe on-disk files for the same chat model. The SDK writes each
+// download as `<sourceHash>_<filename>` where sourceHash is
+// generateShortHash(registryPath); an SDK upgrade that bumps the bundled
+// descriptor's path produces a fresh file without removing the prior one,
+// so the picker sees two rows for the same model.
+async function dedupeModelFiles(filename) {
+  const { listModels, removeModel } = require('./models.cjs');
+  const items = await listModels();
+  const group = items.filter((it) => it.kind === 'single' && it.name === filename);
+  if (group.length < 2) return { kept: null, removed: 0, freedBytes: 0 };
+  const withMtime = await Promise.all(
+    group.map(async (it) => {
+      const st = await require('node:fs/promises').stat(
+        require('node:path').join(require('node:os').homedir(), '.qvac', 'models', it.id),
+      ).catch(() => null);
+      return { ...it, mtimeMs: st ? st.mtimeMs : 0 };
+    }),
+  );
+  withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const kept = withMtime[0];
+  let removed = 0;
+  let freedBytes = 0;
+  for (const it of withMtime.slice(1)) {
+    try {
+      const r = await removeModel(it.id);
+      removed += r.removed;
+      freedBytes += r.freedBytes;
+    } catch (err) {
+      console.warn('[chat] dedupe remove failed', it.id, err && err.message);
+    }
+  }
+  return { kept, removed, freedBytes };
+}
+
 async function ensureLoaded(filename) {
   if (current.filename === filename && current.modelId !== null) return current;
   const modelSrc = resolvePresetConstant(filename);
@@ -160,6 +191,14 @@ async function ensureLoaded(filename) {
   console.log('[chat] ensureLoaded start', { filename, preset: modelSrc.name, existing });
   if (existing && existing.modelId) {
     current = { filename, modelId: existing.modelId, preset: modelSrc.name };
+    try {
+      const { kept, removed, freedBytes } = await dedupeModelFiles(filename);
+      if (removed > 0) {
+        console.log('[chat] deduped (adopt)', { filename, kept: kept && kept.id, removed, freedBytes });
+      }
+    } catch (err) {
+      console.warn('[chat] dedupe failed (adopt)', err && err.message);
+    }
     return current;
   }
   const sdk = require('@qvac/sdk');
@@ -192,11 +231,27 @@ async function ensureLoaded(filename) {
     console.log('[chat] ensureLoaded caught error, fallback =', fallback);
     if (fallback && fallback.modelId) {
       current = { filename, modelId: fallback.modelId, preset: modelSrc.name };
+      try {
+        const { kept, removed, freedBytes } = await dedupeModelFiles(filename);
+        if (removed > 0) {
+          console.log('[chat] deduped (fallback)', { filename, kept: kept && kept.id, removed, freedBytes });
+        }
+      } catch (err) {
+        console.warn('[chat] dedupe failed (fallback)', err && err.message);
+      }
       return current;
     }
     throw err;
   }
   current = { filename, modelId, preset: modelSrc.name };
+  try {
+    const { kept, removed, freedBytes } = await dedupeModelFiles(filename);
+    if (removed > 0) {
+      console.log('[chat] deduped', { filename, kept: kept && kept.id, removed, freedBytes });
+    }
+  } catch (err) {
+    console.warn('[chat] dedupe failed', err && err.message);
+  }
   return current;
 }
 
