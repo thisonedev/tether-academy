@@ -357,7 +357,7 @@ function CoursesSection() {
           read and run.
         </p>
       </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {COURSES.map((course) => (
           <CourseCard key={course.slug} course={course} isDesktop={isDesktop} />
         ))}

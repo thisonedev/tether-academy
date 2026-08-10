@@ -33,13 +33,13 @@ export const COURSES: Course[] = [
     href: '/courses/wdk',
     planned: true,
   },
-  {
-    slug: 'pears',
-    name: 'Pears',
-    description: 'A peer-to-peer platform for building mobile, desktop, and terminal apps.',
-    href: '/courses/pears',
-    planned: true,
-  },
+  // {
+  //   slug: 'pears',
+  //   name: 'Pears',
+  //   description: 'A peer-to-peer platform for building mobile, desktop, and terminal apps.',
+  //   href: '/courses/pears',
+  //   planned: true,
+  // },
   {
     slug: 'stable',
     name: 'Stable',
