@@ -187,8 +187,6 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     }
   }
 
-  args.push('--process', '0');
-
   return args;
 }
 
