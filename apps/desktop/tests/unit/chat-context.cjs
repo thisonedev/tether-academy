@@ -51,6 +51,15 @@ test('chat-context - the model is told when docs were requested but empty', (t) 
   t.absent(/no sdk documentation is loaded/i.test(withDocs), 'no caveat once real docs are present');
 });
 
+test('chat-context - the prompt gives the bot a name and a warm persona', (t) => {
+  const prompt = buildSystemPrompt({ chapter: 'text-generation', lesson: 'mcp' }, null, null);
+  // Regression: without a name, "what is your name?" degenerates into a role description.
+  t.ok(/[Yy]ou are [A-Z][a-z]+,/.test(prompt), 'the bot has a proper name, not just a role');
+  t.ok(/small talk/i.test(prompt), 'small talk is explicitly recognised as a category');
+  t.ok(/react to how the user is feeling/i.test(prompt), 'warmth is encoded, not just implied');
+  t.ok(/do not steer back to the lesson/i.test(prompt), 'the lesson is not allowed to swallow greetings');
+});
+
 test('chat-context - the prompt tells the model to refuse typo chiding', (t) => {
   const prompt = buildSystemPrompt(
     { chapter: 'text-generation', lesson: 'mcp' },

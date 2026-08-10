@@ -3,6 +3,7 @@
 import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
 import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isAiBotModel } from './ai-bot-models.js';
 import type { OutputLine } from './lesson-workspace.js';
 
 export interface LessonConsoleLessonContext {
@@ -18,7 +19,6 @@ export interface ConsoleCheckResult {
   passed: boolean;
 }
 
-/** One block in the timeline: chat bubble, run card, or check card. */
 export type ConsoleEntry =
   | { kind: 'chat-user'; id: string; content: string }
   | { kind: 'chat-assistant'; id: string; content: string; streaming: boolean }
@@ -66,6 +66,22 @@ function shortName(filename: string | null | undefined): string {
   name = name.replace(/-Instruct/gi, '');
   name = name.replace(/-(?:UD-)?Q\d\w*$/i, '');
   return name.replace(/-/g, ' ');
+}
+
+// Parameter count in billions, parsed from a filename like
+// "Qwen3-0.6B-Q4_0.gguf" -> 0.6 or "Llama-3.2-1B-Instruct-Q4_0.gguf" -> 1.
+// Only a number immediately followed by `B` counts, so the `3.2` in a version
+// string and the `4` in a `Q4_K_M` quantisation tag are both ignored.
+// Unknown names sort last rather than collapsing to 0 and jumping the queue.
+function paramCountB(filename: string): number {
+  const match = /(\d+(?:\.\d+)?)B(?![a-z])/i.exec(filename);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+}
+
+// Smallest model first, so the picker reads as a size ladder instead of
+// whatever order the on-disk listing happened to produce.
+function byParamCount(a: string, b: string): number {
+  return paramCountB(a) - paramCountB(b) || a.localeCompare(b);
 }
 
 function toLessonKey(
@@ -190,7 +206,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
   const [chatError, setChatError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [chatPendingRequestId, setChatPendingRequestId] = useState<string | null>(null);
-  const [installedChatModels, setInstalledChatModels] = useState<string[]>([]);
+  const [installedAiBotModels, setInstalledAiBotModels] = useState<string[]>([]);
   const [switchingModel, setSwitchingModel] = useState(false);
   const [useFullDocs, setUseFullDocs] = useState(true);
   const pendingChatRequestIdRef = useRef<string | null>(null);
@@ -251,13 +267,9 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
   const refreshInstalledChatModels = useCallback(async () => {
     if (typeof window === 'undefined' || !window.academy?.models) return;
     try {
-      const [models, catalogue] = await Promise.all([
-        window.academy.models.list(),
-        window.academy.models.catalogue(),
-      ]);
-      const chatNames = new Set(catalogue.filter((c) => c.family === 'chat').map((c) => c.name));
-      const installedChatNames = new Set(models.filter((m) => chatNames.has(m.name)).map((m) => m.name));
-      setInstalledChatModels(Array.from(installedChatNames));
+      const models = await window.academy.models.list();
+      const installedNames = models.filter((m) => isAiBotModel(m.name)).map((m) => m.name);
+      setInstalledAiBotModels(installedNames.sort(byParamCount));
     } catch {
     }
   }, []);
@@ -395,7 +407,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         />
         <ModelSwitcher
           modelName={modelName}
-          options={installedChatModels}
+          options={installedAiBotModels}
           busy={switchingModel}
           onSelect={handleSwitchModel}
         />
@@ -500,7 +512,6 @@ function ModelSwitcher({
   );
 }
 
-// Small uppercase label above content, no card/background.
 function EntryCard({
   label,
   icon,

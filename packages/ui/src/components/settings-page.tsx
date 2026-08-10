@@ -12,6 +12,7 @@ import { useUserHydrated, useUserStore } from '@academy/core';
 import { Box, Bot, Circle, CircleCheck, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AI_BOT_MODEL_NAMES } from './ai-bot-models.js';
 import {
   DevicesPanel,
   ExecRunList,
@@ -54,16 +55,6 @@ const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
   sharded: 'Sharded model',
   set: 'Companion set',
 };
-
-// The AI bot section always offers exactly these three, regardless of
-// whether they're downloaded yet, so users on stronger hardware have a
-// visible upgrade path. Order matters: rendered smallest to largest.
-const AI_BOT_MODEL_NAMES = [
-  'Qwen3-0.6B-Q4_0.gguf',
-  'Qwen3-1.7B-Q4_0.gguf',
-  'Qwen3-4B-Q4_K_M.gguf',
-  'Qwen3-8B-Q4_K_M.gguf',
-];
 
 const SETTINGS_TABS = [
   { id: 'models', label: 'Models' },

@@ -113,6 +113,35 @@ test('splitParagraphs - keeps a numbered list together even past MAX_PARAGRAPH_L
   t.ok(!out.includes('result.\n') && !out.includes('result. '), 'does not break mid code identifier');
 });
 
+test('splitParagraphs - keeps a multi-sentence list item with its own marker', (t) => {
+  // Regression: the second sentence of an item ("It needs at least 4...") was
+  // orphaned into its own paragraph, detaching it from the "2." that numbers it.
+  const text = "This lesson explains how to reindex a RAG workspace after frequent writes (like deletes or re-ingests) to ensure the index reflects current data. Here's what to do: 1. Why reindex? After many changes, the index may no longer match the stored text, causing score drift. Reindexing regenerates embeddings from scratch. 2. How to reindex: Use ragReindex({ workspace }), which runs k-means clustering on embeddings. It needs at least 4 documents (default NUM_CENTROIDS=4) to generate centroids. Fewer than 4 documents result in a no-op with reindexed: false. 3. Handle results: The output is { reindexed, details }. If reindexed: true, everything is updated.";
+  const out = splitParagraphs(text);
+  const itemLine = (n) => out.split('\n').find((l) => l.startsWith(`${n}. `));
+  t.ok(itemLine(2).includes('It needs at least 4 documents'), "item 2 keeps its second sentence");
+  t.ok(itemLine(2).includes('Fewer than 4 documents'), 'item 2 keeps its third sentence');
+  t.ok(itemLine(3).includes('If reindexed: true'), 'item 3 keeps its second sentence');
+  // No paragraph may begin mid-item, i.e. with a lowercase-led continuation.
+  const paras = out.split('\n\n');
+  t.ok(!paras.some((p) => /^(It needs|If reindexed|Fewer than)/.test(p)), 'no orphaned continuation paragraph');
+});
+
+test('splitParagraphs - a list keeps trailing prose separate when the model marks the break', (t) => {
+  const text = 'Here is what to do: 1. Call ragReindex to regenerate the embeddings from scratch. 2. Inspect the details field on the result to confirm the run applied.\n\nFor large workspaces, reindexing takes time, so plan it during quiet hours.';
+  const paras = splitParagraphs(text).split('\n\n');
+  t.is(paras.length, 2, 'the list block and the closing prose stay separate');
+  t.ok(paras[1].startsWith('For large workspaces'), 'closing prose is its own paragraph');
+});
+
+test('splitParagraphs - list guard does not suppress breaks in ordinary prose', (t) => {
+  // The guard must key on a real list marker, not on any period-plus-digit.
+  // Long enough to clear MIN_PARAGRAPH_LEN, so a break is genuinely expected.
+  const text = 'The index stores 4 vectors per document by default in this configuration, and every one of those vectors is derived from the stored text. Reindexing regenerates all of them from scratch after a long run of writes. That keeps retrieval scores stable even when documents have been deleted and re-ingested many times over.';
+  const out = splitParagraphs(text);
+  t.is(out.split('\n\n').length, 2, 'prose containing digits still splits normally');
+});
+
 test('splitParagraphs - puts bulleted list items on their own line', (t) => {
   const text = 'Key features follow. - The SDK reads tool lists. - The mcp field wires the client.';
   const out = splitParagraphs(text);

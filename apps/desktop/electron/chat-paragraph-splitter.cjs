@@ -12,7 +12,9 @@
 //      abbreviation, and at least MIN_NEXT_LEN characters long).
 //   3. Once a paragraph reaches MAX_PARAGRAPH_LEN, force a break at the next
 //      sentence end regardless.
-//   4. Within a paragraph, put each numbered/bulleted list item on its own
+//   4. Never break once the paragraph has entered a list: a list runs as a
+//      single paragraph so a multi-sentence item stays with its own marker.
+//   5. Within a paragraph, put each numbered/bulleted list item on its own
 //      line (a single newline, not a blank-line break).
 
 const MIN_NEXT_LEN = 20;
@@ -55,6 +57,17 @@ function endsInAbbreviation(sentence) {
 // the inserted `\n` can never collide with a paragraph break.
 const LIST_ITEM_BREAK_RE = /([.:!?])[ \t]+(?=\d+\.[ \t]|[-*+][ \t])/g;
 
+// Non-global clone of the same regex; tests whether the buffer is inside a list.
+// Derived from the one source so the line-break rule and the guard can't drift.
+const LIST_ITEM_START_RE = new RegExp(LIST_ITEM_BREAK_RE.source);
+
+// A marker can also open the buffer with no punctuation in front of it.
+const LEADING_LIST_ITEM_RE = /^\s*(?:\d+\.[ \t]|[-*+][ \t])/;
+
+function isInsideList(buffer) {
+  return LEADING_LIST_ITEM_RE.test(buffer) || LIST_ITEM_START_RE.test(buffer);
+}
+
 function breakListItems(paragraph) {
   return paragraph.replace(LIST_ITEM_BREAK_RE, '$1\n');
 }
@@ -68,8 +81,6 @@ function splitParagraphs(text) {
   return paragraphs.map(breakListItems).join('\n\n');
 }
 
-// Splits a single blank-line-delimited block into paragraphs on real
-// sentence-boundary topic changes.
 function splitSentences(normalised) {
   if (normalised.length === 0) return [];
   const out = [];
@@ -104,6 +115,13 @@ function splitSentences(normalised) {
     }
     // Lowercase next = mid-identifier, not a sentence end; must precede the force-break below.
     if (!/[A-Z0-9]/.test(next)) {
+      i += 1;
+      continue;
+    }
+    // Once inside a list, no break is legal, not even the force-break below,
+    // because an item's second sentence would otherwise be orphaned into its
+    // own paragraph, detached from the marker that numbers it.
+    if (isInsideList(buffer)) {
       i += 1;
       continue;
     }
