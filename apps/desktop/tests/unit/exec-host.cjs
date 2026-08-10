@@ -16,8 +16,16 @@ const {
 
 const PEER = 'a'.repeat(64);
 
+// exec:request rate-limiting is module-level state; fakeHost() resets it
+// each call so a growing test file never trips it for unrelated tests.
+const { _resetAllForTests: resetRateLimit } = require('../../workers/peer/rate-limit.cjs');
+
+// Keeps tests off @qvac/sdk and a loaded model; override via ctx for a real verdict.
+const CLEAN_SCAN = async () => ({ modelName: null, result: { verdict: 'clean', concerns: [] } });
+
 // Records everything the host tried to send back so assertions can read it.
 function fakeHost(ctx = {}) {
+  resetRateLimit();
   const replies = [];
   const audit = [];
   const events = [];
@@ -29,6 +37,7 @@ function fakeHost(ctx = {}) {
     getExecPath: () => process.execPath,
     getBareRuntimeBinPath: () => null,
     awaitDeviceVerified: async () => ({ ok: true, reason: null }),
+    runSecurityScan: CLEAN_SCAN,
     ...ctx,
   });
   return { host, replies, audit, events };
@@ -71,6 +80,112 @@ test('exec-host - a run parked on device consent still holds the peer slot', asy
   t.ok(refusal, 'the second request is refused');
   t.ok(/already running/.test(refusal.message), 'and says why');
   t.is(host.listDeviceRequests().length, 1, 'no second prompt was raised');
+});
+
+test('exec-host - a malicious security verdict refuses the run before any consent prompt', async (t) => {
+  const { host, replies, audit } = fakeHost({
+    runSecurityScan: async () => ({
+      modelName: 'test-model',
+      result: { verdict: 'malicious', concerns: [{ summary: 'reads ~/.ssh/id_rsa', snippet: 'readFileSync' }] },
+    }),
+  });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  await settle();
+
+  t.is(host.listDeviceRequests().length, 0, 'no human is ever asked');
+  t.absent(host.hasRun(PEER), 'the slot is released');
+  const err = replies.find((r) => r.kind === 'error');
+  t.ok(err, 'the run is refused');
+  t.is(err.code, 'security-flagged', 'with the security-flagged code');
+  const flagged = audit.find((a) => a.type === 'peer:exec:security-flagged');
+  t.ok(flagged, 'the concerns are kept in the local audit trail');
+  t.ok(/reads ~\/.ssh\/id_rsa/.test(flagged.concerns[0]), 'including what was flagged');
+});
+
+// Only 'malicious' has teeth now; 'suspicious' proved unreliable and no
+// longer forces a prompt on its own.
+test('exec-host - a suspicious security verdict does not force a prompt on its own', async (t) => {
+  const { host } = fakeHost({
+    runSecurityScan: async () => ({
+      modelName: 'test-model',
+      result: {
+        verdict: 'suspicious',
+        concerns: [{ summary: 'unrelated network call to an unfamiliar host', snippet: 'fetch(...)' }],
+      },
+    }),
+  });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  await settle();
+  t.is(host.listDeviceRequests().length, 0, 'a run needing no device/network access still runs unprompted');
+});
+
+// 'suspicious' is still worth showing when a prompt is already happening for
+// a real device/network reason, just not on its own.
+test('exec-host - a suspicious verdict still rides along on a prompt already needed for device access', async (t) => {
+  const { host } = fakeHost({
+    runSecurityScan: async () => ({
+      modelName: 'test-model',
+      result: {
+        verdict: 'suspicious',
+        concerns: [{ summary: 'unrelated network call to an unfamiliar host', snippet: 'fetch(...)' }],
+      },
+    }),
+  });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: MIC_CODE, mode: 'inline' });
+  await settle();
+
+  const [pending] = host.listDeviceRequests();
+  t.ok(pending, 'the mic ask still raises a prompt');
+  t.alike(pending.concerns, ['unrelated network call to an unfamiliar host'], 'carrying the concern summary');
+});
+
+// Pins a past bug: a scan that couldn't even run once forced a prompt on
+// every remote run with no chat model loaded, benign code included.
+test('exec-host - a security scan that cannot run does not force a prompt on its own', async (t) => {
+  const { host } = fakeHost({
+    runSecurityScan: async () => {
+      throw new Error('no model loaded');
+    },
+  });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  await settle();
+
+  t.is(host.listDeviceRequests().length, 0, 'a run needing no device/network access still runs unprompted');
+});
+
+// `code` is buildLesson()'s wrapped output; scan and preview should see the
+// underlying lesson source instead, though `code` is still what spawns.
+test('exec-host - the security scan and the human-facing preview use the raw source, not the wrapped code', async (t) => {
+  let scannedCode = null;
+  const { host } = fakeHost({
+    runSecurityScan: async ({ code }) => {
+      scannedCode = code;
+      return { modelName: 'test-model', result: { verdict: 'clean', concerns: [] } };
+    },
+  });
+  t.teardown(() => host.stopAll());
+
+  // A mic ask still needs a real consent prompt regardless of the security
+  // verdict; that's what gives this test a prompt to inspect the preview on.
+  host.handleRequest(PEER, {
+    kind: 'request',
+    code: `import { x } from "/abs/node_modules/x";\n${MIC_CODE}`,
+    mode: 'inline',
+    declared: { rawSource: 'console.log(1)' },
+  });
+  await settle();
+
+  t.is(scannedCode, 'console.log(1)', 'the security scan sees the lesson source, not the build harness');
+  const [pending] = host.listDeviceRequests();
+  t.is(pending.sourcePreview, 'console.log(1)', 'the consent prompt preview does too');
 });
 
 test('exec-host - cancel unparks a run waiting on device consent', async (t) => {

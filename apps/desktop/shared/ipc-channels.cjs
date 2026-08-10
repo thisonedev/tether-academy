@@ -6,7 +6,6 @@
 const PEAR_WORKER_PREFIX = 'pear:worker:writeIPC:';
 
 const IPC_CHANNELS = Object.freeze({
-  // The registry also documents the sendSync exception.
   pkg: null,
   'academy:run': 'academyRunPayloadSchema',
   'academy:stop': null,
@@ -24,6 +23,19 @@ const IPC_CHANNELS = Object.freeze({
   'academy:models:remove': 'modelIdSchema',
   'academy:models:removeAll': null,
   'academy:models:verify': null,
+  'academy:models:catalogue': null,
+  'academy:models:recommend': 'modelLessonKeySchema',
+  'academy:models:for-lesson': 'modelLessonKeySchema',
+  'academy:chat:ready': null,
+  'academy:chat:current-model': null,
+  'academy:chat:configured-model': null,
+  'academy:chat:load': 'chatLoadSchema',
+  'academy:chat:send': 'chatSendSchema',
+  'academy:chat:verify': 'chatVerifySchema',
+  'academy:chat:security-scan': 'chatSecuritySchema',
+  'academy:chat:stop': 'chatRequestIdSchema',
+  'academy:chat:docs-status': null,
+  'academy:chat:docs-refresh': null,
   'academy:device:info': null,
   'academy:peer:identity': null,
   'academy:identity:status': null,

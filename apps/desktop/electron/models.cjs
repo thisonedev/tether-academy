@@ -1,7 +1,7 @@
-// Lists, sizes, and removes downloaded QVAC models on disk. Models are cached
-// under `<HOME>/.qvac/models/` as single files, `sharded/<key>/`, or `sets/<key>/`;
-// the sharded and set layouts are grouped into one row per directory so removing
-// a row never leaves a half-deleted model behind.
+// Lists, sizes, and removes downloaded QVAC models. Models live under
+// `<HOME>/.qvac/models/` as single files, `sharded/<key>/`, or `sets/<key>/`;
+// the sharded and set layouts are grouped into one row per directory so
+// removing a row never leaves a half-deleted model behind.
 
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -9,6 +9,65 @@ const path = require('node:path');
 const os = require('node:os');
 
 const SINGLE_HASH_RE = /^([0-9a-f]{16})_(.+)$/;
+
+// Size hints for the chat models the assistant can recommend. Other catalogue
+// entries are passed through with zero so the picker can still show them; only
+// `recommend()` reads the numbers.
+const CHAT_MODEL_HINTS = {
+  'Qwen3-0.6B-Q4_0.gguf': {
+    family: 'chat',
+    sizeBytes: 480 * 1024 * 1024,
+    minRamBytes: 4 * 1024 ** 3,
+    gpu: 'optional',
+  },
+  'Llama-3.2-1B-Instruct-Q4_0.gguf': {
+    family: 'chat',
+    sizeBytes: 760 * 1024 * 1024,
+    minRamBytes: 6 * 1024 ** 3,
+    gpu: 'optional',
+  },
+  'Qwen3-1.7B-Q4_0.gguf': {
+    family: 'chat',
+    sizeBytes: 1.1 * 1024 ** 3,
+    minRamBytes: 8 * 1024 ** 3,
+    gpu: 'optional',
+  },
+  'Qwen3-4B-Q4_K_M.gguf': {
+    family: 'chat',
+    sizeBytes: 2.4 * 1024 ** 3,
+    minRamBytes: 12 * 1024 ** 3,
+    gpu: 'preferred',
+  },
+  'Qwen3-8B-Q4_K_M.gguf': {
+    family: 'chat',
+    sizeBytes: 4.7 * 1024 ** 3,
+    minRamBytes: 20 * 1024 ** 3,
+    gpu: 'preferred',
+  },
+};
+
+// Filename -> family fallback for non-chat models. Used only when no hint matches.
+const FILENAME_FAMILY_HINTS = [
+  { match: /-?(embedding|gte|embed)/i, family: 'embedding' },
+  { match: /-?(whisper|parakeet|diar|sortformer|silero|tts|chatterbox|supertonic|nmt|translat)/i, family: 'audio' },
+  { match: /-?(sdcpp|stable-diffusion|flux)/i, family: 'image' },
+  { match: /-?(wan|t2v|i2v|svd)/i, family: 'video' },
+  { match: /-?(vla|pi0|smolvla|libero)/i, family: 'other' },
+  { match: /-?(ocr|vision|sdvlm|smolvlm|clip)/i, family: 'image' },
+];
+
+function familyForName(name) {
+  const hint = CHAT_MODEL_HINTS[name];
+  if (hint) return hint.family;
+  for (const { match, family } of FILENAME_FAMILY_HINTS) {
+    if (match.test(name)) return family;
+  }
+  return 'other';
+}
+
+function hintsForName(name) {
+  return CHAT_MODEL_HINTS[name] ?? { sizeBytes: 0, minRamBytes: 0, gpu: 'optional' };
+}
 
 let usageMap = null;
 function loadUsageMap() {
@@ -76,7 +135,6 @@ async function dirSize(dir) {
   return { total, count };
 }
 
-// Strip the SDK's hash prefix from a single-file cache entry for display.
 function displayNameFromSingle(filename) {
   const m = SINGLE_HASH_RE.exec(filename);
   return m ? m[2] : filename;
@@ -181,4 +239,117 @@ async function removeAllModels() {
   return { removed: totalRemoved, freedBytes: totalFreed };
 }
 
-module.exports = { listModels, removeModel, removeAllModels, modelsRoot };
+// Build a catalogue entry. sizeBytes comes from the static hints map;
+// descriptions.json and the on-disk listing are the other two sources.
+// Catalogue entries don't require the file to be on disk. That's the
+// whole point of the catalogue: it's the installable set.
+function catalogueEntryFromName(name) {
+  const usage = loadUsageMap();
+  const descriptions = loadDescriptionMap();
+  const hints = hintsForName(name);
+  return {
+    name,
+    id: name,
+    sizeBytes: hints.sizeBytes,
+    description: descriptions[name] ?? '',
+    usedIn: usage[name] ?? [],
+    family: familyForName(name),
+    minRamBytes: hints.minRamBytes,
+    gpu: hints.gpu,
+  };
+}
+
+// All installable models, union of the usage-map keys, the chat presets, and
+// what's on disk. The lesson usage map is authoritative (it lists every model
+// a shipped lesson needs); CHAT_MODEL_HINTS keeps every chat preset visible
+// as an upgrade option even if no lesson uses it yet and it isn't downloaded;
+// the on-disk listing catches anything else the user has.
+async function catalogue() {
+  const usage = loadUsageMap();
+  const installed = await listModels();
+  const names = new Set();
+  for (const name of Object.keys(usage)) names.add(name);
+  for (const name of Object.keys(CHAT_MODEL_HINTS)) names.add(name);
+  for (const item of installed) names.add(item.name);
+  return Array.from(names)
+    .map(catalogueEntryFromName)
+    .sort((a, b) => {
+      // Chat models first, then everything else, alphabetical within each group.
+      if (a.family !== b.family) return a.family === 'chat' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+async function forLesson(lessonKey) {
+  if (!lessonKey || !lessonKey.chapter || !lessonKey.lesson) return [];
+  const cat = await catalogue();
+  return cat.filter((entry) =>
+    (entry.usedIn ?? []).some(
+      (ref) => ref.chapter === lessonKey.chapter && (ref.lessons ?? []).includes(lessonKey.lesson),
+    ),
+  );
+}
+
+// Recommend a chat model for this lesson on this hardware. The lesson-uses
+// filter wins when any chat model is listed for the lesson: the lesson needs
+// it, so it's the right pick regardless of hardware (and the user can swap to
+// a smaller one if it's too big). Otherwise fall back to the smallest chat
+// model that fits.
+async function recommend(lessonKey, hardware) {
+  const cat = await catalogue();
+  const chat = cat.filter((e) => e.family === 'chat');
+  if (chat.length === 0) {
+    return { pick: null, ranked: cat, reason: 'no-chat-models' };
+  }
+
+  const lessonPicks = lessonKey
+    ? chat.filter((entry) =>
+        (entry.usedIn ?? []).some(
+          (ref) => ref.chapter === lessonKey.chapter && (ref.lessons ?? []).includes(lessonKey.lesson),
+        ),
+      )
+    : [];
+
+  if (lessonPicks.length > 0) {
+    return {
+      pick: lessonPicks[0].name,
+      ranked: lessonPicks.concat(chat.filter((e) => !lessonPicks.includes(e))),
+      reason: 'lesson-requires',
+    };
+  }
+
+  if (!hardware) {
+    return { pick: null, ranked: chat, reason: 'no-hardware-info' };
+  }
+
+  // No lesson tie-in: rank chat models by how comfortably they fit. We leave
+  // at least 2 GB of headroom for the OS and the rest of the app. Fits ->
+  // tight -> too-big; within each bucket, smallest first.
+  const headroom = 2 * 1024 ** 3;
+  const ranked = chat
+    .map((entry) => {
+      const required = entry.minRamBytes > 0 ? entry.minRamBytes + headroom : 0;
+      if (required === 0) return { entry, fit: 'fits' };
+      if (hardware.memoryBytes >= required * 1.5) return { entry, fit: 'fits' };
+      if (hardware.memoryBytes >= required) return { entry, fit: 'tight' };
+      return { entry, fit: 'too-big' };
+    })
+    .sort((a, b) => {
+      const order = { fits: 0, tight: 1, 'too-big': 2 };
+      return order[a.fit] - order[b.fit] || a.entry.minRamBytes - b.entry.minRamBytes;
+    })
+    .map(({ entry }) => entry);
+
+  const firstFit = ranked.find((e) => e.minRamBytes === 0 || hardware.memoryBytes >= e.minRamBytes + headroom);
+  return { pick: firstFit ? firstFit.name : null, ranked, reason: 'hardware-fits-best' };
+}
+
+module.exports = {
+  listModels,
+  removeModel,
+  removeAllModels,
+  modelsRoot,
+  catalogue,
+  forLesson,
+  recommend,
+};

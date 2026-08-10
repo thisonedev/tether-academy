@@ -6,6 +6,7 @@
 const test = require('brittle');
 
 const { bareRequires, pairForExec, runExec } = require('../helpers/index.cjs');
+const { SIGKILL_GRACE_MS } = require('../../workers/peer/exec-host.cjs');
 
 // A cancel that never arrives shows up as a timeout, so it becomes a value rather than a rejection that would abort the rest of the file.
 const settled = (promise) =>
@@ -24,6 +25,11 @@ const IGNORES_SIGTERM = `
 
 // SIGTERM, then SIGKILL 3s later, plus round-trip. 10s is generous.
 const CANCEL_BUDGET_MS = 10_000;
+
+// exec-host.cjs's SIGTERM->grace->SIGKILL escalation keeps running in this
+// process after CANCEL_BUDGET_MS gives up on it. If the test exits first,
+// the fixture (already ignoring SIGTERM) is orphaned for good.
+const outlastEscalation = () => new Promise((resolve) => setTimeout(resolve, SIGKILL_GRACE_MS + 2_000));
 
 test('exec-cancel - escalates to SIGKILL when the child ignores SIGTERM', async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'cancel-sigkill');
@@ -44,6 +50,8 @@ test('exec-cancel - escalates to SIGKILL when the child ignores SIGTERM', async 
   );
   const elapsed = Date.now() - startedAt;
 
+  if (timedOut) await outlastEscalation();
+
   t.absent(
     timedOut,
     `exec never resolved within ${CANCEL_BUDGET_MS}ms. cancelExec reported success but the child outlived it`,
@@ -61,7 +69,7 @@ test('exec-cancel - escalates to SIGKILL when the child ignores SIGTERM', async 
 test('exec-cancel - the peer accepts a fresh exec afterwards', async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'cancel-then-run');
 
-  await settled(
+  const first = await settled(
     runExec(
       guest,
       {
@@ -74,6 +82,7 @@ test('exec-cancel - the peer accepts a fresh exec afterwards', async (t) => {
       CANCEL_BUDGET_MS,
     ),
   ); // whether the cancel itself worked is asserted above
+  if (first.timedOut) await outlastEscalation();
 
   const fresh = await settled(
     runExec(guest, {

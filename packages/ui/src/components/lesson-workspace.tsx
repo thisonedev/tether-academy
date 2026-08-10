@@ -2,7 +2,7 @@
 
 import { useUserStore } from '@academy/core';
 import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
-import type { AcademyAPI, AcademyRunChunk } from '@academy/validation';
+import type { AcademyAPI, AcademyRunChunk, ChatSecurityResult, MatchStatus } from '@academy/validation';
 // Subpath, not the package root: the root re-exports the MDX frontmatter config, pulling fumadocs-mdx's fs/promises import into the browser bundle.
 import {
   ArrowLeft,
@@ -22,7 +22,8 @@ import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
 import { MonacoLessonEditor } from './monaco-lesson-editor.js';
-import { RunRow, useRunNotices } from './notification-center.js';
+import { ChatInputBar, LessonConsole } from './lesson-console.js';
+import type { ConsoleEntry } from './lesson-console.js';
 
 export interface LessonTest {
   id: string;
@@ -47,6 +48,7 @@ export interface LessonData {
   title: string;
   description?: string;
   startingCode: string;
+  lessonReference?: string;
   answer: string;
   tests: LessonTest[];
   hints: string[];
@@ -63,9 +65,6 @@ export interface LessonData {
   argv?: LessonArgvSlot[];
 }
 
-const TABS = ['output', 'tests'] as const;
-type Tab = (typeof TABS)[number];
-
 const RUN_MODES = ['simulated', 'this-device', 'remote'] as const;
 type RunMode = (typeof RUN_MODES)[number];
 
@@ -75,6 +74,39 @@ const ARGV_CAPTURED_PREFIX = 'argv.captured.';
 const CAPTURE_MARKERS: Array<{ pattern: RegExp; target: string }> = [
   { pattern: /▸\s+Provider Public Key:\s+([a-f0-9]{64})/i, target: 'lastProviderPublicKey' },
 ];
+
+// Whitespace-insensitive equality: detects an untouched starter file and
+// fast-paths a formatting-only match against the answer without the AI.
+function normalizeForCompare(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+// Which check-entry verdicts count as the lesson being done. 'match' is set
+// client-side by normalizeForCompare, never returned by the AI itself.
+const PASSING_MATCH_STATUSES = new Set<MatchStatus>(['match', 'complete', 'different-but-valid']);
+
+// Streamed chunks rarely align with real newlines; treating each chunk as
+// its own line inserted a phantom space at every boundary once rejoined.
+function appendChunkLines(lines: OutputLine[], chunk: { stream: OutputLine['stream']; data: string }): OutputLine[] {
+  const segments = chunk.data.split('\n');
+  const last = lines[lines.length - 1];
+  const merged =
+    last && last.stream === chunk.stream
+      ? [...lines.slice(0, -1), { stream: chunk.stream, line: last.line + segments[0] }]
+      : [...lines, { stream: chunk.stream, line: segments[0] }];
+  for (let i = 1; i < segments.length; i++) {
+    merged.push({ stream: chunk.stream, line: segments[i] });
+  }
+  return merged;
+}
+
+// Matches the label shown in the device picker below, so a run's "ran on X"
+// header always agrees with what X was called when it was selected.
+function peerDisplayName(p: { discoveryKey: string; userData: unknown }): string {
+  return p.userData && typeof p.userData === 'object' && 'name' in p.userData
+    ? String((p.userData as { name: unknown }).name)
+    : p.discoveryKey.slice(0, 8);
+}
 
 function overrideKey(slotName: string): string {
   return `${ARGV_OVERRIDE_PREFIX}${slotName}`;
@@ -159,7 +191,6 @@ declare global {
 export function LessonWorkspace({ data, children }: { data: LessonData; children: ReactNode }) {
   const [userCode, setUserCode] = useState(data.startingCode);
   const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');
-  const [tab, setTab] = useState<Tab>('output');
   // Deferred to useEffect so the first client render matches the SSR'd HTML.
   const [isDesktop, setIsDesktop] = useState(false);
   useEffect(() => {
@@ -249,7 +280,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const selfPairCount = remotePeers.length - realRemotePeers.length;
   const localIsOnlyHost = remotePeers.length > 0 && remotePeers.every((p) => p.role === 'host');
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
-  // Auto-pick the most recently paired device when entering Paired-device mode with no selection.
   useEffect(() => {
     if (runMode !== 'remote') return;
     if (realRemotePeers.length === 0) return;
@@ -257,13 +287,15 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     const latest = realRemotePeers.reduce((a, b) => (a.pairedAt >= b.pairedAt ? a : b));
     setSelectedPeerId(latest.discoveryKey);
   }, [runMode, realRemotePeers, selectedPeerId]);
-  const [testResults, setTestResults] = useState<null | ReturnType<typeof runTests>>(null);
-  const [outputLines, setOutputLines] = useState<OutputLine[]>([]);
+  const [entries, setEntries] = useState<ConsoleEntry[]>([]);
+  // Tracks the AI verify call the most recent Check Answer kicked off, so a
+  // later click can cancel a still-running review instead of leaving it
+  // orphaned, and so onVerifyResult knows which entry to update.
+  const pendingVerifyRef = useRef<{ requestId: string; entryId: string } | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [stopRequested, setStopRequested] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [hasShownModal, setHasShownModal] = useState(false);
-  const [outputKey, setOutputKey] = useState(0);
   const [argvOverrides, setArgvOverrides] = useState<Record<string, string>>({});
   const [argvCaptured, setArgvCaptured] = useState<Record<string, string>>({});
   const [lastRemoteRun, setLastRemoteRun] = useState<
@@ -287,9 +319,8 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     } else {
       setUserCode(data.startingCode);
     }
-    setTestResults(null);
-    setOutputLines([]);
-    setTab('output');
+    setEntries([]);
+    pendingVerifyRef.current = null;
     setRunMode(isDesktop ? 'this-device' : 'simulated');
     setShowCompleteModal(false);
     setHasShownModal(false);
@@ -384,7 +415,49 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     return out;
   }, [data.argv, argvOverrides, isDesktop]);
 
-  const allPassed = testResults?.every((r) => r.passed) ?? false;
+  // The most recent 'check' entry drives completion; earlier ones (from a
+  // prior Check Answer click) are history, not the gate.
+  const latestCheck = useMemo(() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.kind === 'check') return e;
+    }
+    return null;
+  }, [entries]);
+
+  const structuralPassed = latestCheck?.structural.every((r) => r.passed) ?? false;
+  // AI review gates completion, but never blocks it when unavailable (no
+  // model, web build, error); otherwise it'd brick lessons outright.
+  const aiGate =
+    !latestCheck || latestCheck.ai === 'unavailable' || latestCheck.ai === 'error'
+      ? true
+      : latestCheck.ai === 'done'
+        ? PASSING_MATCH_STATUSES.has(latestCheck.aiVerdict ?? 'wrong')
+        : false;
+  const allPassed = structuralPassed && aiGate;
+
+  // Subscribed for the workspace's lifetime (not just while checking) so a
+  // review that's still running when the user navigates away is ignored
+  // cleanly rather than updating a stale entry.
+  useEffect(() => {
+    const off = window.academy?.chat?.onVerifyResult?.((payload) => {
+      const pending = pendingVerifyRef.current;
+      if (!pending || pending.requestId !== payload.requestId) return;
+      pendingVerifyRef.current = null;
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.id !== pending.entryId || e.kind !== 'check') return e;
+          if (payload.error || !payload.result) {
+            return { ...e, ai: 'error', aiError: payload.error ?? 'AI review failed.' };
+          }
+          return { ...e, ai: 'done', aiVerdict: payload.result.verdict, aiReason: payload.result.reason };
+        }),
+      );
+    });
+    return () => {
+      off?.();
+    };
+  }, []);
 
   // Section = the chapter. The modal only fires on the last lesson of a chapter.
   const isLastLessonOfChapter =
@@ -412,7 +485,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             hostProgress = cur.progress as Record<string, unknown>;
           }
         } catch {
-          // fall back to an empty merge base
         }
         const next = {
           ...hostProgress,
@@ -421,7 +493,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         try {
           await window.academy!.identity!.setProgress({ progress: next });
         } catch {
-          // ignore
         }
       })();
     }
@@ -439,27 +510,176 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   ]);
 
   const check = useCallback(() => {
-    setTab('tests');
-    setTestResults(runTests(userCode, data.tests));
-  }, [userCode, data.tests]);
+    // A second click while one's already loading orphaned the first entry.
+    if (latestCheck?.ai === 'loading') return;
+    const structural = runTests(userCode, data.tests).map((r) => ({
+      id: r.id,
+      description: r.description,
+      passed: r.passed,
+    }));
+    const entryId = crypto.randomUUID();
+    setEntries((prev) => [...prev, { kind: 'check', id: entryId, structural, ai: 'idle' }]);
+
+    // Only worth a semantic review once the cheap structural checks already
+    // pass. That's the case that can currently go green while being wrong.
+    if (!structural.every((r) => r.passed)) return;
+
+    // A formatting-only match is real; skip the AI call entirely for it.
+    const hasAnswer = typeof data.answer === 'string' && data.answer.length > 0;
+    if (hasAnswer && normalizeForCompare(userCode) === normalizeForCompare(data.answer)) {
+      setEntries((prev) =>
+        prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'done', aiVerdict: 'match', aiReason: '' } : e)),
+      );
+      return;
+    }
+
+    // A leftover numbered TODO is a free, reliable "unfinished" signal even
+    // when the structural checks above only cover an earlier TODO.
+    if (/^\s*\/\/\s*\d+:/m.test(userCode)) {
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === entryId && e.kind === 'check'
+            ? {
+                ...e,
+                ai: 'done',
+                aiVerdict: 'unfinished',
+                aiReason: "There's still a numbered TODO comment in the code.",
+              }
+            : e,
+        ),
+      );
+      return;
+    }
+
+    const canVerify = isDesktop && typeof window !== 'undefined' && !!window.academy?.chat;
+    if (!canVerify) {
+      setEntries((prev) =>
+        prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'unavailable' } : e)),
+      );
+      return;
+    }
+    setEntries((prev) => prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'loading' } : e)));
+
+    // Cancel any review still running from a previous Check Answer click.
+    if (pendingVerifyRef.current) {
+      void window.academy?.chat?.stop?.(pendingVerifyRef.current.requestId).catch(() => undefined);
+      pendingVerifyRef.current = null;
+    }
+
+    void (async () => {
+      try {
+        const { requestId } = await window.academy!.chat!.verify({
+          code: userCode,
+          tests: data.tests.map((t) => ({ id: t.id, description: t.description })),
+          lessonKey:
+            data.currentChapter && data.currentLesson
+              ? { chapter: data.currentChapter.slug, lesson: data.currentLesson.slug }
+              : null,
+          lessonReference: data.lessonReference,
+          answer: data.answer || undefined,
+        });
+        pendingVerifyRef.current = { requestId, entryId };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not reach the local model.';
+        setEntries((prev) =>
+          prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'error', aiError: message } : e)),
+        );
+      }
+    })();
+  }, [
+    userCode,
+    data.tests,
+    data.currentChapter,
+    data.currentLesson,
+    data.lessonReference,
+    data.answer,
+    isDesktop,
+    latestCheck,
+  ]);
+
+  const stopCheck = useCallback((entryId: string) => {
+    const pending = pendingVerifyRef.current;
+    if (!pending || pending.entryId !== entryId) return;
+    void window.academy?.chat?.stop?.(pending.requestId).catch(() => undefined);
+    pendingVerifyRef.current = null;
+    setEntries((prev) =>
+      prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'error', aiError: 'Stopped.' } : e)),
+    );
+  }, []);
+
+  // Advisory only; null (unavailable/timeout/error) is treated as 'clean'.
+  // The receiving device's own scan is the actual gate.
+  const awaitSecurityScan = useCallback(
+    async (code: string): Promise<ChatSecurityResult | null> => {
+      if (typeof window === 'undefined' || !window.academy?.chat?.securityScan || !window.academy.chat.onSecurityResult) {
+        return null;
+      }
+      const chatApi = window.academy.chat;
+      return new Promise<ChatSecurityResult | null>((resolve) => {
+        let settled = false;
+        let off: (() => void) | undefined;
+        const timer = setTimeout(() => settle(null), 20_000);
+        function settle(value: ChatSecurityResult | null) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          off?.();
+          resolve(value);
+        }
+        chatApi
+          .securityScan({
+            code,
+            lessonKey:
+              data.currentChapter && data.currentLesson
+                ? { chapter: data.currentChapter.slug, lesson: data.currentLesson.slug }
+                : null,
+            lessonReference: data.lessonReference,
+          })
+          .then(({ requestId }) => {
+            off = chatApi.onSecurityResult((payload) => {
+              if (payload.requestId !== requestId) return;
+              settle(payload.error ? null : payload.result);
+            });
+          })
+          .catch(() => settle(null));
+      });
+    },
+    [data.currentChapter, data.currentLesson, data.lessonReference],
+  );
 
   const run = useCallback(async () => {
-    setTab('output');
-    setOutputLines([]);
-    setOutputKey((prev) => prev + 1);
+    const runEntryId = crypto.randomUUID();
+    // Null when this isn't a resolved remote run (this-device, or remote
+    // with no device picked yet). RunCard reads that as "this device".
+    const targetPeer =
+      runMode === 'remote' && selectedPeerId
+        ? realRemotePeers.find((p) => p.discoveryKey === selectedPeerId)
+        : undefined;
+    const deviceLabel = targetPeer ? peerDisplayName(targetPeer) : null;
+    setEntries((prev) => [
+      ...prev,
+      { kind: 'run', id: runEntryId, lines: [], status: 'running', deviceLabel },
+    ]);
+    const finalizeRunEntry = (lines: OutputLine[], status: 'ok' | 'err' | 'stopped') => {
+      setEntries((prev) =>
+        prev.map((e) => (e.id === runEntryId && e.kind === 'run' ? { ...e, lines, status } : e)),
+      );
+    };
 
-    // Skip the run when TODOs are still empty, so the panel doesn't go blank and the button doesn't look broken.
-    const unchangedFromStarter =
-      userCode === data.startingCode ||
-      (/^\s*\/\/\s*\d+:/m.test(userCode) && /^\s*await\s+unloadModel\s*\(/m.test(userCode));
+    // Whitespace-normalized, not a leftover-TODO heuristic: finishing TODO 1
+    // but not 2 is a real change even with boilerplate still present.
+    const unchangedFromStarter = normalizeForCompare(userCode) === normalizeForCompare(data.startingCode);
     if (unchangedFromStarter) {
-      setOutputLines([
-        { stream: 'stdout', line: 'Looks like you haven\u2019t started yet.' },
-        {
-          stream: 'stdout',
-          line: 'The starting code has numbered TODOs (// 1:, // 2:, \u2026). Fill those in, then click Run again.',
-        },
-      ]);
+      finalizeRunEntry(
+        [
+          { stream: 'stdout', line: 'Looks like you haven\u2019t made any changes yet.' },
+          {
+            stream: 'stdout',
+            line: 'The starting code has numbered TODOs. Follow the lesson to write the code for each one, then click Run again.',
+          },
+        ],
+        'ok',
+      );
       return;
     }
 
@@ -493,27 +713,24 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                   line: '[paired] No paired devices. Open Settings to pair one, then come back.',
                 },
               ];
-        setOutputLines(lines);
-        if (isLastLessonOfChapter && !data.readOnly) {
-          setTab('tests');
-          setTestResults(runTests(userCode, data.tests));
-        }
+        finalizeRunEntry(lines, 'ok');
+        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
       if (!selectedPeerId) {
-        setOutputLines([
-          {
-            stream: 'stdout',
-            line: '[paired] Pick a paired device from the picker next to Run, then click Run again.',
-          },
-        ]);
-        if (isLastLessonOfChapter && !data.readOnly) {
-          setTab('tests');
-          setTestResults(runTests(userCode, data.tests));
-        }
+        finalizeRunEntry(
+          [
+            {
+              stream: 'stdout',
+              line: '[paired] Pick a paired device from the picker next to Run, then click Run again.',
+            },
+          ],
+          'ok',
+        );
+        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
-      // Falls through to the same this-device path, but with peerId in the payload.
+      // Remote run: same downstream path as this-device, with peerId set below.
     }
 
     const canRunForReal =
@@ -525,6 +742,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
 
     // The "no output produced" fallback below reads this, not a stale state read.
     let producedOutput: OutputLine[] = [];
+    let runStatus: 'ok' | 'err' | 'stopped' = 'ok';
 
     if (canRunForReal) {
       setIsAnimating(true);
@@ -536,6 +754,34 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       }
       // Streamed as chunks arrive so 30-60s finetune runs don't look frozen.
       const streamBuffer: OutputLine[] = [];
+
+      // Advisory only; the paired device runs its own authoritative scan.
+      if (isRemoteRun) {
+        const scan = await awaitSecurityScan(userCode);
+        if (scan?.verdict === 'malicious') {
+          const lines: OutputLine[] = [
+            { stream: 'stderr', line: '[security] This code was not sent to the paired device.' },
+            ...scan.concerns.map((c) => ({ stream: 'stderr' as const, line: `  - ${c.summary}` })),
+            { stream: 'stdout', line: 'Edit the code to remove the flagged content, then click Run again.' },
+          ];
+          finalizeRunEntry(lines, 'err');
+          if (selectedPeerId) {
+            setLastRemoteRun({
+              kind: 'err',
+              peerId: selectedPeerId,
+              startedAt: runStartedAt,
+              endedAt: Date.now(),
+              code: null,
+              signal: null,
+              message: 'blocked by security review',
+            });
+          }
+          setIsAnimating(false);
+          return;
+        }
+        // 'suspicious' doesn't warn here either; only 'malicious' above is reliable.
+      }
+
       const captured = new Set<string>();
       const scanForCaptures = (text: string) => {
         if (!isDesktop || !text) return;
@@ -552,12 +798,10 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         }
       };
       const unsubscribe = window.academy?.onRunChunk?.((chunk) => {
-        const newLines = chunk.data.split('\n').map((line) => ({
-          stream: chunk.stream,
-          line,
-        }));
-        streamBuffer.push(...newLines);
-        setOutputLines((prev) => [...prev, ...newLines]);
+        streamBuffer.splice(0, streamBuffer.length, ...appendChunkLines(streamBuffer, chunk));
+        setEntries((prev) =>
+          prev.map((e) => (e.id === runEntryId && e.kind === 'run' ? { ...e, lines: appendChunkLines(e.lines, chunk) } : e)),
+        );
         if (chunk.stream === 'stdout') scanForCaptures(chunk.data);
       });
       try {
@@ -574,6 +818,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             ...streamBuffer,
             { stream: 'stdout', line: '[error] no run result returned' },
           ];
+          runStatus = 'err';
           if (isRemoteRun && selectedPeerId) {
             setLastRemoteRun({
               kind: 'err',
@@ -606,6 +851,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
               : '[exit non-zero]';
           const tail = unstreamed(result.output ?? '', streamBuffer) || note;
           producedOutput = [...streamBuffer, { stream: 'stdout', line: tail }];
+          runStatus = result.stopRequested ? 'stopped' : 'err';
           if (isRemoteRun && selectedPeerId) {
             setLastRemoteRun({
               kind: 'err',
@@ -628,6 +874,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             line: `[error] ${err instanceof Error ? err.message : String(err)}`,
           },
         ];
+        runStatus = 'err';
         if (isRemoteRun && selectedPeerId) {
           setLastRemoteRun({
             kind: 'err',
@@ -666,24 +913,26 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     // Fall back to test results so the panel isn't blank when the run produces nothing.
     if (producedOutput.length === 0 && data.tests.length > 0) {
       const results = runTests(userCode, data.tests);
+      const allPassed = results.every((r) => r.passed);
       const summary = results.map((r) =>
         r.passed ? `  \u2713 ${r.description}` : `  \u2717 ${r.description}`,
       );
       producedOutput = [
         {
           stream: 'stdout',
-          line: 'No output produced by the run. The checks below tell you which part is missing:',
+          line: allPassed
+            ? "No output produced by the run, even though the checks below matched. These checks only cover part of the lesson. The code that would actually produce output is probably still missing or unreachable."
+            : 'No output produced by the run. The checks below tell you which part is missing:',
         },
-        { stream: 'stdout', line: '' },
-        ...summary.map((line) => ({ stream: 'stdout' as const, line })),
+        // A blank line between items keeps OutputView's paragraph mode from space-joining them.
+        ...summary.flatMap((line) => [{ stream: 'stdout' as const, line: '' }, { stream: 'stdout' as const, line }]),
       ];
     }
 
-    setOutputLines(producedOutput);
+    finalizeRunEntry(producedOutput, runStatus);
 
     if (isLastLessonOfChapter && !data.readOnly) {
-      setTab('tests');
-      setTestResults(runTests(userCode, data.tests));
+      check();
     }
   }, [
     runMode,
@@ -694,16 +943,17 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     isLastLessonOfChapter,
     resolveArgv,
     isDesktop,
+    check,
     realRemotePeers,
     selfPairCount,
     localIsOnlyHost,
     selectedPeerId,
+    awaitSecurityScan,
   ]);
 
   const reset = useCallback(() => {
     setUserCode(data.startingCode);
-    setTestResults(null);
-    setOutputLines([]);
+    setEntries([]);
   }, [data.startingCode]);
 
   const stopRun = useCallback(() => {
@@ -750,22 +1000,22 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             setUserCode={setUserCode}
             platform={platform}
             setPlatform={setPlatform}
-            tab={tab}
-            setTab={setTab}
             runMode={runMode}
             setRunMode={setRunMode}
             isDesktop={isDesktop}
-            testResults={testResults}
-            outputLines={outputLines}
+            entries={entries}
+            onStopCheck={stopCheck}
             isAnimating={isAnimating}
             onRun={run}
             onStop={stopRun}
+            stopRequested={stopRequested}
+            onCheck={check}
+            checkDisabled={data.tests.length === 0 || latestCheck?.ai === 'loading'}
             onReset={reset}
             platforms={data.platforms}
             readOnly={data.readOnly}
             hints={data.hints}
             answer={data.answer}
-            outputKey={outputKey}
             argv={data.argv}
             argvOverrides={argvOverrides}
             argvCaptured={argvCaptured}
@@ -779,14 +1029,13 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             localIsOnlyHost={localIsOnlyHost}
             lastRemoteRun={lastRemoteRun}
             clearLastRemoteRun={() => setLastRemoteRun(null)}
-            stopRequested={stopRequested}
           />
         </section>
       </div>
 
       {data.currentChapter ? (
         <nav className="sticky bottom-0 z-10 shrink-0 border-t border-canvas-border bg-canvas/95 backdrop-blur supports-[backdrop-filter]:bg-canvas/85 lg:static">
-          <div className="flex items-center gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-3.5">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-3.5">
             {data.prevUrl ? (
               <Link
                 href={data.prevUrl}
@@ -802,15 +1051,21 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                   No code in this section
                 </span>
               ) : (
-                <button
-                  type="button"
-                  onClick={check}
-                  disabled={data.tests.length === 0}
-                  className="mx-auto inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
-                >
-                  <Check className="size-4" />
-                  <span>Check Answer</span>
-                </button>
+                <ChatInputBar
+                  entries={entries}
+                  setEntries={setEntries}
+                  lessonContext={
+                    data.currentChapter && data.currentLesson
+                      ? {
+                          chapter: data.currentChapter.slug,
+                          lesson: data.currentLesson.slug,
+                          title: data.currentLesson.title,
+                          reference: data.lessonReference,
+                        }
+                      : null
+                  }
+                  readOnly={data.readOnly}
+                />
               )
             ) : data.firstLessonHref ? (
               <Link
@@ -857,22 +1112,22 @@ function Runner({
   setUserCode,
   platform,
   setPlatform,
-  tab,
-  setTab,
   runMode,
   setRunMode,
   isDesktop = false,
-  testResults,
-  outputLines,
+  entries,
+  onStopCheck,
   isAnimating,
   onRun,
   onStop,
+  stopRequested = false,
+  onCheck,
+  checkDisabled,
   onReset,
   platforms,
   readOnly = false,
   hints,
   answer,
-  outputKey,
   argv,
   argvOverrides,
   argvCaptured,
@@ -886,28 +1141,27 @@ function Runner({
   localIsOnlyHost,
   lastRemoteRun,
   clearLastRemoteRun,
-  stopRequested = false,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
   platform: LessonData['platforms'][number];
   setPlatform: (p: LessonData['platforms'][number]) => void;
-  tab: Tab;
-  setTab: (t: Tab) => void;
   runMode: RunMode;
   setRunMode: (m: RunMode) => void;
   isDesktop?: boolean;
-  testResults: null | ReturnType<typeof runTests>;
-  outputLines: OutputLine[];
+  entries: ConsoleEntry[];
+  onStopCheck: (entryId: string) => void;
   isAnimating: boolean;
   onRun: () => void;
   onStop?: () => void;
+  stopRequested?: boolean;
+  onCheck: () => void;
+  checkDisabled: boolean;
   onReset: () => void;
   platforms: LessonData['platforms'];
   readOnly?: boolean;
   hints: string[];
   answer: string;
-  outputKey: number;
   argv?: LessonArgvSlot[];
   argvOverrides: Record<string, string>;
   argvCaptured: Record<string, string>;
@@ -933,7 +1187,6 @@ function Runner({
       }
     | null;
   clearLastRemoteRun: () => void;
-  stopRequested?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [capturedCopiedKey, setCapturedCopiedKey] = useState<string | null>(null);
@@ -970,7 +1223,6 @@ function Runner({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // No-op: visual feedback just won't fire.
     }
   }, [userCode]);
 
@@ -993,7 +1245,6 @@ function Runner({
         setCapturedCopiedKey((current) => (current === slotName ? null : current));
       }, 1500);
     } catch {
-      // No-op
     }
   }, []);
 
@@ -1016,21 +1267,42 @@ function Runner({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
-          <HelpPanel
-            hints={hints}
-            answer={answer}
-            onReveal={() => setUserCode(answer)}
-            disabled={readOnly || !answer}
-          />
           <button
             type="button"
-            aria-label="Reset code"
-            onClick={onReset}
-            disabled={readOnly}
-            className="rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title="Reset to starting code"
+            onClick={isAnimating ? onStop : onRun}
+            disabled={readOnly || (isAnimating ? stopRequested || !onStop : false)}
+            className={
+              isAnimating
+                ? stopRequested
+                  ? 'inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
+                  : 'inline-flex items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
+                : 'inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
+            }
+            title={stopRequested ? 'Stopping…' : isAnimating ? 'Stop run' : 'Run code (R)'}
+            aria-label={stopRequested ? 'Stopping' : isAnimating ? 'Stop run' : 'Run code'}
           >
-            <RotateCcw className="size-4" />
+            {isAnimating ? (
+              stopRequested ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <span>Stopping…</span>
+                </>
+              ) : (
+                <Square className="size-4 fill-current" />
+              )
+            ) : (
+              <Play className="size-4 fill-current" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={onCheck}
+            disabled={readOnly || checkDisabled}
+            className="rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            title="Check answer"
+            aria-label="Check answer"
+          >
+            <Check className="size-4" />
           </button>
           <select
             id="run-mode-select-desktop"
@@ -1073,17 +1345,11 @@ function Runner({
               }
             >
               {remotePeers.length === 0 ? <option value="">No paired devices</option> : null}
-              {remotePeers.map((p) => {
-                const name =
-                  p.userData && typeof p.userData === 'object' && 'name' in p.userData
-                    ? String((p.userData as { name: unknown }).name)
-                    : p.discoveryKey.slice(0, 8);
-                return (
-                  <option key={p.discoveryKey} value={p.discoveryKey}>
-                    {name}
-                  </option>
-                );
-              })}
+              {remotePeers.map((p) => (
+                <option key={p.discoveryKey} value={p.discoveryKey}>
+                  {peerDisplayName(p)}
+                </option>
+              ))}
             </select>
           ) : null}
           {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static string, no user input */}
@@ -1105,32 +1371,21 @@ function Runner({
           >
             <option value="simulated">Simulated</option>
           </select>
+          <HelpPanel
+            hints={hints}
+            answer={answer}
+            onReveal={() => setUserCode(answer)}
+            disabled={readOnly || !answer}
+          />
           <button
             type="button"
-            onClick={isAnimating ? onStop : onRun}
-            disabled={readOnly || (isAnimating ? stopRequested || !onStop : false)}
-            className={
-              isAnimating
-                ? stopRequested
-                  ? 'inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
-                  : 'inline-flex items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
-                : 'inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
-            }
-            title={stopRequested ? 'Stopping…' : isAnimating ? 'Stop run' : 'Run code (R)'}
-            aria-label={stopRequested ? 'Stopping' : isAnimating ? 'Stop run' : 'Run code'}
+            aria-label="Reset code"
+            onClick={onReset}
+            disabled={readOnly}
+            className="rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            title="Reset to starting code"
           >
-            {isAnimating ? (
-              stopRequested ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  <span>Stopping…</span>
-                </>
-              ) : (
-                <Square className="size-4 fill-current" />
-              )
-            ) : (
-              <Play className="size-4 fill-current" />
-            )}
+            <RotateCcw className="size-4" />
           </button>
           <button
             type="button"
@@ -1256,103 +1511,66 @@ function Runner({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 border-t border-canvas-border bg-canvas px-2 pt-1.5 pb-1">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={`relative px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
-              tab === t
-                ? 'text-emerald-400'
-                : 'text-canvas-muted-foreground hover:text-canvas-foreground'
-            }`}
-          >
-            {t}
-            {tab === t ? (
-              <span className="absolute inset-x-0 bottom-0 mx-auto h-0.5 w-8 bg-emerald-400" />
-            ) : null}
-          </button>
-        ))}
-      </div>
-
-      <div className="h-[200px] shrink-0 overflow-auto border-t border-canvas-border bg-canvas-muted font-mono text-sm text-canvas-foreground">
-        {tab === 'output' ? (
-          runMode === 'remote' && remotePeers.length === 0 ? (
-            <div className="flex h-full items-center justify-center font-sans text-sm text-canvas-muted-foreground">
-              <div className="flex max-w-sm flex-col items-center gap-2 text-center">
-                {localIsOnlyHost ? (
-                  <>
-                    <div className="text-canvas-foreground">
-                      This device is the host in every pair.
-                    </div>
-                    <div>
-                      Hosts accept runs from guests; they don&apos;t forward them. Pair a second
-                      device (or run{' '}
-                      <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
-                        pnpm dev:host
-                      </code>{' '}
-                      in another terminal) and have it accept the invite, then come back.
-                    </div>
-                  </>
-                ) : selfPairCount > 0 ? (
-                  <>
-                    <div className="text-canvas-foreground">
-                      The only paired device is this device.
-                    </div>
-                    <div>
-                      Two app instances sharing a userData directory pair as the same identity, but
-                      the exec channel can&apos;t route between matching keys. Run{' '}
-                      <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
-                        pnpm dev:host
-                      </code>{' '}
-                      in a second terminal to launch an isolated host, then pair it from{' '}
-                      <Link
-                        href="/settings"
-                        className="text-emerald-400 underline-offset-2 hover:underline"
-                      >
-                        Settings
-                      </Link>
-                      .
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-canvas-foreground">No paired devices yet.</div>
-                    <div>
-                      Pair another device in{' '}
-                      <Link
-                        href="/settings"
-                        className="text-emerald-400 underline-offset-2 hover:underline"
-                      >
-                        Settings
-                      </Link>{' '}
-                      to run this lesson there.
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          ) : (
-            <>
-              {runMode === 'remote' ? <GuestRunStrip /> : null}
-              <OutputView key={outputKey} lines={outputLines} isAnimating={isAnimating} />
-            </>
-          )
-        ) : null}
-        {tab === 'tests' ? <TestsView results={testResults} tests={null as never} /> : null}
-      </div>
+      {runMode === 'remote' && remotePeers.length === 0 ? (
+        <div className="flex h-[280px] shrink-0 items-center justify-center border-t border-canvas-border bg-canvas-muted font-sans text-sm text-canvas-muted-foreground">
+          <div className="flex max-w-sm flex-col items-center gap-2 text-center">
+            {localIsOnlyHost ? (
+              <>
+                <div className="text-canvas-foreground">
+                  This device is the host in every pair.
+                </div>
+                <div>
+                  Hosts accept runs from guests; they don&apos;t forward them. Pair a second
+                  device (or run{' '}
+                  <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
+                    pnpm dev:host
+                  </code>{' '}
+                  in another terminal) and have it accept the invite, then come back.
+                </div>
+              </>
+            ) : selfPairCount > 0 ? (
+              <>
+                <div className="text-canvas-foreground">
+                  The only paired device is this device.
+                </div>
+                <div>
+                  Two app instances sharing a userData directory pair as the same identity, but
+                  the exec channel can&apos;t route between matching keys. Run{' '}
+                  <code className="rounded bg-canvas-muted px-1.5 py-0.5 text-[11px]">
+                    pnpm dev:host
+                  </code>{' '}
+                  in a second terminal to launch an isolated host, then pair it from{' '}
+                  <Link
+                    href="/settings"
+                    className="text-emerald-400 underline-offset-2 hover:underline"
+                  >
+                    Settings
+                  </Link>
+                  .
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-canvas-foreground">No paired devices yet.</div>
+                <div>
+                  Pair another device in{' '}
+                  <Link
+                    href="/settings"
+                    className="text-emerald-400 underline-offset-2 hover:underline"
+                  >
+                    Settings
+                  </Link>{' '}
+                  to run this lesson there.
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : (
+        <LessonConsole entries={entries} onStopCheck={onStopCheck} />
+      )}
     </div>
   );
-}
-
-// Outgoing runs (a guest's remote execution) render inside the output panel, next to the bytes they're producing.
-function GuestRunStrip() {
-  const { items, dismiss } = useRunNotices();
-  const outgoing = items.filter((run) => run.direction === 'outgoing');
-  return outgoing.map((run) => (
-    <RunRow key={run.id} run={run} onDismiss={dismiss} />
-  ));
 }
 
 type RemoteRunState =
@@ -1378,336 +1596,6 @@ function formatDuration(ms: number): string {
   const hr = Math.floor(min / 60);
   const m2 = min % 60;
   return `${hr}h ${m2}m`;
-}
-
-// Every write logs `[saved] <absolute path>`, which the footer makes clickable.
-const SAVED_LINE = /^\[saved\]\s+(.+)$/;
-
-function savedFilesFrom(lines: OutputLine[]): string[] {
-  const out: string[] = [];
-  for (const { line } of lines) {
-    const m = line.match(SAVED_LINE);
-    if (m?.[1] && !out.includes(m[1])) out.push(m[1]);
-  }
-  return out;
-}
-
-function SavedFilesBar({ files }: { files: string[] }) {
-  const home = files[0]?.match(/^(\/Users\/[^/]+|\/home\/[^/]+|[A-Z]:\\Users\\[^\\]+)/)?.[1];
-  const pretty = (p: string) => (home && p.startsWith(home) ? `~${p.slice(home.length)}` : p);
-  return (
-    <div className="mt-3 space-y-2 border-t border-canvas-border pt-2 font-sans text-xs">
-      {files.map((file) => (
-        <SavedPreview key={`preview-${file}`} file={file} />
-      ))}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-xs">
-        <span className="text-canvas-muted-foreground">
-          Saved {files.length === 1 ? 'file' : `${files.length} files`} to
-        </span>
-        {files.map((file) => (
-          <button
-            key={file}
-            type="button"
-            onClick={() => void window.academy?.reveal?.(file)}
-            className="max-w-full truncate rounded border border-canvas-border px-2 py-0.5 text-canvas-foreground hover:bg-canvas-muted"
-            title={`Show ${file} in your file manager`}
-          >
-            {pretty(file)}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const PREVIEWABLE_EXTS = new Set([
-  'png',
-  'jpg',
-  'jpeg',
-  'webp',
-  'gif',
-  'mp4',
-  'webm',
-  'mov',
-  'avi',
-  'mp3',
-  'wav',
-]);
-
-function isPreviewable(file: string): boolean {
-  const m = file.toLowerCase().match(/[^./]+\.([a-z0-9]+)$/);
-  return !!m && PREVIEWABLE_EXTS.has(m[1]);
-}
-
-function SavedPreview({ file }: { file: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [kind, setKind] = useState<'image' | 'video' | 'audio' | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSrc(null);
-    setKind(null);
-    if (!isPreviewable(file)) return () => {};
-    if (typeof window === 'undefined' || !window.academy?.readSaved) return () => {};
-    void window.academy
-      .readSaved(file)
-      .then((res) => {
-        if (cancelled || !res) return;
-        const lower = file.toLowerCase();
-        if (
-          lower.endsWith('.png') ||
-          lower.endsWith('.jpg') ||
-          lower.endsWith('.jpeg') ||
-          lower.endsWith('.webp') ||
-          lower.endsWith('.gif')
-        ) {
-          setKind('image');
-        } else if (
-          lower.endsWith('.mp4') ||
-          lower.endsWith('.webm') ||
-          lower.endsWith('.mov') ||
-          lower.endsWith('.avi')
-        ) {
-          setKind('video');
-        } else if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
-          setKind('audio');
-        }
-        setSrc(`data:${res.mime};base64,${res.base64}`);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [file]);
-
-  if (!kind || !src) return null;
-  if (kind === 'image') {
-    return (
-      <img
-        src={src}
-        alt="Saved by this run"
-        className="max-h-72 max-w-full rounded"
-      />
-    );
-  }
-  if (kind === 'video') {
-    return (
-      <video
-        src={src}
-        controls
-        className="max-h-72 max-w-full rounded"
-      />
-    );
-  }
-  return (
-    <audio src={src} controls className="w-full" />
-  );
-}
-
-function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {
-  const savedFiles = savedFilesFrom(lines);
-  // Find the latest finetune tick. Format: `▸ epoch=1 step=1 batch=1/16 ...`.
-  const tickPattern = /epoch=(\d+)\s+step=(\d+)\s+batch=(\d+)\/(\d+)/;
-  // The trainer skips a tick on the last step, so without this the bar caps below 100%.
-  const completedPattern = /(Training completed through step \d+|status:\s*COMPLETED)/;
-  const progress = (() => {
-    let latestStep = 0;
-    let latestEpoch = 1;
-    let totalBatches = 0;
-    let completed = false;
-    for (const { line } of lines) {
-      const m = line.match(tickPattern);
-      if (m) {
-        latestEpoch = Number(m[1]);
-        latestStep = Number(m[2]);
-        if (Number(m[4]) > totalBatches) totalBatches = Number(m[4]);
-      }
-      if (completedPattern.test(line)) completed = true;
-    }
-    if (totalBatches === 0) return null;
-    const totalEpochs = Math.max(1, Math.ceil(latestStep / totalBatches));
-    const totalSteps = totalEpochs * totalBatches;
-    const percent = completed ? 100 : Math.min(100, Math.round((latestStep / totalSteps) * 100));
-    return {
-      currentStep: latestStep,
-      totalSteps,
-      epoch: latestEpoch,
-      totalEpochs,
-      percent,
-      completed,
-    };
-  })();
-  // Rotating word indicator so a slow first-token latency doesn't look like a frozen run.
-  const THINKING_WORDS = [
-    'Thinking',
-    'Strategizing',
-    'Analyzing',
-    'Reasoning',
-    'Considering',
-    'Advancing',
-    'Processing',
-    'Reflecting',
-    'Pondering',
-    'Adjusting',
-    'Distilling',
-    'Synthesizing',
-    'Working',
-    'Computing',
-    'Crunching',
-  ];
-  const [wordIndex, setWordIndex] = useState(0);
-  useEffect(() => {
-    if (!isAnimating) {
-      setWordIndex(0);
-      return;
-    }
-    const id = setInterval(() => {
-      setWordIndex((i) => (i + 1) % THINKING_WORDS.length);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [isAnimating]);
-
-  return (
-    <div className="space-y-1 p-4 text-canvas-muted-foreground">
-      {lines.length === 0 && !isAnimating ? (
-        <>
-          <p className="text-emerald-400">$ Run your code to see results</p>
-          <p>
-            <span className="text-emerald-400">$</span>
-            <span className="ml-1 inline-block h-3 w-2 animate-pulse bg-emerald-400 align-middle" />
-          </p>
-        </>
-      ) : null}
-      {progress ? (
-        <div className="mb-2 rounded border border-canvas-border bg-canvas/50 p-2">
-          <div className="mb-1 flex items-center justify-between font-mono text-xs">
-            <span className="text-emerald-400">
-              {progress.completed
-                ? 'Training complete'
-                : `Training: step ${progress.currentStep} / ${progress.totalSteps} (epoch ${progress.epoch} / ${progress.totalEpochs})`}
-            </span>
-            <span className="text-canvas-muted-foreground">{progress.percent}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-canvas-muted">
-            <div
-              className="h-full bg-emerald-500 transition-all duration-300 ease-out"
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
-        </div>
-      ) : null}
-      {(() => {
-        // Collapses single newlines to spaces and keeps double as paragraph breaks; falls back to line-by-line when finetune progress lines are present.
-        const hasFinetuneProgress = lines.some(
-          (e) => e.stream === 'stdout' && /^▸\s+epoch=/.test(e.line),
-        );
-
-        if (hasFinetuneProgress) {
-          const firstBlank = lines.findIndex((e) => e.stream === 'stdout' && e.line === '');
-          const prefixEnd = firstBlank === -1 ? lines.length : firstBlank;
-          return lines.map((entry, i) => {
-            const isStderr = entry.stream === 'stderr';
-            const isPrefix = !isStderr && i < prefixEnd;
-            const className =
-              isStderr || isPrefix
-                ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
-                : 'whitespace-pre-wrap';
-            return (
-              <p key={i} className={className}>
-                {entry.line}
-              </p>
-            );
-          });
-        }
-
-        const stdoutText = lines
-          .filter((e) => e.stream === 'stdout')
-          .map((e) => e.line)
-          .join('\n');
-        const stdoutParagraphs = stdoutText
-          .split(/\n{2,}/)
-          .map((p) => p.replace(/\n+/g, ' ').trim())
-          .filter(Boolean);
-        const dimFirstStdout = stdoutParagraphs.length > 1;
-
-        const stderrLines = lines.filter((e) => e.stream === 'stderr');
-
-        const renderStdout = stdoutParagraphs.map((para, i) => {
-          const isPrefix = dimFirstStdout && i === 0;
-          return (
-            <p
-              key={`out-${i}`}
-              className={
-                isPrefix
-                  ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
-                  : 'whitespace-pre-wrap'
-              }
-            >
-              {para}
-            </p>
-          );
-        });
-
-        const renderStderr = stderrLines.map((entry, i) => (
-          <p
-            key={`err-${i}`}
-            className="whitespace-pre-wrap text-canvas-muted-foreground/60 italic"
-          >
-            {entry.line}
-          </p>
-        ));
-
-        return (
-          <>
-            {renderStdout}
-            {renderStderr}
-          </>
-        );
-      })()}
-      {isAnimating ? (
-        <p className="text-emerald-400">
-          <span
-            key={wordIndex}
-            className="inline-block animate-pulse animate-in fade-in slide-in-from-left-2 duration-200"
-          >
-            {THINKING_WORDS[wordIndex]}...
-          </span>
-        </p>
-      ) : null}
-      {savedFiles.length > 0 ? <SavedFilesBar files={savedFiles} /> : null}
-    </div>
-  );
-}
-
-function TestsView({ results }: { results: null | ReturnType<typeof runTests>; tests: never }) {
-  if (!results) {
-    return (
-      <p className="p-4 text-canvas-muted-foreground">
-        Click <span className="text-emerald-400">Check Answer</span> in the tutorial to run the
-        tests.
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-1.5 p-4 text-canvas-foreground">
-      {results.map((r) => (
-        <li key={r.id} className="flex items-start gap-2">
-          <span
-            className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm border ${
-              r.passed
-                ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-400'
-                : 'border-canvas-border text-canvas-muted-foreground'
-            }`}
-          >
-            {r.passed ? <Check className="size-3" /> : <X className="size-3" />}
-          </span>
-          <span className={r.passed ? 'text-canvas-foreground' : 'text-canvas-muted-foreground'}>
-            {r.description}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 // Pattern flags must match the runner's logic so a passing test here also passes the browser's Check Answer.

@@ -69,6 +69,26 @@ test('rpc-schema - valid payloads pass', (t) => {
   t.alike(validateCommand(CMD.GET_AUDIT, { since: 0, limit: 10 }).limit, 10);
 });
 
+// Pins a regression: unrecognized `declared` fields refused the whole
+// peer-exec request outright with "invalid field \"declared\"".
+test('rpc-schema - declared accepts the fields main actually sends', (t) => {
+  const result = validateCommand(CMD.EXEC, {
+    peerId: 'p',
+    code: 'c',
+    declared: { network: 'all', device: ['microphone'], lessonReference: 'ref', rawSource: 'raw' },
+  });
+  t.alike(result.declared, {
+    network: 'all',
+    device: ['microphone'],
+    lessonReference: 'ref',
+    rawSource: 'raw',
+  });
+  t.exception(
+    () => validateCommand(CMD.EXEC, { peerId: 'p', code: 'c', declared: { bogus: 1 } }),
+    /invalid field "declared"/,
+  );
+});
+
 test('rpc-schema - nested payloads are checked, not waved through', (t) => {
   t.exception(
     () => validateCommand(CMD.ACCEPT_INVITE, { inviteB64: 'aGk=', opts: { code: 5 } }),

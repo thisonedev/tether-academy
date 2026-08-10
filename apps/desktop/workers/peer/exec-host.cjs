@@ -33,6 +33,8 @@ const {
   describeNewOutputs,
 } = require('../../shared/lesson-output.cjs');
 const { syncFast, scan, removeAddedSince, verifyModelsAsync } = require('../../shared/model-integrity.cjs');
+// Runs under Bare (workers/entry.cjs), so it can't require electron/chat.cjs
+// directly; ctx.runSecurityScan bridges to it over RPC instead.
 
 // --require'd into a node-runtime child so it does not claim a Dock icon.
 const DOCK_HIDE_SHIM = path.resolve(__dirname, '..', '..', 'electron', 'dock-hide-shim.cjs');
@@ -81,6 +83,8 @@ const PEER_ERROR_TEXT = {
   },
   'model-integrity': 'Peer exec refused: cached model files on this device changed '
     + 'outside the app. They have to be re-downloaded or removed before remote code runs.',
+  'security-flagged': 'Peer exec refused: this device\'s AI security review flagged the '
+    + 'code as unrelated to the declared lesson or potentially harmful.',
   'filename-escape': 'exec: fileName escaped temp directory',
   'runtime-missing': (meta) =>
     `Peer exec refused: the ${meta.runtime ?? 'requested'} runtime is not available on this device.`,
@@ -168,6 +172,14 @@ function removeDir(dir) {
   } catch {}
 }
 
+// Cap on code kept in the consent prompt / audit trail; local-only, never sent to the peer.
+const MAX_CODE_PREVIEW_BYTES = 20_000;
+function previewCode(code) {
+  if (typeof code !== 'string') return '';
+  if (code.length <= MAX_CODE_PREVIEW_BYTES) return code;
+  return `${code.slice(0, MAX_CODE_PREVIEW_BYTES)}\n… [truncated, ${code.length} bytes total]`;
+}
+
 /**
  * @param {object} ctx
  * @param {(discoveryKeyHex: string, payload: object) => void} ctx.sendReply
@@ -180,6 +192,7 @@ function removeDir(dir) {
  * @param {() => string | null} [ctx.getSecretScheme]
  * @param {(discoveryKeyHex: string) => string | null} [ctx.getRevokedDeviceKey]
  * @param {(discoveryKeyHex: string, timeoutMs: number) => Promise<{ ok: boolean, reason: string | null }>} [ctx.awaitDeviceVerified]
+ * @param {(payload: { code: string, lessonKey: null, lessonReference: string | null, modelHint: undefined }) => Promise<{ modelName: string | null, result: { verdict: string, concerns: Array<{ summary: string, snippet: string }> } }>} [ctx.runSecurityScan]
  */
 function createExecHost(ctx) {
   const {
@@ -194,6 +207,11 @@ function createExecHost(ctx) {
     getRevokedDeviceKey = () => null,
     // No transport means nothing can prove who is on the wire, so nothing runs.
     awaitDeviceVerified = async () => ({ ok: false, reason: 'no-handshake' }),
+    // index.cjs overrides this with the real RPC bridge; unconfigured, it
+    // rejects, which spawnRun's catch treats as 'unavailable', not a silent skip.
+    runSecurityScan = async () => {
+      throw new Error('security scan not configured');
+    },
   } = ctx;
 
   // discoveryKey -> in-flight run, set from the moment a request is accepted
@@ -340,16 +358,15 @@ function createExecHost(ctx) {
   }
 
   /**
-   * Park the run on a human. One prompt covers everything the run asked for.
-   * `declared` carries through to the audit event so it's clear what the
-   * lesson frontmatter said vs what the host's detector found.
+   * Park the run on a human. One prompt covers everything asked for;
+   * `concerns`/`sourcePreview` are attached whenever present so approving is never blind.
    * @param {string} discoveryKeyHex
-   * @param {{ devices: string[], network: string | null, declared?: { network?: string, device?: string[] } }} asks
+   * @param {{ devices: string[], network: string | null, declared?: { network?: string, device?: string[] }, concerns?: string[], sourcePreview?: string }} asks
    * @param {string | null} label
    */
   function requestConsent(discoveryKeyHex, asks, label) {
     const requestId = crypto.randomUUID();
-    const { devices, network, declared } = asks;
+    const { devices, network, declared, concerns, sourcePreview } = asks;
     const entry = {
       requestId,
       discoveryKey: discoveryKeyHex,
@@ -358,6 +375,8 @@ function createExecHost(ctx) {
       label: label ?? null,
       userData: getPeerUserData(discoveryKeyHex) ?? null,
       requestedAt: Date.now(),
+      ...(concerns && concerns.length > 0 ? { concerns } : {}),
+      ...(sourcePreview ? { sourcePreview } : {}),
     };
     appendAudit('peer:exec:device-requested', {
       requestId,
@@ -366,6 +385,7 @@ function createExecHost(ctx) {
       network,
       declared: declared ?? null,
       label,
+      concerns: concerns && concerns.length > 0 ? concerns : undefined,
     });
 
     let settle;
@@ -627,6 +647,49 @@ function createExecHost(ctx) {
     const netReason = detectedNetReason(detectedNet, declared);
     const wantedDevices = Array.from(new Set([...detectedDevices, ...declaredDevices]));
 
+    // `code` is buildLesson()'s wrapped output (what spawns); a
+    // human or the AI reviewer only needs the lesson source underneath it.
+    const displaySource =
+      typeof declared.rawSource === 'string' && declared.rawSource.length > 0 ? declared.rawSource : code;
+
+    // 'unavailable' (no model, scan errored) stays distinct from 'suspicious':
+    // it never turns a run needing no device/network access into one that does.
+    let securityVerdict = 'clean';
+    let securityConcerns = [];
+    try {
+      const scanned = await runSecurityScan({
+        code: displaySource,
+        lessonKey: null,
+        lessonReference: typeof declared.lessonReference === 'string' ? declared.lessonReference : null,
+        // The receiving device's own configured/loaded model, same as any
+        // other host-side chat call; a peer cannot pick this remotely.
+        modelHint: undefined,
+      });
+      securityVerdict = scanned.result.verdict;
+      securityConcerns = scanned.result.concerns.map((c) => c.summary);
+    } catch (err) {
+      securityVerdict = 'unavailable';
+      securityConcerns = [
+        'AI security review unavailable on this device. Review the code yourself before approving.',
+      ];
+    }
+
+    if (securityVerdict === 'malicious') {
+      appendAudit('peer:exec:security-flagged', {
+        discoveryKey: discoveryKeyHex,
+        concerns: securityConcerns,
+        sourcePreview: previewCode(displaySource),
+      });
+      fail(
+        discoveryKeyHex,
+        'security-flagged',
+        `security scan flagged: ${securityConcerns.join('; ') || 'no reason returned'}`,
+        { mode, fileName, label },
+      );
+      finishRun(discoveryKeyHex, run);
+      return;
+    }
+
     // A loopback ask under bwrap comes out as full egress, wider than what
     // was approved, so refuse rather than silently widen it.
     const netScope = sandbox.enforcedNetworkScope(netMode);
@@ -642,6 +705,8 @@ function createExecHost(ctx) {
     }
 
     const grants = [];
+    // 'suspicious' no longer forces a prompt on its own; the model has shown
+    // that verdict to be unreliable. Only 'malicious' above hard-refuses.
     if (wantedDevices.length > 0 || netMode !== 'none') {
       run.phase = 'awaiting-consent';
       const consent = requestConsent(
@@ -653,6 +718,8 @@ function createExecHost(ctx) {
             network: msg.declared?.network,
             device: msg.declared?.device,
           },
+          concerns: securityConcerns,
+          sourcePreview: previewCode(displaySource),
         },
         label,
       );
@@ -863,7 +930,15 @@ function createExecHost(ctx) {
     // signal, so honour it now that there is one.
     if (run.cancelled) terminate(run);
 
-    appendAudit('peer:exec:started', { discoveryKey: discoveryKeyHex, mode, fileName, label });
+    appendAudit('peer:exec:started', {
+      discoveryKey: discoveryKeyHex,
+      mode,
+      fileName,
+      label,
+      // Kept even for a 'clean' run: this is the only surface for a run
+      // that never triggered a consent prompt at all.
+      sourcePreview: previewCode(displaySource),
+    });
     sendReply(discoveryKeyHex, { kind: 'started', mode, fileName, label });
 
     const stderrFilter = createNoiseFilter();

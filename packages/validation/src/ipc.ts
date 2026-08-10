@@ -40,6 +40,8 @@ export const academyRunPayloadSchema = z.object({
   label: z.string().max(200).optional(),
   /** Temp file name on the host. Internal; must be a safe basename. */
   fileName: fileNameSchema,
+  /** Forwarded to a paired peer as `declared.lessonReference`. Only meaningful with `peerId`. */
+  lessonReference: z.string().max(8_000).optional(),
 });
 
 export const academyRunResultSchema = z.object({
@@ -257,3 +259,79 @@ export function parseIpc<T>(schema: z.ZodType<T>, value: unknown, label: string)
   }
   return result.data;
 }
+
+export const chatMessageSchema = z.object({
+  role: z.enum(['system', 'user', 'assistant']),
+  content: z.string().min(1).max(32_000),
+});
+
+export const chatLessonKeySchema = z
+  .object({
+    chapter: z.string().min(1).max(64),
+    lesson: z.string().min(1).max(128),
+  })
+  .strict()
+  .nullable();
+
+// Bounded facts supplied by the renderer; the host does not guess a content API.
+export const chatLessonReferenceSchema = z.string().max(8_000).optional();
+
+// When true, the host fetches the public QVAC docs and injects them into the
+// system prompt. The renderer decides based on navigator.onLine + a user toggle.
+export const chatUseFullDocsSchema = z.boolean().optional();
+
+export const chatSendSchema = z
+  .object({
+    messages: z.array(chatMessageSchema).min(1).max(64),
+    lessonKey: chatLessonKeySchema,
+    lessonReference: chatLessonReferenceSchema,
+    useFullDocs: chatUseFullDocsSchema,
+    /**
+     * Filename of the catalogue model the renderer wants to use. When omitted,
+     * the host picks the smallest installed chat model automatically.
+     */
+    modelHint: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+export const chatVerifyTestSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    description: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const chatVerifySchema = z
+  .object({
+    code: z.string().min(1).max(20_000),
+    tests: z.array(chatVerifyTestSchema).min(1).max(32),
+    lessonKey: chatLessonKeySchema,
+    lessonReference: chatLessonReferenceSchema,
+    /** Canonical solution; omitted for lessons with no vendored answer file. */
+    answer: z.string().max(20_000).optional(),
+    /** Filename of the catalogue model to grade with; omitted uses whatever the host already has loaded/configured. */
+    modelHint: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+/** Payload for the pre-flight security scan a submission gets before it may
+ *  ship to a paired device. Mirrors chatVerifySchema minus the checklist. */
+export const chatSecuritySchema = z
+  .object({
+    code: z.string().min(1).max(20_000),
+    lessonKey: chatLessonKeySchema,
+    lessonReference: chatLessonReferenceSchema,
+    modelHint: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+export const chatRequestIdSchema = z.string().min(1).max(128);
+
+export const chatLoadSchema = z.string().min(1).max(256);
+
+export const modelLessonKeySchema = z
+  .object({
+    chapter: z.string().min(1).max(64),
+    lesson: z.string().min(1).max(128),
+  })
+  .strict();

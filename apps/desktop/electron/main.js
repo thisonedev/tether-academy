@@ -23,8 +23,9 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const { runExample } = require('../runner.cjs');
-const { listModels, removeModel, removeAllModels } = require('./models.cjs');
+const { listModels, removeModel, removeAllModels, catalogue, recommend, forLesson } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
+const chat = require('./chat.cjs');
 const { buildLesson } = require('./runner-process.cjs');
 const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
@@ -61,7 +62,7 @@ function handle(channel, fn) {
   });
 }
 
-// Shared Zod schemas from @academy/validation (ESM). Loaded once on first use.
+// Shared Zod schemas from @academy/validation (ESM). Cached after first load.
 let _ipcValidation = null;
 async function loadIpcValidation() {
   if (!_ipcValidation) {
@@ -217,6 +218,13 @@ async function runAcademy(parsed, evt) {
         label: parsed.label || null,
         argv: parsed.argv ?? [],
         cwd: COURSES_DIR,
+        // Hint only, for the receiver's security scan and code preview; the
+        // structural checks stay authoritative against the wrapped `code` above.
+        declared: {
+          ...(parsed.lessonReference ? { lessonReference: parsed.lessonReference } : {}),
+          // Pre-buildLesson() source, so review sees what was written.
+          rawSource: parsed.source,
+        },
       });
     } catch (err) {
       return { ok: false, output: `[peer-exec] ${formatRunError(err)}` };
@@ -419,14 +427,79 @@ handle('academy:models:remove', async (id) => removeModel(id));
 
 handle('academy:models:removeAll', async () => removeAllModels());
 
-// Full re-hash of the cache. Reads every cached byte, so a user asks for it.
 handle('academy:models:verify', async () => {
   const { verifyAllAsync } = require('../shared/model-integrity.cjs');
   const { verified, mismatched, recorded } = await verifyAllAsync();
   return { verified: verified.length, mismatched, recorded: recorded.length };
 });
 
+handle('academy:models:catalogue', async () => catalogue());
+
+handle('academy:models:recommend', async (lessonKey) => {
+  const hardware = await getDeviceInfo().catch(() => null);
+  return recommend(lessonKey, hardware);
+});
+
+handle('academy:models:for-lesson', async (lessonKey) => forLesson(lessonKey));
+
+// AI assistant chat. The renderer subscribes once on mount to academy:chat:chunk
+// and routes by requestId.
+handle('academy:chat:ready', async () => chat.isReady());
+handle('academy:chat:current-model', async () => chat.currentModel());
+handle('academy:chat:configured-model', async () => {
+  const store = await pearEnd.store();
+  return chat.currentModel() ?? (await store.get('ai.chat.model'));
+});
+handle('academy:chat:load', async (modelHint) => {
+  const result = await chat.load(modelHint);
+  const store = await pearEnd.store();
+  await store.set('ai.chat.model', result.modelName);
+  return result;
+});
+handle('academy:chat:send', async (parsed) => {
+  const result = await chat.send({
+    messages: parsed.messages,
+    lessonKey: parsed.lessonKey,
+    lessonReference: parsed.lessonReference,
+    useFullDocs: parsed.useFullDocs,
+    modelHint: parsed.modelHint,
+  });
+  return result;
+});
+handle('academy:chat:verify', async (parsed) => {
+  const result = await chat.verify({
+    code: parsed.code,
+    tests: parsed.tests,
+    lessonKey: parsed.lessonKey,
+    lessonReference: parsed.lessonReference,
+    answer: parsed.answer,
+    modelHint: parsed.modelHint,
+  });
+  return result;
+});
+handle('academy:chat:security-scan', async (parsed) => {
+  const result = await chat.securityScan({
+    code: parsed.code,
+    lessonKey: parsed.lessonKey,
+    lessonReference: parsed.lessonReference,
+    modelHint: parsed.modelHint,
+  });
+  return result;
+});
+handle('academy:chat:stop', async (requestId) => chat.stop(requestId));
+handle('academy:chat:docs-status', async () => chat.docsStatus());
+handle('academy:chat:docs-refresh', async () => chat.docsRefresh());
+
 handle('academy:device:info', async () => getDeviceInfo());
+
+// Forward chat events from the host process to every open BrowserWindow. The
+// renderer subscribes once on mount and dispatches by requestId. We register
+// the listeners at module load so they're live for the lifetime of the app;
+// late subscribers pick up chunks from any in-flight requests.
+chat.onChunk((chunk) => sendToAll('academy:chat:chunk', chunk));
+chat.onVerifyResult((result) => sendToAll('academy:chat:verify-result', result));
+chat.onSecurityResult((result) => sendToAll('academy:chat:security-result', result));
+chat.onLoadProgress((progress) => sendToAll('academy:chat:load-progress', progress));
 
 handle('academy:peer:identity', async () => {
   const idm = pearEnd.identity();
@@ -867,11 +940,35 @@ if (!lock) {
         // already gone
       }
     }
-    pearEnd
-      .shutdown()
-      .catch((err) => console.warn('[tether-academy-desktop] shutdown error:', err?.message ?? err))
-      .finally(() => app.quit());
+    // A lesson Run in flight has its own detached process group (so killGroup
+    // also reaches the QVAC worker it spawns). It outlives the app unless
+    // aborted here.
+    if (currentRun) {
+      try {
+        currentRun.abort();
+      } catch {
+        // already gone
+      }
+    }
+    // The chat model's bare worker process is spawned by @qvac/sdk's
+    // loadModel and otherwise never torn down, leaking one orphaned process
+    // per session.
+    chat
+      .unload()
+      .catch((err) => console.warn('[tether-academy-desktop] chat unload error:', err?.message ?? err))
+      .finally(() => {
+        pearEnd
+          .shutdown()
+          .catch((err) => console.warn('[tether-academy-desktop] shutdown error:', err?.message ?? err))
+          .finally(() => app.quit());
+      });
   });
+  // Ctrl+C sends SIGINT straight to this process. Node's default is to exit
+  // immediately with no cleanup, which is how the processes above get
+  // orphaned. Routing both through app.quit() gives them the same
+  // before-quit teardown as a normal Quit.
+  process.on('SIGINT', () => app.quit());
+  process.on('SIGTERM', () => app.quit());
   app.whenReady().then(async () => {
     const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
     if (fsSync().existsSync(path.join(staticDir, 'index.html'))) {

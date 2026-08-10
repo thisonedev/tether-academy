@@ -74,6 +74,8 @@ let localClaim = null;
 // Trust-decision collaborators, instantiated in init() once their collaborators exist.
 let revocation = null;
 let verification = null;
+// Bridges exec-host.cjs's security scan to main's chat.cjs over RPC; set by initOnce below.
+let runSecurityScanImpl = null;
 
 const members = new Map();
 const candidates = new Map();
@@ -139,6 +141,11 @@ const execHost = createExecHost({
     if (!verification) return Promise.resolve({ ok: false, reason: 'no-peer' });
     return verification.awaitPeerVerification(discoveryKeyHex, timeoutMs);
   },
+  // Reads the variable at call time; execHost is built before initOnce sets it.
+  runSecurityScan: (payload) => {
+    if (!runSecurityScanImpl) return Promise.reject(new Error('security scan not configured'));
+    return runSecurityScanImpl(payload);
+  },
 });
 
 function init(opts) {
@@ -163,11 +170,13 @@ async function initOnce({
   revokedDevices: revokedOpt = null,
   auditPath: auditPathOpt = null,
   userData: userDataOpt = null,
+  runSecurityScan: runSecurityScanOpt = null,
 }) {
   if (execPathOpt) execPath = execPathOpt;
   if (bareRuntimeBinPathOpt) bareRuntimeBinPath = bareRuntimeBinPathOpt;
   if (secretSchemeOpt) secretScheme = secretSchemeOpt;
   if (typeof userDataOpt === 'string' && userDataOpt) userData = userDataOpt;
+  if (typeof runSecurityScanOpt === 'function') runSecurityScanImpl = runSecurityScanOpt;
   revocation = createRevocation({ peers, pendingRequests, appendAudit, dropPeer, reject });
   verification = createVerification({
     identityHandshake,

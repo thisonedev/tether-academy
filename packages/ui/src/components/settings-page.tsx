@@ -3,14 +3,16 @@
 import type {
   AcademyAPI,
   AcademyDeviceInfo,
+  AcademyModelCatalogueEntry,
   AcademyModelEntry,
   AcademyPeerAuditEntry,
   AcademyPeerInfo,
 } from '@academy/validation';
 import { useUserHydrated, useUserStore } from '@academy/core';
-import { Box, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, Trash2 } from 'lucide-react';
+import { Box, Bot, Circle, CircleCheck, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AI_BOT_MODEL_NAMES } from './ai-bot-models.js';
 import {
   DevicesPanel,
   ExecRunList,
@@ -78,6 +80,13 @@ export function SettingsPage() {
   const router = useRouter();
 
   const [models, setModels] = useState<AcademyModelEntry[] | null>(null);
+  const [chatCatalogue, setChatCatalogue] = useState<AcademyModelCatalogueEntry[] | null>(null);
+  const [configuredChatModel, setConfiguredChatModel] = useState<string | null>(null);
+  const [configuringChatModel, setConfiguringChatModel] = useState<string | null>(null);
+  const [modelProgress, setModelProgress] = useState<Record<string, { loaded: number; total: number }>>({});
+  const [useFullDocs, setUseFullDocs] = useState(true);
+  const [docsStatus, setDocsStatus] = useState<{ available: boolean; source: string; bytes: number; expiresAt: number } | null>(null);
+  const [docsBusy, setDocsBusy] = useState(false);
   const [device, setDevice] = useState<AcademyDeviceInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [remove, setRemove] = useState<RemoveState>({ pending: null, busy: false, error: null });
@@ -108,17 +117,38 @@ export function SettingsPage() {
       openSignInPrompt();
       return;
     }
+    // Subscribe to model load progress once; the host emits events while a
+    // chat:load call is downloading a model file.
+    const offProgress = window.academy?.chat?.onLoadProgress?.((event) => {
+      if (!event || !event.modelName) return;
+      setModelProgress((prev) => ({
+        ...prev,
+        [event.modelName]: { loaded: event.loaded, total: event.total },
+      }));
+    });
     let cancelled = false;
     (async () => {
       setLoadError(null);
       try {
-        const [list, dev] = await Promise.all([
+        const [list, dev, catalogue, configured, useFullDocsRaw, status] = await Promise.all([
           window.academy?.models?.list().catch(() => null) ?? Promise.resolve(null),
           window.academy?.device?.info().catch(() => null) ?? Promise.resolve(null),
+          window.academy?.models?.catalogue().catch(() => []) ?? Promise.resolve([]),
+          window.academy?.chat?.configuredModel().catch(() => null) ?? Promise.resolve(null),
+          window.academy?.state?.get?.('ai.chat.useFullDocs').catch(() => null) ?? Promise.resolve(null),
+          window.academy?.chat?.docsStatus?.().catch(() => null) ?? Promise.resolve(null),
         ]);
         if (cancelled) return;
         setModels(list ?? []);
+        setChatCatalogue(
+          AI_BOT_MODEL_NAMES.map((name) => (catalogue ?? []).find((entry) => entry.name === name)).filter(
+            (entry): entry is AcademyModelCatalogueEntry => entry != null,
+          ),
+        );
+        setConfiguredChatModel(configured);
         setDevice(dev);
+        if (typeof useFullDocsRaw === 'string') setUseFullDocs(useFullDocsRaw !== 'false');
+        if (status && typeof status === 'object') setDocsStatus(status);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : 'Failed to load settings');
@@ -126,8 +156,61 @@ export function SettingsPage() {
     })();
     return () => {
       cancelled = true;
+      offProgress?.();
     };
   }, [hydrated, username, openSignInPrompt]);
+
+  const configureChatModel = useCallback(async (modelName: string) => {
+    if (!window.academy?.chat) return;
+    setConfiguringChatModel(modelName);
+    setLoadError(null);
+    setModelProgress((prev) => ({ ...prev, [modelName]: { loaded: 0, total: 0 } }));
+    try {
+      const result = await window.academy.chat.load(modelName);
+      setConfiguredChatModel(result.modelName);
+      await refreshModels();
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Could not configure the AI bot');
+    } finally {
+      setConfiguringChatModel(null);
+      setModelProgress((prev) => {
+        const next = { ...prev };
+        delete next[modelName];
+        return next;
+      });
+    }
+  }, [refreshModels]);
+
+  const toggleUseFullDocs = useCallback(async () => {
+    const next = !useFullDocs;
+    setUseFullDocs(next);
+    try {
+      await window.academy?.state?.set?.('ai.chat.useFullDocs', next ? 'true' : 'false');
+    } catch {
+      // best-effort; the next reload will recover
+    }
+    if (next) {
+      setDocsBusy(true);
+      try {
+        const result = await window.academy?.chat?.docsRefresh?.();
+        if (result && typeof result === 'object') setDocsStatus(result);
+      } catch {
+        // surface the existing status; don't block the toggle
+      } finally {
+        setDocsBusy(false);
+      }
+    }
+  }, [useFullDocs]);
+
+  const refreshDocs = useCallback(async () => {
+    setDocsBusy(true);
+    try {
+      const result = await window.academy?.chat?.docsRefresh?.();
+      if (result && typeof result === 'object') setDocsStatus(result);
+    } finally {
+      setDocsBusy(false);
+    }
+  }, []);
 
   const onRemoveOne = useCallback(
     async (id: string) => {
@@ -163,6 +246,24 @@ export function SettingsPage() {
       });
     }
   }, [refreshModels]);
+
+  // Arms the inline confirm for a row without deleting anything yet; the
+  // actual delete only fires from the "Remove" button in that confirm state.
+  const requestRemove = useCallback((id: string) => {
+    setRemove({ pending: id, busy: false, error: null });
+  }, []);
+
+  const cancelRemove = useCallback(() => {
+    setRemove({ pending: null, busy: false, error: null });
+  }, []);
+
+  // Chat catalogue entries are keyed by display name; downloaded models carry
+  // the on-disk id (hash-prefixed for single files) that `models.remove` needs.
+  const modelIdByName = useMemo(() => {
+    const map = new Map<string, string>();
+    (models ?? []).forEach((m) => map.set(m.name, m.id));
+    return map;
+  }, [models]);
 
   if (!hydrated || isDesktop === null) {
     return (
@@ -274,64 +375,182 @@ export function SettingsPage() {
           aria-labelledby="settings-tab-models"
           className="rounded-xl border border-canvas-border bg-canvas-muted p-5 sm:p-6"
         >
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-canvas-foreground sm:text-xl">
-                Downloaded models
-              </h2>
-              <p className="mt-1 text-sm text-canvas-muted-foreground">
-                {models === null
-                  ? 'Scanning…'
-                  : models.length === 0
-                    ? 'Nothing downloaded yet. Run a lesson to pull a model.'
-                    : `${models.length} ${models.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
-              </p>
-            </div>
-            {models && models.length > 0 ? (
-              <RemoveAllButton
-                state={remove}
-                onConfirm={onRemoveAll}
-                onCancel={() => setRemove({ pending: null, busy: false, error: null })}
-              />
-            ) : null}
-          </div>
-
-          {!isDesktop ? (
-            <p className="rounded-md border border-canvas-border bg-canvas p-4 text-sm text-canvas-muted-foreground">
-              Open the desktop app to see and manage downloaded models.
-            </p>
-          ) : models === null ? (
-            <p className="text-sm text-canvas-muted-foreground">Loading…</p>
-          ) : models.length === 0 ? (
-            <p className="rounded-md border border-canvas-border bg-canvas p-4 text-sm text-canvas-muted-foreground">
-              No models yet. Pick a lesson and hit run; QVAC downloads what it needs into your
-              home directory.
-            </p>
-          ) : (
-            <ul className="divide-y divide-canvas-border overflow-x-hidden rounded-lg border border-canvas-border bg-canvas">
-              {models.map((m) => (
-                <ModelRow
-                  key={m.id}
-                  model={m}
-                  state={remove}
-                  onConfirm={() => onRemoveOne(m.id)}
-                  onCancel={() => setRemove({ pending: null, busy: false, error: null })}
-                />
-              ))}
-            </ul>
-          )}
-
-          {models && models.length > 0 ? (
-            <p className="mt-2 text-[11px] text-canvas-muted-foreground/70">
-              {models.length} {models.length === 1 ? 'model' : 'models'} downloaded
-            </p>
-          ) : null}
-
           {remove.error ? (
-            <p role="alert" className="mt-3 text-xs text-red-400">
+            <p role="alert" className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
               {remove.error}
             </p>
           ) : null}
+
+          <section className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+                <Bot className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold text-canvas-foreground">AI bot models</h2>
+                <p className="mt-1 text-sm text-canvas-muted-foreground">
+                  Choose the local model the assistant uses in every lesson chat. You only need to configure it once.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-2">
+              {chatCatalogue === null ? (
+                <p className="text-sm text-canvas-muted-foreground">Loading chat models…</p>
+              ) : chatCatalogue.length === 0 ? (
+                <p className="rounded-md border border-canvas-border bg-canvas-muted p-3 text-sm text-canvas-muted-foreground">
+                  No chat models are available yet.
+                </p>
+              ) : (
+                chatCatalogue.map((entry) => {
+                  const active = configuredChatModel === entry.name;
+                  const busy = configuringChatModel === entry.name;
+                  const progress = modelProgress[entry.name];
+                  const downloadedId = modelIdByName.get(entry.name);
+                  return (
+                    <div key={entry.name} className="rounded-md border border-canvas-border bg-canvas-muted px-3 py-2.5">
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-canvas-foreground">{entry.name}</p>
+                          <p className="mt-0.5 text-xs text-canvas-muted-foreground">
+                            {entry.description || 'Local text-generation model'}
+                          </p>
+                        </div>
+                        <span className="shrink-0 font-mono text-sm text-canvas-foreground">
+                          {entry.sizeBytes ? formatBytes(entry.sizeBytes) : '—'}
+                        </span>
+                        <SelectModelButton
+                          active={active}
+                          busy={busy}
+                          disabled={configuringChatModel !== null}
+                          label={entry.name}
+                          onSelect={() => void configureChatModel(entry.name)}
+                        />
+                        {downloadedId ? (
+                          <RemoveIconButton
+                            id={downloadedId}
+                            label={entry.name}
+                            state={remove}
+                            onRequestRemove={() => requestRemove(downloadedId)}
+                            onConfirmRemove={() => onRemoveOne(downloadedId)}
+                            onCancel={cancelRemove}
+                          />
+                        ) : null}
+                      </div>
+                      {busy ? (
+                        <div className="mt-2">
+                          <div className="h-1 w-full overflow-hidden rounded-full bg-canvas-muted">
+                            <div
+                              className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                              style={{
+                                width:
+                                  progress && progress.total > 0
+                                    ? `${Math.min(100, Math.round((progress.loaded / progress.total) * 100))}%`
+                                    : '15%',
+                              }}
+                            />
+                          </div>
+                          <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-canvas-muted-foreground">
+                            {progress && progress.total > 0
+                              ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}`
+                              : busy
+                                ? 'Preparing model…'
+                                : ''}
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="mt-4 rounded-md border border-canvas-border bg-canvas p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-canvas-foreground">Include QVAC documentation</p>
+                  <p className="mt-0.5 text-xs text-canvas-muted-foreground">
+                    When online, the assistant sees the full QVAC SDK docs alongside the current lesson. Disable to keep answers local-only.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={useFullDocs}
+                  onClick={() => void toggleUseFullDocs()}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                    useFullDocs ? 'bg-emerald-500' : 'bg-canvas-muted-foreground/40'
+                  }`}
+                >
+                  <span
+                    className={`inline-block size-4 transform rounded-full bg-canvas transition-transform ${
+                      useFullDocs ? 'translate-x-4' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+                <HardDrive className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-canvas-foreground">QVAC models</h2>
+                    <p className="mt-1 text-sm text-canvas-muted-foreground">
+                      {models === null
+                        ? 'Scanning…'
+                        : models.length === 0
+                          ? 'Nothing downloaded yet. Run a lesson to pull a model.'
+                          : `${models.length} ${models.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
+                    </p>
+                  </div>
+                  {models && models.length > 0 ? (
+                    <RemoveAllButton
+                      state={remove}
+                      onRequestRemove={() => requestRemove('all')}
+                      onConfirmRemove={onRemoveAll}
+                      onCancel={cancelRemove}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              {!isDesktop ? (
+                <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
+                  Open the desktop app to see and manage downloaded models.
+                </p>
+              ) : models === null ? (
+                <p className="text-sm text-canvas-muted-foreground">Loading…</p>
+              ) : models.length === 0 ? (
+                <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
+                  No models yet. Pick a lesson and hit run; QVAC downloads what it needs into your
+                  home directory.
+                </p>
+              ) : (
+                models.map((m) => (
+                  <ModelRow
+                    key={m.id}
+                    model={m}
+                    state={remove}
+                    onRequestRemove={() => requestRemove(m.id)}
+                    onConfirmRemove={() => onRemoveOne(m.id)}
+                    onCancel={cancelRemove}
+                  />
+                ))
+              )}
+
+              {models && models.length > 0 ? (
+                <p className="text-[11px] text-canvas-muted-foreground/70">
+                  {models.length} {models.length === 1 ? 'model' : 'models'} downloaded
+                </p>
+              ) : null}
+            </div>
+          </section>
         </section>
       ) : null}
 
@@ -410,64 +629,137 @@ export function SettingsPage() {
 function ModelRow({
   model,
   state,
-  onConfirm,
+  onRequestRemove,
+  onConfirmRemove,
   onCancel,
 }: {
   model: AcademyModelEntry;
   state: RemoveState;
-  onConfirm: () => void;
+  onRequestRemove: () => void;
+  onConfirmRemove: () => void;
   onCancel: () => void;
 }) {
-  const confirming = state.pending === model.id;
-  const busy = confirming && state.busy;
   return (
-    <li className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-sm text-canvas-foreground" title={model.name}>
-          {model.name}
-        </p>
-        <p className="mt-0.5 text-xs text-canvas-muted-foreground">
-          {KIND_LABEL[model.kind]}
-          {model.fileCount > 1 ? ` · ${model.fileCount} files` : ''}
-          {model.sourceHash ? ` · ${model.sourceHash}` : ''}
-        </p>
-        <UsageHint description={model.description} usedIn={model.usedIn} />
+    <div className="rounded-md border border-canvas-border bg-canvas-muted px-3 py-2.5">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-sm text-canvas-foreground" title={model.name}>
+            {model.name}
+          </p>
+          <p className="mt-0.5 text-xs text-canvas-muted-foreground">
+            {KIND_LABEL[model.kind]}
+            {model.fileCount > 1 ? ` · ${model.fileCount} files` : ''}
+            {model.sourceHash ? ` · ${model.sourceHash}` : ''}
+          </p>
+          <UsageHint description={model.description} usedIn={model.usedIn} />
+        </div>
+        <span className="shrink-0 font-mono text-sm text-canvas-foreground">{formatBytes(model.sizeBytes)}</span>
+        <RemoveIconButton
+          id={model.id}
+          label={model.name}
+          state={state}
+          onRequestRemove={onRequestRemove}
+          onConfirmRemove={onConfirmRemove}
+          onCancel={onCancel}
+        />
       </div>
-      <div className="flex shrink-0 items-center gap-3">
-        <span className="font-mono text-sm text-canvas-foreground">{formatGb(model.sizeBytes)}</span>
-        {confirming ? (
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={busy}
-              className="rounded px-2 py-1 text-xs text-canvas-muted-foreground hover:text-canvas-foreground disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onConfirm}
-              disabled={busy}
-              className="inline-flex items-center gap-1 rounded bg-red-500/15 px-2 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/25 disabled:opacity-50"
-            >
-              {busy ? <Loader2 className="size-3 animate-spin" /> : null}
-              Remove
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onConfirm()}
-            disabled={state.busy}
-            aria-label={`Remove ${model.name}`}
-            className="rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas hover:text-red-400 disabled:opacity-40"
-          >
-            <Trash2 className="size-4" />
-          </button>
-        )}
+    </div>
+  );
+}
+
+// Icon-only radio-style control for picking the active AI-bot model: an
+// empty circle to select, a filled check when it's the configured one.
+function SelectModelButton({
+  active,
+  busy,
+  disabled,
+  label,
+  onSelect,
+}: {
+  active: boolean;
+  busy: boolean;
+  disabled: boolean;
+  label: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      aria-pressed={active}
+      aria-label={active ? `${label} is configured` : `Use ${label}`}
+      title={active ? 'Configured' : 'Use this model'}
+      className={`shrink-0 rounded p-1.5 transition-colors disabled:cursor-wait disabled:opacity-40 ${
+        active ? 'text-emerald-400' : 'text-canvas-muted-foreground hover:bg-canvas hover:text-emerald-400'
+      }`}
+    >
+      {busy ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : active ? (
+        <CircleCheck className="size-4" />
+      ) : (
+        <Circle className="size-4" />
+      )}
+    </button>
+  );
+}
+
+// Shared remove control for a model row: clicking the trash icon only arms
+// the inline Cancel/Remove confirm (`onRequestRemove`); the actual delete
+// fires from the "Remove" button (`onConfirmRemove`). Keyed off
+// `state.pending` so only one row confirms at a time. Used by both the AI
+// bot list and Downloaded models.
+function RemoveIconButton({
+  id,
+  label,
+  state,
+  onRequestRemove,
+  onConfirmRemove,
+  onCancel,
+}: {
+  id: string;
+  label: string;
+  state: RemoveState;
+  onRequestRemove: () => void;
+  onConfirmRemove: () => void;
+  onCancel: () => void;
+}) {
+  const confirming = state.pending === id;
+  const busy = confirming && state.busy;
+  if (confirming) {
+    return (
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="rounded px-2 py-1 text-xs text-canvas-muted-foreground hover:text-canvas-foreground disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirmRemove}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded bg-red-500/15 px-2 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/25 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="size-3 animate-spin" /> : null}
+          Remove
+        </button>
       </div>
-    </li>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onRequestRemove}
+      disabled={state.busy}
+      aria-label={`Remove ${label}`}
+      className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas hover:text-red-400 disabled:opacity-40"
+    >
+      <Trash2 className="size-4" />
+    </button>
   );
 }
 
@@ -536,11 +828,13 @@ function chapterLabel(slug: string): string {
 
 function RemoveAllButton({
   state,
-  onConfirm,
+  onRequestRemove,
+  onConfirmRemove,
   onCancel,
 }: {
   state: RemoveState;
-  onConfirm: () => void;
+  onRequestRemove: () => void;
+  onConfirmRemove: () => void;
   onCancel: () => void;
 }) {
   const confirming = state.pending === 'all';
@@ -559,7 +853,7 @@ function RemoveAllButton({
           </button>
           <button
             type="button"
-            onClick={onConfirm}
+            onClick={onConfirmRemove}
             disabled={busy}
             className="inline-flex items-center gap-1 rounded bg-red-500/15 px-2.5 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/25 disabled:opacity-50"
           >
@@ -576,7 +870,7 @@ function RemoveAllButton({
   return (
     <button
       type="button"
-      onClick={onConfirm}
+      onClick={onRequestRemove}
       disabled={state.busy}
       className="inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-40"
     >
@@ -680,7 +974,6 @@ function PerDeviceRunLog() {
     try {
       await window.academy.peer.drop(discoveryKey);
     } catch {
-      // surfaced via peer events
     } finally {
       setActionBusy(null);
     }
@@ -692,7 +985,6 @@ function PerDeviceRunLog() {
     try {
       await window.academy.peer.clearPeerAudit(discoveryKey);
     } catch {
-      // surfaced via peer events
     } finally {
       setClearBusy(null);
     }

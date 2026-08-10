@@ -25,6 +25,17 @@ interface FrontMatter {
   argv?: LessonArgvSlot[];
 }
 
+function lessonReference(title: string, fm: FrontMatter, source: string): string {
+  const result = [
+    `Lesson: ${title}`,
+    fm.sourceExample ? `Example: ${fm.sourceExample}` : '',
+    source,
+    ...(fm.hints ?? []).map((hint) => `Hint: ${hint}`),
+    ...(fm.expectedOutput ?? []).map((line) => `Expected output: ${line}`),
+  ].filter(Boolean);
+  return result.join('\n').slice(0, 8_000);
+}
+
 // Vendored example code lives one repo level up, under packages/courses.
 const COURSES_ROOT = path.resolve(process.cwd(), '..', '..', 'packages', 'courses');
 
@@ -36,6 +47,12 @@ async function readExampleFile(relPath: string | undefined): Promise<string> {
   } catch {
     return '';
   }
+}
+
+async function readLessonSource(slug: string[]): Promise<string> {
+  const chapter = slug[slug.length - 2] ?? '';
+  const lesson = slug[slug.length - 1] ?? '';
+  return readExampleFile(`courses/qvac/en/${chapter}/${lesson}.mdx`);
 }
 
 function examplePathsForSlug(slug: string[]) {
@@ -179,14 +196,16 @@ export default async function Layout({
   if (page) {
     const fm = (page.data as unknown as FrontMatter) ?? {};
     const { answer: answerPath, starting: startingPath } = examplePathsForSlug(slug);
-    const [answerCode, startingCode] = await Promise.all([
+    const [answerCode, startingCode, lessonSource] = await Promise.all([
       readExampleFile(answerPath),
       readExampleFile(startingPath),
+      readLessonSource(slug),
     ]);
 
     const data: LessonData = {
       title: page.data.title as string,
       description: page.data.description as string | undefined,
+      lessonReference: lessonReference(page.data.title as string, fm, lessonSource),
       startingCode:
         isCodeLesson && startingCode
           ? startingCode
