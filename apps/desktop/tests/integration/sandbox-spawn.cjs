@@ -23,11 +23,26 @@ async function runSandboxed(t, code, grants = []) {
     t.teardown(() => fs.rmSync(wrap.profilePath, { force: true }));
   }
 
-  const child = spawn(wrap.command, wrap.args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...wrap.env },
-    cwd: project,
-  });
+  // bwrap reads its compiled filter from this fd; without it --seccomp names
+  // an fd nothing opened, and bwrap refuses to start the child at all.
+  const stdio = ['ignore', 'pipe', 'pipe'];
+  let seccompFd = null;
+  if (wrap.seccompFilter) {
+    const { openSeccompFd } = require('../../workers/sandbox/sandbox-linux.cjs');
+    seccompFd = openSeccompFd(wrap.seccompFilter);
+    stdio.push(seccompFd);
+  }
+
+  let child;
+  try {
+    child = spawn(wrap.command, wrap.args, {
+      stdio,
+      env: { ...process.env, ...wrap.env },
+      cwd: project,
+    });
+  } finally {
+    if (seccompFd !== null) fs.closeSync(seccompFd);
+  }
 
   let out = '';
   let err = '';
