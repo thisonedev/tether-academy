@@ -13,8 +13,18 @@ const { buildLesson } = require('../../electron/runner-process.cjs');
 const { appStateDir } = require('../../workers/sandbox/capabilities.cjs');
 
 const skip = process.platform === 'win32';
+// GTE_LARGE_FP16 and the MCP lesson's model resolve via `registry://`, fetched
+// over a real Hyperswarm/Hypercore swarm rather than a plain HTTPS download.
+// Hosted GitHub Actions runners can't reliably do the UDP hole-punching a
+// swarm connection needs, so a cold model pull there is an environment gap,
+// not a test bug.
+const skipSwarmDownload = skip || process.env.GITHUB_ACTIONS === 'true';
 const COURSES = path.resolve(__dirname, '../../../../packages/courses');
 const read = (rel) => fs.readFileSync(path.join(COURSES, rel), 'utf8');
+
+// run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+// a raw newline in a failure message would drop everything after it.
+const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
 
 // Loads a model and builds an index, so it needs room well past brittle's default.
 const SQLITE_TIMEOUT_MS = 180_000;
@@ -38,10 +48,17 @@ const CONFINEMENT_PROBE = `
 
 const probeOf = (stdout) => JSON.parse(stdout.match(/PROBE:(\{.*\})/)[1]);
 
-test('node-only - a node-only lesson runs on a peer via the node runtime', { skip }, async (t) => {
+test('node-only - a node-only lesson runs on a peer via the node runtime', { skip: skipSwarmDownload }, async (t) => {
   t.timeout(SQLITE_TIMEOUT_MS + 60_000);
   const { host, guest, discoveryKey } = await pairForExec(t, 'node-runtime-sqlite');
   const before = host.getAudit().length;
+
+  // A cold model cache means GTE_LARGE_FP16 has to be fetched, which asks for
+  // network like any other run; a warm cache skips the prompt entirely.
+  const off = host.on((event, payload) => {
+    if (event === 'peer:exec:device-request') host.resolveDeviceRequest(payload.requestId, true);
+  });
+  t.teardown(off);
 
   const result = await runExec(
     guest,
@@ -63,7 +80,12 @@ test('node-only - a node-only lesson runs on a peer via the node runtime', { ski
     /MODULE_NOT_FOUND/.test(result.stderr),
     `no resolver error; got: ${result.stderr.slice(-300)}`,
   );
-  t.ok(/distance:/.test(result.stdout), `the lesson produced results; got: ${result.stdout.slice(-300)}`);
+  t.ok(
+    /distance:/.test(result.stdout),
+    oneLine(
+      `the lesson produced results; stdout: ${result.stdout.slice(-300)}; stderr: ${result.stderr.slice(-500)}`,
+    ),
+  );
 
   const entry = host.getAudit().slice(before).find((e) => e.type === 'peer:exec:sandboxed');
   t.is(entry?.runtime, 'node', 'the host recorded which interpreter it used');
@@ -73,6 +95,11 @@ test('node-only - a node-only lesson runs on a peer via the node runtime', { ski
 test('node-only - the node child is confined exactly like the bare one', { skip }, async (t) => {
   const { host, guest, discoveryKey } = await pairForExec(t, 'node-runtime-confined');
   const before = host.getAudit().length;
+
+  // A dev machine already has this from real app use, so a denied read comes
+  // back EPERM; on a fresh CI runner nothing else creates it, and the probe
+  // would see ENOENT instead and pass for the wrong reason.
+  fs.mkdirSync(appStateDir(), { recursive: true });
 
   const result = await runExec(
     guest,
@@ -90,7 +117,7 @@ test('node-only - the node child is confined exactly like the bare one', { skip 
   t.not(probe.electron, 'ALLOWED', 'require("electron") reaches no API');
 });
 
-test('node-only - an MCP lesson runs on a peer from the pre-warmed cache', { skip }, async (t) => {
+test('node-only - an MCP lesson runs on a peer from the pre-warmed cache', { skip: skipSwarmDownload }, async (t) => {
   t.timeout(SQLITE_TIMEOUT_MS + 300_000);
   const { host, guest, discoveryKey } = await pairForExec(t, 'node-runtime-mcp');
   const before = host.getAudit().length;
@@ -123,7 +150,12 @@ test('node-only - an MCP lesson runs on a peer from the pre-warmed cache', { ski
     'the host prepared the server itself',
   );
   t.absent(/Connection closed/.test(result.stderr), `the server started; got: ${result.stderr.slice(-300)}`);
-  t.ok(/Tool:|weather/i.test(result.stdout), `the tool call ran; got: ${result.stdout.slice(-300)}`);
+  t.ok(
+    /Tool:|weather/i.test(result.stdout),
+    oneLine(
+      `the tool call ran; stdout: ${result.stdout.slice(-300)}; stderr: ${result.stderr.slice(-500)}`,
+    ),
+  );
 });
 
 // A peer must not get this machine to npm-install a package of its choosing.

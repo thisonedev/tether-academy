@@ -64,6 +64,9 @@ test('network-consent - a run that names no host is never asked and reaches noth
 });
 
 test('network-consent - a run that names a host is held until the host answers', async (t) => {
+  // Pairing alone can take up to PAIR_TIMEOUT_MS; brittle's 30s default
+  // test timeout can't hold both that and the consent round trip after it.
+  t.timeout(PAIR_TIMEOUT_MS + 30_000);
   const { host, guest, peerId } = await pairedGuest(t, 'network-allow');
 
   const requested = waitFor(host, 'peer:exec:device-request', null, 20_000);

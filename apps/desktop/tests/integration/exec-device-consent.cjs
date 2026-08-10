@@ -49,7 +49,12 @@ async function pairedGuest(t, label) {
   return { host, guest, peerId: guestEvent.discoveryKey };
 }
 
-test('device-consent - a mic run is held until the host answers', async (t) => {
+// Hosted GitHub Actions runners have no audio input device, so a real capture
+// always comes back silent; the denial test below still covers the consent
+// flow, since it never needs real audio.
+const skip = process.env.GITHUB_ACTIONS === 'true';
+
+test('device-consent - a mic run is held until the host answers', { skip }, async (t) => {
   const { host, guest, peerId } = await pairedGuest(t, 'device-consent');
 
   const requested = waitFor(host, 'peer:exec:device-request', null, 20_000);

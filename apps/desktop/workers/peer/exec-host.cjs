@@ -852,6 +852,10 @@ function createExecHost(ctx) {
 
     if (!wrap || !wrap.sandboxed) {
       const message = sandboxRefusalMessage(wrap, wrapErr);
+      // wrapSpawn returning a non-sandboxed result is not itself an
+      // exception, so without this it leaves no trace of which check inside
+      // it actually failed.
+      if (!wrapErr) console.warn('[peer] sandbox unavailable:', message, wrap?.warnings ?? []);
       fail(discoveryKeyHex, 'sandbox-unavailable', message, {
         mode,
         fileName,

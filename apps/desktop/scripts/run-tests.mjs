@@ -7,10 +7,23 @@
 //
 // Usage: node scripts/run-tests.mjs <dir> [...more dirs] [--filter <substring>]
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// A crashed sandboxed run can leave its bwrap child execve'd into the bare
+// runtime and still running, breaking the next file's sandbox probe. Safe
+// only because a GitHub Actions runner is isolated and has nothing else
+// named `bare`.
+function reapOrphanedSandboxChildren() {
+  if (process.platform !== 'linux' || process.env.GITHUB_ACTIONS !== 'true') return;
+  try {
+    execFileSync('pkill', ['-9', '-x', 'bare'], { stdio: 'ignore' });
+  } catch {
+    // pkill exits 1 when nothing matched; nothing to clean up.
+  }
+}
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const brittle = path.join(desktopRoot, 'node_modules', '.bin', 'brittle-node');
@@ -71,6 +84,7 @@ for (const file of files) {
   const name = path.relative(desktopRoot, file);
   const at = Date.now();
   const { code, out } = await run(file);
+  reapOrphanedSandboxChildren();
   const secs = (Date.now() - at) / 1000;
 
   if (code === 0) {
@@ -79,9 +93,12 @@ for (const file of files) {
     failed++;
     console.log(`FAIL  ${secs.toFixed(1)}s  ${name}  (${summary(out)})`);
     // Only the failing assertions and any crash, not the whole TAP stream.
+    // `[peer]` covers the host's own console.warn calls (e.g. sandbox.wrapSpawn
+    // failures), which carry the real exception behind a generic peer-facing
+    // refusal message and would otherwise never show up here.
     const relevant = out
       .split('\n')
-      .filter((line) => /^\s*not ok|^Error:|^TypeError:/.test(line))
+      .filter((line) => /^\s*not ok|^Error:|^TypeError:|^\[peer\]/.test(line))
       .slice(0, 12);
     for (const line of relevant) console.log(`        ${line.trim()}`);
   }

@@ -102,6 +102,9 @@ async function init({
   if (!rpc) {
     worker = PearRuntime.run(WORKER_ENTRY, []);
     worker.stderr.on('data', (d) => console.warn('[pear-end worker]', d.toString('utf8')));
+    // Unread otherwise: an unconsumed pipe can fill and block the worker's
+    // own writes once the OS buffer is full, not just hide its output.
+    worker.stdout.on('data', (d) => console.log('[pear-end worker]', d.toString('utf8')));
     worker.once('exit', (code) => {
       if (code) console.warn('[pear-end worker] exited unexpectedly, code=', code);
       rpc = null;
