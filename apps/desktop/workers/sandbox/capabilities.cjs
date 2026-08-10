@@ -331,6 +331,11 @@ const CAPABILITIES = {
         'LIN:/usr/share/locale',
         'LIN:/usr/share/zoneinfo',
         'LIN:/usr/share/icu',
+        // The npx/npm/node PATH shims in tool-wrappers.cjs are #!/bin/sh
+        // scripts; the kernel needs that interpreter to exec them. Single
+        // file, not all of /usr/bin, to avoid widening what's execve'able
+        // in a namespace bwrap can't otherwise restrict by binary name.
+        'LIN:/bin/sh',
         // apps/desktop/node_modules symlinks hoisted deps into the pnpm
         // workspace root's store, outside appRoot. Packaged builds ship a
         // flat node_modules and never need this.

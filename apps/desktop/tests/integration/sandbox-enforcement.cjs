@@ -198,9 +198,13 @@ test('sandbox-enforcement - QVAC SDK can spawn a nested bare runtime while confi
     20_000,
   );
 
-  t.ok(result.stdout.includes('qvac-hello'), 'the SDK loaded');
-  t.ok(result.stdout.includes('bare-child-ok'), 'the nested bare runtime ran');
-  t.is(result.code, 0);
+  // run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+  // a raw newline in a failure message would drop everything after it.
+  const oneLine = (s) => s.trim().replace(/\s*\n\s*/g, ' | ');
+  const diag = `stdout=${oneLine(result.stdout)} stderr=${oneLine(result.stderr)}`;
+  t.ok(result.stdout.includes('qvac-hello'), `the SDK loaded; ${diag}`);
+  t.ok(result.stdout.includes('bare-child-ok'), `the nested bare runtime ran; ${diag}`);
+  t.is(result.code, 0, diag);
 
   const entry = host.getAudit().slice(before).find((e) => e.type === 'peer:exec:sandboxed');
   t.is(entry?.sandboxed, true, 'stayed sandboxed');
