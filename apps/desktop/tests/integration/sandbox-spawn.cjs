@@ -76,9 +76,17 @@ test('sandbox-spawn - cannot read ~/.ssh private keys', { skip }, async (t) => {
 
 // The deny-list is generated from $HOME rather than a fixed set of names, so an ordinary home directory nobody named must still be out of reach.
 test('sandbox-spawn - cannot read home directories the run has no claim on', { skip }, async (t) => {
-  const probes = ['Desktop', 'Downloads', 'Movies', 'Pictures'].filter((name) =>
+  let probes = ['Desktop', 'Downloads', 'Movies', 'Pictures'].filter((name) =>
     fs.existsSync(path.join(os.homedir(), name)),
   );
+  // A dev machine already has one of these from real desktop use; a fresh CI
+  // $HOME doesn't, so create an ordinary-looking one to probe instead.
+  if (probes.length === 0) {
+    const placeholder = path.join(os.homedir(), 'Desktop');
+    fs.mkdirSync(placeholder, { recursive: true });
+    t.teardown(() => fs.rmSync(placeholder, { recursive: true, force: true }));
+    probes = ['Desktop'];
+  }
   t.ok(probes.length > 0, 'this home has directories to check');
 
   const { out } = await runSandboxed(

@@ -8,6 +8,10 @@ const test = require('brittle');
 const { bareRequires, pairForExec, runExec } = require('../helpers/index.cjs');
 const { SIGKILL_GRACE_MS } = require('../../workers/peer/exec-host.cjs');
 
+// run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+// a raw newline in a failure message would drop everything after it.
+const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
+
 // A cancel that never arrives shows up as a timeout, so it becomes a value rather than a rejection that would abort the rest of the file.
 const settled = (promise) =>
   promise.then(
@@ -97,6 +101,10 @@ test('exec-cancel - the peer accepts a fresh exec afterwards', async (t) => {
   );
   if (fresh.err) return;
 
-  t.ok(fresh.result.stdout.includes('fresh run ok'), 'the new exec actually ran');
-  t.is(fresh.result.code, 0, 'exec state was not left stuck');
+  const detail = oneLine(
+    `code=${fresh.result.code} signal=${fresh.result.signal} ` +
+      `stdout=${fresh.result.stdout} stderr=${fresh.result.stderr}`,
+  );
+  t.ok(fresh.result.stdout.includes('fresh run ok'), `the new exec actually ran; ${detail}`);
+  t.is(fresh.result.code, 0, `exec state was not left stuck; ${detail}`);
 });
