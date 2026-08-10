@@ -26,6 +26,11 @@ declare global {
 const INSTALL_COMMAND = 'curl -fsSL https://tetheracademy.cc/install.sh | sh';
 const THISONEDEV_URL = 'https://github.com/thisonedev';
 
+const CARD_GLOW =
+  'radial-gradient(120% 80% at 100% 0%, rgba(52,211,153,0.10), var(--color-canvas-muted) 60%), var(--color-canvas-muted)';
+const CARD_GLOW_FAINT =
+  'radial-gradient(120% 80% at 100% 0%, rgba(52,211,153,0.05), transparent 60%), var(--color-canvas-muted)';
+
 interface FeatureItem {
   icon: LucideIcon;
   title: string;
@@ -144,7 +149,7 @@ function SectionDivider() {
 function FeatureCards() {
   return (
     <section className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
         {FEATURES.map((feature) => (
           <FeatureCard key={feature.title} {...feature} />
         ))}
@@ -155,12 +160,17 @@ function FeatureCards() {
 
 function FeatureCard({ icon: Icon, title, body }: FeatureItem) {
   return (
-    <div className="flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-5">
-      <Icon className="mb-4 size-5 text-emerald-400" />
-      <h3 className="mb-3 text-lg font-semibold leading-snug tracking-tight text-canvas-foreground sm:text-xl">
+    <div
+      className="group flex h-full cursor-pointer flex-col rounded-2xl border border-canvas-border p-6 transition-colors hover:border-emerald-500/60 sm:p-7"
+      style={{ background: CARD_GLOW }}
+    >
+      <div className="flex size-11 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 transition-colors group-hover:border-emerald-500/60 group-hover:bg-emerald-500/15">
+        <Icon className="size-5 text-emerald-400" strokeWidth={2} aria-hidden />
+      </div>
+      <h3 className="mt-5 text-lg font-semibold leading-snug tracking-tight text-canvas-foreground sm:text-xl">
         {title}
       </h3>
-      <p className="text-sm leading-relaxed text-canvas-muted-foreground">{body}</p>
+      <p className="mt-2.5 text-sm leading-relaxed text-canvas-muted-foreground">{body}</p>
     </div>
   );
 }
@@ -170,6 +180,7 @@ interface FeatureShot {
   icon: LucideIcon;
   category: string;
   label: string;
+  subtitle: string;
   checkboxes: string[];
   src?: string;
   alt?: string;
@@ -181,6 +192,7 @@ const FEATURE_SHOTS: FeatureShot[] = [
     icon: Cpu,
     category: 'CODE',
     label: 'Local execution',
+    subtitle: 'kernel sandbox',
     src: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/this-device.png`,
     checkboxes: [
       'Lessons execute in a kernel sandbox, so that code can not reach the rest of your system.',
@@ -193,6 +205,7 @@ const FEATURE_SHOTS: FeatureShot[] = [
     icon: Code2,
     category: 'EDITOR',
     label: 'Familiar coding experience',
+    subtitle: 'monaco bundled',
     src: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/monaco-editor.png`,
     alt: 'Monaco editor inside a Tether Academy lesson, showing TypeScript code with IntelliSense and inline error underlines.',
     checkboxes: [
@@ -206,6 +219,7 @@ const FEATURE_SHOTS: FeatureShot[] = [
     icon: Network,
     category: 'P2P',
     label: 'Device pairing',
+    subtitle: 'end-to-end',
     src: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/device-pairing.png`,
     alt: 'Device pairing panel in Tether Academy, showing a local DHT pairing flow with another device.',
     checkboxes: [
@@ -230,11 +244,38 @@ function FeatureBlocks() {
           execution, device pairing, private identity management, etc.
         </h3>
       </div>
-      <section className="space-y-14 sm:space-y-10">
+      <section className="space-y-5">
         {FEATURE_SHOTS.map((feature, index) => (
           <FeatureBlock key={feature.key} feature={feature} index={index} />
         ))}
       </section>
+      <ExploreCta />
+    </div>
+  );
+}
+
+function ExploreCta() {
+  return (
+    <div
+      className="rounded-2xl border border-canvas-border p-6 sm:p-8"
+      style={{ background: CARD_GLOW }}
+    >
+      <div className="grid grid-cols-1 gap-6 items-center md:grid-cols-[1fr_auto]">
+        <div className="min-w-0">
+          <p className="font-mono text-xs font-semibold uppercase tracking-widest text-emerald-400">
+            Try it
+          </p>
+          <h3 className="mt-2 text-2xl font-bold leading-tight tracking-tight text-canvas-foreground">
+            Ready to build on the p2p stack?
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-canvas-muted-foreground sm:text-base max-w-xl">
+            One install command. Runs offline. No accounts, no cloud. macOS and Linux.
+          </p>
+        </div>
+        <div className="min-w-0 w-full md:w-auto">
+          <InstallCommand command={INSTALL_COMMAND} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -243,17 +284,23 @@ function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number 
   const Icon = feature.icon;
   const hasImage = Boolean(feature.src);
   const reverse = index % 2 === 1;
-  const textOrder = hasImage ? (reverse ? 'md:order-1' : 'md:order-2') : 'md:col-span-2';
-  const imageOrder = hasImage ? (reverse ? 'md:order-2' : 'md:order-1') : '';
+
   const text = (
     <div
-      className={`relative flex flex-col justify-center gap-4 overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted p-6 sm:p-8 ${textOrder}`}
+      className={`flex flex-col justify-center gap-3 p-6 sm:p-8 ${
+        hasImage ? (reverse ? 'md:order-1' : 'md:order-2') : ''
+      }`}
     >
-      <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-400">
-        <Icon className="size-3" strokeWidth={2.5} aria-hidden />
-        {feature.category}
-      </p>
-      <h3 className="text-2xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-2xl">
+      <div className="flex items-center justify-between gap-3">
+        <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-400">
+          <Icon className="size-3" strokeWidth={2.5} aria-hidden />
+          {feature.category} — {String(index + 1).padStart(2, '0')}
+        </p>
+        <span className="hidden font-mono text-[11px] text-canvas-muted-foreground sm:inline">
+          {feature.subtitle}
+        </span>
+      </div>
+      <h3 className="mt-1 text-2xl font-bold leading-tight tracking-tight text-canvas-foreground">
         {feature.label}
       </h3>
       {feature.checkboxes?.length ? (
@@ -276,22 +323,39 @@ function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number 
       ) : null}
     </div>
   );
+
   const image = feature.src ? (
     <div
-      className={`overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted ${imageOrder}`}
+      className={`relative overflow-hidden border-b border-canvas-border md:border-b-0 ${
+        reverse ? 'md:order-2 md:border-l' : 'md:order-1 md:border-r'
+      }`}
     >
-      <div className="overflow-hidden rounded-xl">
-        {/* biome-ignore lint/performance/noImgElement: the home page is short, the screenshots are static, and next/image is not used anywhere else in apps/web/src/ */}
-        <img src={feature.src} alt={feature.alt ?? ''} loading="lazy" className="block w-full" />
-      </div>
+      {/* biome-ignore lint/performance/noImgElement: the home page is short, the screenshots are static, and next/image is not used anywhere else in apps/web/src/ */}
+      <img src={feature.src} alt={feature.alt ?? ''} loading="lazy" className="block w-full" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100"
+        style={{
+          background: `radial-gradient(60% 80% at ${reverse ? '100%' : '0%'} 50%, rgba(52,211,153,0.12), transparent 60%)`,
+        }}
+      />
     </div>
   ) : null;
 
   return (
-    <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-2 md:gap-10">
-      {text}
-      {image}
-    </div>
+    <article
+      className="group overflow-hidden rounded-2xl border border-canvas-border transition-colors hover:border-emerald-500/60"
+      style={{ background: CARD_GLOW }}
+    >
+      <div
+        className={`grid grid-cols-1 items-center ${
+          hasImage ? (reverse ? 'md:grid-cols-[1fr_1.4fr]' : 'md:grid-cols-[1.4fr_1fr]') : ''
+        }`}
+      >
+        {text}
+        {image}
+      </div>
+    </article>
   );
 }
 
@@ -368,7 +432,7 @@ function CoursesSection() {
           <a href="#install" className="font-semibold text-emerald-400 hover:underline">
             Install it above
           </a>{' '}
-          to start one.
+          to start learning.
         </p>
       )}
     </section>
@@ -424,7 +488,8 @@ function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean 
     return (
       <div
         aria-disabled
-        className="flex h-full flex-col rounded-xl border border-dashed border-canvas-border bg-canvas-muted/40 p-4 opacity-70 sm:p-5"
+        className="flex h-full flex-col rounded-2xl border border-dashed border-canvas-border p-4 opacity-70 sm:p-5"
+        style={{ background: CARD_GLOW_FAINT }}
       >
         {body}
       </div>
@@ -435,7 +500,8 @@ function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean 
     return (
       <div
         title="Install the desktop app to start this course"
-        className="flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-4 opacity-80 sm:p-5"
+        className="flex h-full flex-col rounded-2xl border border-canvas-border p-4 opacity-80 sm:p-5"
+        style={{ background: CARD_GLOW }}
       >
         {body}
       </div>
@@ -445,7 +511,8 @@ function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean 
   return (
     <Link
       href={course.href}
-      className="group flex h-full flex-col rounded-xl border border-canvas-border bg-canvas-muted p-4 transition-colors hover:border-emerald-500/50 hover:bg-canvas sm:p-5"
+      className="group flex h-full flex-col rounded-2xl border border-canvas-border p-4 transition-colors hover:border-emerald-500/60 sm:p-5"
+      style={{ background: CARD_GLOW }}
     >
       {body}
     </Link>
