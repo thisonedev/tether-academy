@@ -107,10 +107,11 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # peer.init()'s unconditional "[peer] ready" log never appears for any
-      # createWorkerPeers test, so reproduce that exact call outside
-      # brittle/run-tests.mjs where nothing can swallow the error.
-      - name: check worker-client init
+      # A single client.init() resolves fine standalone (confirmed
+      # separately), so reproduce the full two-worker pairing handshake
+      # pairForExec actually does, outside brittle/run-tests.mjs where
+      # nothing can swallow the error.
+      - name: check worker-client pairing
         if: runner.os == 'Linux'
         working-directory: apps/desktop
         run: |
@@ -119,7 +120,12 @@ jobs:
           const req = (p) => require(path.join(process.cwd(), p));
           const createTestnet = req('node_modules/hyperdht/testnet.js');
           const hypercoreCrypto = req('node_modules/hypercore-crypto');
-          const client = req('electron/pear-end/worker-client.cjs');
+          const CLIENT_PATH = path.join(process.cwd(), 'electron/pear-end/worker-client.cjs');
+
+          function freshClient() {
+            delete require.cache[require.resolve(CLIENT_PATH)];
+            return require(CLIENT_PATH);
+          }
 
           function fakeDeviceIdentity() {
             const kp = hypercoreCrypto.keyPair();
@@ -133,18 +139,52 @@ jobs:
             };
           }
 
+          function waitFor(client, eventName, timeoutMs) {
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(
+                () => reject(new Error(`timed out waiting for ${eventName} after ${timeoutMs}ms`)),
+                timeoutMs,
+              );
+              const off = client.on((event, payload) => {
+                if (event !== eventName) return;
+                clearTimeout(timer);
+                off();
+                resolve(payload);
+              });
+            });
+          }
+
           (async () => {
             console.log('creating testnet...');
             const testnet = await createTestnet(3);
-            console.log('testnet ready, calling client.init()...');
-            const timeout = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('init timed out after 15000ms')), 15000));
-            await Promise.race([
-              client.init({ deviceIdentity: fakeDeviceIdentity(), bootstrap: testnet.bootstrap }),
-              timeout,
-            ]);
-            console.log('init resolved');
-            await client.shutdownWorker();
+
+            console.log('initializing host...');
+            const host = freshClient();
+            await host.init({ deviceIdentity: fakeDeviceIdentity(), bootstrap: testnet.bootstrap });
+            console.log('host ready');
+
+            console.log('initializing guest...');
+            const guest = freshClient();
+            await guest.init({ deviceIdentity: fakeDeviceIdentity(), bootstrap: testnet.bootstrap });
+            console.log('guest ready');
+
+            const hostPaired = waitFor(host, 'peer:paired', 20_000);
+            const guestPaired = waitFor(guest, 'peer:paired', 20_000);
+
+            console.log('creating invite...');
+            const invite = await host.createInvite({ autoApprove: true });
+            console.log('accepting invite...');
+            await guest.acceptInvite(invite.invite, {
+              userData: { name: 'probe-guest' },
+              code: invite.pairingCode,
+            });
+
+            console.log('waiting for peer:paired on both sides...');
+            await Promise.all([hostPaired, guestPaired]);
+            console.log('paired');
+
+            await host.shutdownWorker();
+            await guest.shutdownWorker();
             await testnet.destroy();
             process.exit(0);
           })().catch((err) => {
