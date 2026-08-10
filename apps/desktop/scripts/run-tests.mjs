@@ -93,13 +93,15 @@ for (const file of files) {
     failed++;
     console.log(`FAIL  ${secs.toFixed(1)}s  ${name}  (${summary(out)})`);
     // Only the failing assertions and any crash, not the whole TAP stream.
-    // `[peer]` covers the host's own console.warn calls (e.g. sandbox.wrapSpawn
+    // `[peer] ready` is routine noise from every successful pairing and can
+    // crowd out real failures in a file with many tests; other `[peer]`
+    // lines are the host's own console.warn calls (e.g. sandbox.wrapSpawn
     // failures), which carry the real exception behind a generic peer-facing
     // refusal message and would otherwise never show up here.
     const relevant = out
       .split('\n')
-      .filter((line) => /^\s*not ok|^Error:|^TypeError:|^\[peer\]/.test(line))
-      .slice(0, 12);
+      .filter((line) => /^\s*not ok|^Error:|^TypeError:/.test(line) || (/^\[peer\]/.test(line) && !/^\[peer\] ready/.test(line)))
+      .slice(0, 40);
     for (const line of relevant) console.log(`        ${line.trim()}`);
   }
   timings.push({ name, secs });
