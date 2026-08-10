@@ -107,100 +107,46 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # Pairing alone works fine standalone (confirmed separately), so probe
-      # one step further: a real exec over the paired channel, matching what
-      # every failing test actually does.
-      - name: check worker-client exec
+      # The Bare-worker path is fixed (confirmed separately). sandbox-spawn.cjs
+      # spawns a real Node child under bwrap+seccomp directly via wrapSpawn,
+      # not a worker, and dies in under 50ms with zero stdout — reproduce
+      # that exact call with full stderr/signal visibility.
+      - name: check wrapSpawn node child
         if: runner.os == 'Linux'
         working-directory: apps/desktop
         run: |
-          cat > /tmp/init-probe.js <<'SCRIPT'
+          cat > /tmp/spawn-probe.js <<'SCRIPT'
+          const { spawn } = require('child_process');
           const path = require('path');
-          const req = (p) => require(path.join(process.cwd(), p));
-          const createTestnet = req('node_modules/hyperdht/testnet.js');
-          const hypercoreCrypto = req('node_modules/hypercore-crypto');
-          const CLIENT_PATH = path.join(process.cwd(), 'electron/pear-end/worker-client.cjs');
+          const { wrapSpawn } = require(path.join(process.cwd(), 'workers/sandbox/index.cjs'));
+          const { CAPABILITIES } = require(path.join(process.cwd(), 'workers/sandbox/capabilities.cjs'));
 
-          function freshClient() {
-            delete require.cache[require.resolve(CLIENT_PATH)];
-            return require(CLIENT_PATH);
-          }
+          const code = 'try { require("node:fs").readFileSync("/etc/shadow", "utf8"); ' +
+            'process.stdout.write("leaked\\n"); } catch (e) { process.stdout.write("blocked: " + e.code + "\\n"); } ' +
+            'process.exit(0);';
 
-          function fakeDeviceIdentity() {
-            const kp = hypercoreCrypto.keyPair();
-            return {
-              publicKey: kp.publicKey.toString('hex'),
-              privateKey: kp.secretKey.toString('hex').slice(0, 64),
-              secretKey: kp.secretKey.toString('hex'),
-              createdAt: Date.now(),
-              identityPublicKey: kp.publicKey.toString('hex'),
-              source: 'tether-academy',
-            };
-          }
+          const wrap = wrapSpawn(process.execPath, ['-e', code], { cwd: process.cwd(), grants: [] }, CAPABILITIES.qvac);
+          console.log('wrap.mode:', wrap.mode, 'sandboxed:', wrap.sandboxed);
+          console.log('command:', wrap.command);
+          console.log('args:', JSON.stringify(wrap.args));
+          console.log('warnings:', JSON.stringify(wrap.warnings));
 
-          function waitFor(client, eventName, timeoutMs) {
-            return new Promise((resolve, reject) => {
-              const timer = setTimeout(
-                () => reject(new Error(`timed out waiting for ${eventName} after ${timeoutMs}ms`)),
-                timeoutMs,
-              );
-              const off = client.on((event, payload) => {
-                if (event !== eventName) return;
-                clearTimeout(timer);
-                off();
-                resolve(payload);
-              });
-            });
-          }
-
-          (async () => {
-            console.log('creating testnet...');
-            const testnet = await createTestnet(3);
-
-            console.log('initializing host...');
-            const host = freshClient();
-            await host.init({ deviceIdentity: fakeDeviceIdentity(), bootstrap: testnet.bootstrap });
-            console.log('host ready');
-
-            console.log('initializing guest...');
-            const guest = freshClient();
-            await guest.init({ deviceIdentity: fakeDeviceIdentity(), bootstrap: testnet.bootstrap });
-            console.log('guest ready');
-
-            const hostPaired = waitFor(host, 'peer:paired', 20_000);
-            const guestPaired = waitFor(guest, 'peer:paired', 20_000);
-
-            console.log('creating invite...');
-            const invite = await host.createInvite({ autoApprove: true });
-            console.log('accepting invite...');
-            await guest.acceptInvite(invite.invite, {
-              userData: { name: 'probe-guest' },
-              code: invite.pairingCode,
-            });
-
-            console.log('waiting for peer:paired on both sides...');
-            const [, guestEvent] = await Promise.all([hostPaired, guestPaired]);
-            console.log('paired, discoveryKey =', guestEvent.discoveryKey);
-
-            console.log('probing exec channel...');
-            const execResult = await new Promise((resolve, reject) => {
-              const timer = setTimeout(() => reject(new Error('exec probe timed out after 15000ms')), 15_000);
-              const emitter = guest.exec({ peerId: guestEvent.discoveryKey, mode: 'inline', code: 'null' });
-              emitter.on('exit', (info) => { clearTimeout(timer); resolve(info); });
-              emitter.on('error', (err) => { clearTimeout(timer); reject(err); });
-            });
-            console.log('exec resolved:', JSON.stringify(execResult));
-
-            await host.shutdownWorker();
-            await guest.shutdownWorker();
-            await testnet.destroy();
-            process.exit(0);
-          })().catch((err) => {
-            console.error('init failed:', err);
-            process.exit(1);
+          const child = spawn(wrap.command, wrap.args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, ...wrap.env },
+            cwd: process.cwd(),
+          });
+          let out = '';
+          let err = '';
+          child.stdout.on('data', (d) => (out += d));
+          child.stderr.on('data', (d) => (err += d));
+          child.on('exit', (code_, signal) => {
+            console.log('child exit code:', code_, 'signal:', signal);
+            console.log('child stdout:', JSON.stringify(out));
+            console.log('child stderr:', JSON.stringify(err));
           });
           SCRIPT
-          xvfb-run -a node /tmp/init-probe.js || echo "probe exit code: $?"
+          xvfb-run -a node /tmp/spawn-probe.js || echo "probe exit code: $?"
 
       - name: integration tests (Linux)
         if: runner.os == 'Linux'
