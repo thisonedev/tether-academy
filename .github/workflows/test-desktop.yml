@@ -107,6 +107,43 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # --process was removed (confirmed the actual bug), but sandbox-spawn.cjs
+      # still fails instantly with empty output, so check what's happening now.
+      - name: check wrapSpawn node child
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: |
+          cat > /tmp/spawn-probe.js <<'SCRIPT'
+          const { spawn } = require('child_process');
+          const path = require('path');
+          const { wrapSpawn } = require(path.join(process.cwd(), 'workers/sandbox/index.cjs'));
+          const { CAPABILITIES } = require(path.join(process.cwd(), 'workers/sandbox/capabilities.cjs'));
+
+          const code = 'try { require("node:fs").readFileSync("/etc/shadow", "utf8"); ' +
+            'process.stdout.write("leaked\\n"); } catch (e) { process.stdout.write("blocked: " + e.code + "\\n"); } ' +
+            'process.exit(0);';
+
+          const wrap = wrapSpawn(process.execPath, ['-e', code], { cwd: process.cwd(), grants: [] }, CAPABILITIES.qvac);
+          console.log('command:', wrap.command);
+          console.log('args:', JSON.stringify(wrap.args));
+
+          const child = spawn(wrap.command, wrap.args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, ...wrap.env },
+            cwd: process.cwd(),
+          });
+          let out = '';
+          let err = '';
+          child.stdout.on('data', (d) => (out += d));
+          child.stderr.on('data', (d) => (err += d));
+          child.on('exit', (code_, signal) => {
+            console.log('child exit code:', code_, 'signal:', signal);
+            console.log('child stdout:', JSON.stringify(out));
+            console.log('child stderr:', JSON.stringify(err));
+          });
+          SCRIPT
+          xvfb-run -a node /tmp/spawn-probe.js || echo "probe exit code: $?"
+
       - name: integration tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm --filter @tether-academy/desktop test:integration
