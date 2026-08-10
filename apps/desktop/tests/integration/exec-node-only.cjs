@@ -46,7 +46,10 @@ const CONFINEMENT_PROBE = `
   console.log('PROBE:' + JSON.stringify(out));
 `;
 
-const probeOf = (stdout) => JSON.parse(stdout.match(/PROBE:(\{.*\})/)[1]);
+const probeOf = (stdout) => {
+  const match = stdout.match(/PROBE:(\{.*\})/);
+  return match ? JSON.parse(match[1]) : null;
+};
 
 test('node-only - a node-only lesson runs on a peer via the node runtime', { skip: skipSwarmDownload }, async (t) => {
   t.timeout(SQLITE_TIMEOUT_MS + 60_000);
@@ -111,6 +114,12 @@ test('node-only - the node child is confined exactly like the bare one', { skip 
   t.is(entry?.runtime, 'node', 'the marker selected the node runtime');
 
   const probe = probeOf(result.stdout);
+  t.ok(
+    probe,
+    oneLine(`the child produced a PROBE line; stdout=${result.stdout} stderr=${result.stderr}`),
+  );
+  if (!probe) return;
+
   t.is(probe.ssh, 'EPERM', 'the generated home deny-list still applies');
   t.is(probe.appState, 'EPERM', 'the app state directory is still refused');
   t.is(probe.usr, 'EPERM', 'the write allowlist still applies');
