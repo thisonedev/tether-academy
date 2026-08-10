@@ -10,6 +10,10 @@ const { isWindows } = require('which-runtime');
 
 const { mcpExecPaths, resolveMcpBins } = require('./mcp-bins.cjs');
 
+function realpathSafe(p) {
+  try { return fs.realpathSync(p); } catch { return p; }
+}
+
 /**
  * @param {{ cacheDir: string, tmpDir?: string }} opts
  * @returns {{ dir: string, paths: string[], env: Record<string, string> }}
@@ -23,8 +27,13 @@ function createToolWrappers(opts) {
   const paths = [];
   const isWin = isWindows;
 
-  function writeUnixShim(name, target) {
-    if (!target) return;
+  function writeUnixShim(name, rawTarget) {
+    if (!rawTarget) return;
+    // Linux binds by exact path; exec-ing the un-resolved symlink (e.g.
+    // .../bin/npx -> ../lib/node_modules/npm/bin/npx-cli.js) only works if
+    // that exact symlink path was bound too. appendExtraExec() binds the
+    // realpath's package root, so target the realpath directly.
+    const target = realpathSafe(rawTarget);
     const shim = path.join(dir, name);
     const body = [
       '#!/bin/sh',

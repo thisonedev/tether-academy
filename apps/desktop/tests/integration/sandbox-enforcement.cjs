@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createRequire } = require('node:module');
 
-const { bareImports, bareRequires, pairForExec, runExec, tmpDir } = require('../helpers/index.cjs');
+const { bareImports, bareRequires, pairForExec, runExec } = require('../helpers/index.cjs');
 
 const BARE_FS = bareRequires('fs', 'path', 'child_process', 'process');
 
@@ -164,8 +164,6 @@ test('sandbox-enforcement - QVAC SDK can spawn a nested bare runtime while confi
 
   const qvacSdkPath = require.resolve('@qvac/sdk');
   const bareSpawnPath = createRequire(qvacSdkPath).resolve('bare-runtime/spawn');
-  const bareChild = path.join(tmpDir(t, 'bare-tiny'), 'child.mjs');
-  fs.writeFileSync(bareChild, 'console.log("bare-child-ok")\n');
 
   const result = await runExec(
     guest,
@@ -175,11 +173,15 @@ test('sandbox-enforcement - QVAC SDK can spawn a nested bare runtime while confi
       // inline one as CommonJS.
       mode: 'file',
       code: [
-        bareImports('process'),
+        bareImports('process', 'fs', 'os', 'path'),
         `import { close } from ${JSON.stringify(qvacSdkPath)};`,
         `import spawn from ${JSON.stringify(bareSpawnPath)};`,
         `process.stdout.write("qvac-hello\\n");`,
-        `const p = spawn("bare", { args: [${JSON.stringify(bareChild)}], stdio: ["ignore", "pipe", "pipe"] });`,
+        // The sandbox only grants read/write inside its own run dir; write the
+        // nested child there rather than a host tmp dir the sandbox never sees.
+        `const childPath = path.join(os.tmpdir(), "child.mjs");`,
+        `fs.writeFileSync(childPath, "console.log(\\"bare-child-ok\\")\\n");`,
+        `const p = spawn("bare", { args: [childPath], stdio: ["ignore", "pipe", "pipe"] });`,
         `await new Promise((resolve, reject) => {`,
         `  let out = "";`,
         `  p.stdout.on("data", (d) => { out += d; });`,
