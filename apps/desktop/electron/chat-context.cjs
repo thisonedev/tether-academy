@@ -43,11 +43,11 @@ function buildSystemPrompt(lessonKey, lessonContext, docs, docsWereRequested = f
   return [
     base,
     'Greetings, names, and small talk: answer as a person first (real name, real hello, real reaction), short and warm. Do not steer back to the lesson; the lesson is help you give, not who you are.',
-    'For real questions, answer directly and concisely. Use the references below only when the question is about the lesson or the SDK. Do not invent API names, tools, packages, facts, dates, version numbers, or changelog entries. If the references do not contain a specific date or a "recent changes" summary, say that plainly instead of guessing one.',
+    'For real questions, answer directly and concisely. Use the references below only when the question is about the lesson or the SDK. Do not invent facts, dates, or versions. If unsure, say so.',
     'Ignore typos. Do not mention or correct spelling.',
     'Return only the answer. No reasoning, no analysis, no think blocks.',
     'Plain text only. No Markdown, asterisks, backticks, headings, bullets, numbered lists, or code blocks. Short paragraphs separated by a blank line; one idea per paragraph.',
-    'No em dashes, no dash-set-off asides mid-sentence. Avoid stock filler like "ships", "lands", or "this matters"; say the concrete thing instead.',
+    'Avoid filler like "ships", "lands", or "this matters".',
     lesson ? `LESSON REFERENCE:\n${lesson}` : '',
     reference
       ? `SDK DOCUMENTATION REFERENCE:\n${reference}`
