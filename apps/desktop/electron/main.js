@@ -23,7 +23,15 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const { runExample } = require('../runner.cjs');
-const { listModels, removeModel, removeAllModels, catalogue, recommend, forLesson } = require('./models.cjs');
+const {
+  listModels,
+  removeModel,
+  removeAllModels,
+  pruneIncompleteDownloads,
+  catalogue,
+  recommend,
+  forLesson,
+} = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
 const chat = require('./chat.cjs');
 const { buildLesson } = require('./runner-process.cjs');
@@ -423,9 +431,29 @@ handle('academy:clipboard:copy', async ({ text, scrubAfterMs }) => {
 
 handle('academy:models:list', async () => listModels());
 
-handle('academy:models:remove', async (id) => removeModel(id));
+handle('academy:models:remove', async (id) => {
+  // Unload first so ensureLoaded()'s "already loaded" shortcut doesn't hand out a deleted model forever.
+  const items = await listModels();
+  const target = items.find((it) => it.id === id);
+  const result = await removeModel(id);
+  if (target && chat.currentModel() === target.name) {
+    await chat
+      .unload()
+      .catch((err) => console.warn('[tether-academy-desktop] unload after remove failed:', err?.message ?? err));
+  }
+  return result;
+});
 
-handle('academy:models:removeAll', async () => removeAllModels());
+handle('academy:models:removeAll', async () => {
+  const hadActiveModel = chat.currentModel() !== null;
+  const result = await removeAllModels();
+  if (hadActiveModel) {
+    await chat
+      .unload()
+      .catch((err) => console.warn('[tether-academy-desktop] unload after removeAll failed:', err?.message ?? err));
+  }
+  return result;
+});
 
 handle('academy:models:verify', async () => {
   const { verifyAllAsync } = require('../shared/model-integrity.cjs');
@@ -447,8 +475,16 @@ handle('academy:models:for-lesson', async (lessonKey) => forLesson(lessonKey));
 handle('academy:chat:ready', async () => chat.isReady());
 handle('academy:chat:current-model', async () => chat.currentModel());
 handle('academy:chat:configured-model', async () => {
+  if (chat.currentModel()) return chat.currentModel();
   const store = await pearEnd.store();
-  return chat.currentModel() ?? (await store.get('ai.chat.model'));
+  const existing = await store.get('ai.chat.model');
+  // Validate on every read: a preset can go away (as Llama-3.2-1B did), so never hand back a stale name.
+  if (existing && chat.isChatPreset(existing)) return existing;
+  const picked = await chat.pickDefaultChatModel();
+  if (picked && picked !== existing) {
+    await store.set('ai.chat.model', picked);
+  }
+  return picked;
 });
 handle('academy:chat:load', async (modelHint) => {
   const result = await chat.load(modelHint);
@@ -974,6 +1010,19 @@ if (!lock) {
     if (fsSync().existsSync(path.join(staticDir, 'index.html'))) {
       registerAcademyProtocol(staticDir);
     }
+
+    // A force-quit mid-download leaves a truncated file at its final name (no .part + rename staging),
+    // which then reads as fully installed forever. Sweep once per launch so the next load starts a
+    // fresh download instead of reusing the truncated file.
+    setImmediate(() => {
+      pruneIncompleteDownloads()
+        .then(({ removed }) => {
+          if (removed.length > 0) {
+            console.log('[tether-academy-desktop] pruned truncated model downloads:', removed);
+          }
+        })
+        .catch((err) => console.warn('[tether-academy-desktop] pruneIncompleteDownloads failed:', err?.message ?? err));
+    });
 
     // Warm the model manifest in the background so a peer-exec usually lands
     // with hashes already on file.

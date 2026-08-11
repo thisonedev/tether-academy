@@ -1,7 +1,5 @@
 // Lists, sizes, and removes downloaded QVAC models. Models live under
 // `<HOME>/.qvac/models/` as single files, `sharded/<key>/`, or `sets/<key>/`;
-// the sharded and set layouts are grouped into one row per directory so
-// removing a row never leaves a half-deleted model behind.
 
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -10,20 +8,11 @@ const os = require('node:os');
 
 const SINGLE_HASH_RE = /^([0-9a-f]{16})_(.+)$/;
 
-// Size hints for the chat models the assistant can recommend. Other catalogue
-// entries are passed through with zero so the picker can still show them; only
-// `recommend()` reads the numbers.
 const CHAT_MODEL_HINTS = {
   'Qwen3-0.6B-Q4_0.gguf': {
     family: 'chat',
     sizeBytes: 480 * 1024 * 1024,
     minRamBytes: 4 * 1024 ** 3,
-    gpu: 'optional',
-  },
-  'Llama-3.2-1B-Instruct-Q4_0.gguf': {
-    family: 'chat',
-    sizeBytes: 760 * 1024 * 1024,
-    minRamBytes: 6 * 1024 ** 3,
     gpu: 'optional',
   },
   'Qwen3-1.7B-Q4_0.gguf': {
@@ -162,6 +151,7 @@ async function listModels() {
       if (!s) continue;
       const hashMatch = SINGLE_HASH_RE.exec(entry.name);
       const displayName = displayNameFromSingle(entry.name);
+      const sizes = knownGoodSizes(displayName);
       out.push({
         id: entry.name,
         name: displayName,
@@ -171,6 +161,8 @@ async function listModels() {
         fileCount: 1,
         usedIn: usage[displayName] ?? [],
         description: descriptions[displayName] ?? '',
+        // No registry entry to check size against: assume complete.
+        complete: sizes ? sizes.has(s.size) : true,
       });
     } else if (entry.isDirectory() && (entry.name === 'sharded' || entry.name === 'sets')) {
       const groups = await fsp.readdir(abs, { withFileTypes: true });
@@ -188,6 +180,8 @@ async function listModels() {
           fileCount: count,
           usedIn: usage[group.name] ?? [],
           description: descriptions[group.name] ?? '',
+          // No reliable per-shard ground truth here (see pruneIncompleteDownloads).
+          complete: true,
         });
       }
     }
@@ -223,6 +217,49 @@ async function removeModel(id) {
   return { removed, freedBytes };
 }
 
+// Memoized filename -> set of valid download sizes, from @qvac/sdk's registry
+// (multiple entries when a file has more than one legitimate source).
+let _knownSizesByName = null;
+function knownGoodSizes(filename) {
+  if (_knownSizesByName === null) {
+    _knownSizesByName = new Map();
+    try {
+      const { models: registryModels } = require('@qvac/sdk/models');
+      for (const entry of registryModels) {
+        if (!entry.modelId || !entry.expectedSize) continue;
+        const sizes = _knownSizesByName.get(entry.modelId) ?? new Set();
+        sizes.add(entry.expectedSize);
+        _knownSizesByName.set(entry.modelId, sizes);
+      }
+    } catch (err) {
+      console.warn('[models] knownGoodSizes: could not load @qvac/sdk registry', err && err.message);
+    }
+  }
+  return _knownSizesByName.get(filename) ?? null;
+}
+
+async function pruneIncompleteDownloads() {
+  const items = await listModels();
+  const removed = [];
+  let freedBytes = 0;
+  for (const item of items) {
+    if (item.kind !== 'single') continue;
+    const sizes = knownGoodSizes(item.name);
+    if (!sizes || sizes.has(item.sizeBytes)) continue;
+    try {
+      const r = await removeModel(item.id);
+      freedBytes += r.freedBytes;
+      removed.push(item.name);
+      console.warn(
+        `[models] removed truncated download: ${item.name} (${item.sizeBytes} bytes on disk, expected one of ${[...sizes].join(', ')})`,
+      );
+    } catch (err) {
+      console.warn('[models] pruneIncompleteDownloads: remove failed', item.id, err && err.message);
+    }
+  }
+  return { removed, freedBytes };
+}
+
 async function removeAllModels() {
   const items = await listModels();
   let totalFreed = 0;
@@ -239,10 +276,6 @@ async function removeAllModels() {
   return { removed: totalRemoved, freedBytes: totalFreed };
 }
 
-// Build a catalogue entry. sizeBytes comes from the static hints map;
-// descriptions.json and the on-disk listing are the other two sources.
-// Catalogue entries don't require the file to be on disk. That's the
-// whole point of the catalogue: it's the installable set.
 function catalogueEntryFromName(name) {
   const usage = loadUsageMap();
   const descriptions = loadDescriptionMap();
@@ -259,11 +292,6 @@ function catalogueEntryFromName(name) {
   };
 }
 
-// All installable models, union of the usage-map keys, the chat presets, and
-// what's on disk. The lesson usage map is authoritative (it lists every model
-// a shipped lesson needs); CHAT_MODEL_HINTS keeps every chat preset visible
-// as an upgrade option even if no lesson uses it yet and it isn't downloaded;
-// the on-disk listing catches anything else the user has.
 async function catalogue() {
   const usage = loadUsageMap();
   const installed = await listModels();
@@ -290,11 +318,6 @@ async function forLesson(lessonKey) {
   );
 }
 
-// Recommend a chat model for this lesson on this hardware. The lesson-uses
-// filter wins when any chat model is listed for the lesson: the lesson needs
-// it, so it's the right pick regardless of hardware (and the user can swap to
-// a smaller one if it's too big). Otherwise fall back to the smallest chat
-// model that fits.
 async function recommend(lessonKey, hardware) {
   const cat = await catalogue();
   const chat = cat.filter((e) => e.family === 'chat');
@@ -322,9 +345,6 @@ async function recommend(lessonKey, hardware) {
     return { pick: null, ranked: chat, reason: 'no-hardware-info' };
   }
 
-  // No lesson tie-in: rank chat models by how comfortably they fit. We leave
-  // at least 2 GB of headroom for the OS and the rest of the app. Fits ->
-  // tight -> too-big; within each bucket, smallest first.
   const headroom = 2 * 1024 ** 3;
   const ranked = chat
     .map((entry) => {
@@ -348,6 +368,8 @@ module.exports = {
   listModels,
   removeModel,
   removeAllModels,
+  pruneIncompleteDownloads,
+  knownGoodSizes,
   modelsRoot,
   catalogue,
   forLesson,
