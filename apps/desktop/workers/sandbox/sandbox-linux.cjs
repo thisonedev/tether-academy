@@ -109,6 +109,21 @@ function findBwrap() {
   }
 }
 
+// Capability composition (static list + dynamic exec grants) can produce a
+// path that's a subpath of one already in the same list, e.g. a resolved
+// binary landing inside its own execDir grant. bwrap doesn't tolerate
+// re-binding into an already-bound path: it fails the whole spawn with
+// "Can't create file at ...", not just that one entry. Keep the first
+// occurrence of each path and drop anything nested under one already kept.
+function pruneCoveredPaths(paths) {
+  const kept = [];
+  for (const p of paths) {
+    if (kept.some((k) => p === k || p.startsWith(k.endsWith(path.sep) ? k : k + path.sep))) continue;
+    kept.push(p);
+  }
+  return kept;
+}
+
 function buildBwrapArgs(cap, { warnings = [] } = {}) {
   const args = [];
 
@@ -126,7 +141,7 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
   args.push('--tmpfs', '/tmp');
   args.push('--tmpfs', '/home');
 
-  for (const p of platformFilter(cap.fs?.read ?? [], 'linux')) {
+  for (const p of pruneCoveredPaths(platformFilter(cap.fs?.read ?? [], 'linux'))) {
     if (!p) continue;
     // Device nodes can't be bind-mounted; --dev-bind-try so a missing one doesn't fail the spawn.
     if (p === '/dev/null') args.push('--dev-bind', p, p);
@@ -137,13 +152,13 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     }
   }
 
-  for (const p of platformFilter(cap.fs?.write ?? [], 'linux')) {
+  for (const p of pruneCoveredPaths(platformFilter(cap.fs?.write ?? [], 'linux'))) {
     if (!p) continue;
     args.push('--bind-try', p, p);
   }
 
   // After the writable binds since bwrap applies ops in order; untested against a real bwrap.
-  for (const p of platformFilter(cap.fs?.readOnly ?? [], 'linux')) {
+  for (const p of pruneCoveredPaths(platformFilter(cap.fs?.readOnly ?? [], 'linux'))) {
     if (!p) continue;
     args.push('--ro-bind-try', p, p);
   }
