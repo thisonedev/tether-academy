@@ -9,18 +9,22 @@ const { refreshDocs, getCachedDocs } = require('./chat-docs.cjs');
 const { createMarkdownStripper } = require('./chat-strip-markdown.cjs');
 const { splitParagraphs } = require('./chat-paragraph-splitter.cjs');
 
-console.log('[chat] module loaded, build = 2026-08-07-adopt-unconditional');
+console.log('[chat] module loaded, build = 2026-08-11-adopt-from-error-message');
 
 // The constants carry engine metadata (`llamacpp-completion`, etc.) so the
 // SDK can route loadModel to the right engine. Passing a bare filename fails
 // with MODEL_TYPE_REQUIRED.
+// Llama-3.2-1B-Instruct-Q4_0.gguf is excluded: that's a delegated-inference lesson download, not an AI-bot model.
 const CHAT_PRESETS = {
   'Qwen3-0.6B-Q4_0.gguf': 'QWEN3_600M_INST_Q4',
-  'Llama-3.2-1B-Instruct-Q4_0.gguf': 'LLAMA_3_2_1B_INST_Q4_0',
   'Qwen3-1.7B-Q4_0.gguf': 'QWEN3_1_7B_INST_Q4',
   'Qwen3-4B-Q4_K_M.gguf': 'QWEN3_4B_INST_Q4_K_M',
   'Qwen3-8B-Q4_K_M.gguf': 'QWEN3_8B_INST_Q4_K_M',
 };
+
+function isChatPreset(name) {
+  return Object.prototype.hasOwnProperty.call(CHAT_PRESETS, name);
+}
 
 // Resolved lazily so the SDK isn't required at module load (it's only
 // available inside Electron's main process once the runtime is up).
@@ -75,10 +79,11 @@ async function load(modelHint) {
 
 async function unload() {
   if (!current.modelId) return;
+  const modelId = current.modelId;
   const sdk = require('@qvac/sdk');
   if (typeof sdk.unloadModel === 'function') {
     try {
-      await sdk.unloadModel({ modelId: current.modelId });
+      await sdk.unloadModel({ modelId });
     } catch (err) {
       console.warn('[chat] unload failed', err.message);
     }
@@ -87,57 +92,38 @@ async function unload() {
   // effect is fully visible. A short polling loop is cheaper than rebuilding
   // the app.
   for (let i = 0; i < 20; i++) {
-    if (!(await isLoadedBySdk())) break;
+    if (!(await isLoadedBySdk(modelId))) break;
     await new Promise((r) => setTimeout(r, 50));
   }
   current = { filename: null, modelId: null, preset: null };
 }
 
-// Returns true when the SDK has any model registered (we don't filter by
-// name because the SDK's instance name field doesn't always match ours).
-async function isLoadedBySdk() {
+async function isLoadedBySdk(modelId) {
   const sdk = require('@qvac/sdk');
-  if (typeof sdk.getLoadedModelInfo !== 'function') return false;
+  if (typeof sdk.getLoadedModelInfo !== 'function' || !modelId) return false;
   try {
-    const info = await sdk.getLoadedModelInfo({});
-    return !!(info && Array.isArray(info.instances) && info.instances.length > 0);
+    await sdk.getLoadedModelInfo({ modelId });
+    return true;
   } catch {
     return false;
   }
 }
 
-// Adopt whatever the SDK already has loaded. Used when loadModel throws
-// "already registered": the file is loaded, just under a modelId we don't
-// know yet, so ask the SDK which one it is.
-async function adoptLoadedFromSdk() {
-  const sdk = require('@qvac/sdk');
-  if (typeof sdk.getLoadedModelInfo !== 'function') return null;
-  try {
-    const info = await sdk.getLoadedModelInfo({});
-    console.log('[chat] getLoadedModelInfo ->', JSON.stringify(info, null, 2));
-    if (!info || typeof info !== 'object') return null;
-    // The SDK has used two shapes across versions. Handle both.
-    let instances = null;
-    if (Array.isArray(info.instances)) {
-      instances = info.instances;
-    } else if (Array.isArray(info)) {
-      instances = info;
-    } else if (Array.isArray(info.models)) {
-      instances = info.models;
-    } else if (info.modelId || info.name) {
-      instances = [info];
-    }
-    if (!instances || instances.length === 0) return null;
-    const inst = instances[0];
-    if (!inst || typeof inst !== 'object') return null;
-    const modelId = inst.modelId || inst.id;
-    const name = inst.name || inst.modelName || modelId;
-    if (!modelId) return null;
-    return { modelId, name };
-  } catch (err) {
-    console.log('[chat] getLoadedModelInfo threw', err && err.message);
-    return null;
-  }
+function parseAlreadyRegisteredModelId(err) {
+  const message = err instanceof Error ? err.message : String(err);
+  const match = /Model with ID "([^"]+)" is already registered/.exec(message);
+  return match ? match[1] : null;
+}
+
+// "Already registered" only proves a modelId exists, not that its download
+// finished (a racing concurrent load can still be mid-transfer).
+async function isCompleteOnDisk(filename) {
+  const { listModels, knownGoodSizes } = require('./models.cjs');
+  const sizes = knownGoodSizes(filename);
+  if (!sizes) return true;
+  const items = await listModels();
+  const entry = items.find((it) => it.kind === 'single' && it.name === filename);
+  return !!entry && sizes.has(entry.sizeBytes);
 }
 
 // Dedupe on-disk files for the same chat model. The SDK writes each
@@ -158,7 +144,8 @@ async function dedupeModelFiles(filename) {
       return { ...it, mtimeMs: st ? st.mtimeMs : 0 };
     }),
   );
-  withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  // Complete beats incomplete regardless of mtime, so a stalled retry never displaces the good copy.
+  withMtime.sort((a, b) => (b.complete ? 1 : 0) - (a.complete ? 1 : 0) || b.mtimeMs - a.mtimeMs);
   const kept = withMtime[0];
   let removed = 0;
   let freedBytes = 0;
@@ -183,24 +170,7 @@ async function ensureLoaded(filename) {
   if (current.modelId && current.filename !== filename) {
     await unload();
   }
-  // We deliberately don't compare names: the SDK's instance name field may
-  // not match the preset constant's name field (case, version, etc.), and
-  // the right thing for a stuck user is to use whatever the SDK already has.
-  // The user can switch models explicitly later.
-  const existing = await adoptLoadedFromSdk();
-  console.log('[chat] ensureLoaded start', { filename, preset: modelSrc.name, existing });
-  if (existing && existing.modelId) {
-    current = { filename, modelId: existing.modelId, preset: modelSrc.name };
-    try {
-      const { kept, removed, freedBytes } = await dedupeModelFiles(filename);
-      if (removed > 0) {
-        console.log('[chat] deduped (adopt)', { filename, kept: kept && kept.id, removed, freedBytes });
-      }
-    } catch (err) {
-      console.warn('[chat] dedupe failed (adopt)', err && err.message);
-    }
-    return current;
-  }
+  console.log('[chat] ensureLoaded start', { filename, preset: modelSrc.name });
   const sdk = require('@qvac/sdk');
   if (typeof sdk.loadModel !== 'function') {
     throw new Error('@qvac/sdk does not export loadModel in this build');
@@ -217,29 +187,45 @@ async function ensureLoaded(filename) {
       modelSrc,
       modelConfig: { ctx_size: ctxSize },
       onProgress: (p) => {
-      if (p && typeof p.loaded === 'number' && typeof p.total === 'number') {
-        emitLoadProgress({ modelName: filename, loaded: p.loaded, total: p.total });
+      // The SDK's modelProgress event uses `downloaded`, not `loaded`.
+      if (p && typeof p.downloaded === 'number' && typeof p.total === 'number') {
+        emitLoadProgress({ modelName: filename, loaded: p.downloaded, total: p.total });
       }
     },
     });
   } catch (err) {
-    // The SDK refuses to register a file twice. Adopt whatever it has
-    // already loaded. We do this unconditionally on any loadModel failure:
-    // the user is never more stuck by adopting the wrong model for a moment
-    // than by seeing the same error forever.
-    const fallback = await adoptLoadedFromSdk();
-    console.log('[chat] ensureLoaded caught error, fallback =', fallback);
-    if (fallback && fallback.modelId) {
-      current = { filename, modelId: fallback.modelId, preset: modelSrc.name };
+    // The SDK refuses to register a file twice; recover the existing modelId from the error text and adopt it.
+    const existingId = parseAlreadyRegisteredModelId(err);
+    console.log('[chat] ensureLoaded caught error, existingId =', existingId);
+    if (existingId && (await isCompleteOnDisk(filename))) {
+      current = { filename, modelId: existingId, preset: modelSrc.name };
       try {
         const { kept, removed, freedBytes } = await dedupeModelFiles(filename);
         if (removed > 0) {
-          console.log('[chat] deduped (fallback)', { filename, kept: kept && kept.id, removed, freedBytes });
+          console.log('[chat] deduped (adopt)', { filename, kept: kept && kept.id, removed, freedBytes });
         }
       } catch (err) {
-        console.warn('[chat] dedupe failed (fallback)', err && err.message);
+        console.warn('[chat] dedupe failed (adopt)', err && err.message);
       }
       return current;
+    }
+    if (existingId) {
+      // Points at a file that never finished downloading; tear it down instead of handing out a broken model.
+      console.warn('[chat] adopted registration points at an incomplete file; discarding', { filename, existingId });
+      try {
+        await sdk.unloadModel({ modelId: existingId });
+      } catch (unloadErr) {
+        console.warn('[chat] unload of incomplete registration failed', unloadErr && unloadErr.message);
+      }
+      try {
+        const { listModels, removeModel } = require('./models.cjs');
+        const items = await listModels();
+        const bad = items.find((it) => it.kind === 'single' && it.name === filename);
+        if (bad) await removeModel(bad.id);
+      } catch (cleanupErr) {
+        console.warn('[chat] cleanup of incomplete file failed', cleanupErr && cleanupErr.message);
+      }
+      throw new Error(`${filename} did not finish downloading. Pick it again in Settings to retry.`);
     }
     throw err;
   }
@@ -264,10 +250,10 @@ function newRequestId() {
 async function pickDefaultChatModel() {
   const { listModels } = require('./models.cjs');
   const installed = await listModels();
-  const installedNames = new Set(installed.map((m) => m.name));
+  const completeNames = new Set(installed.filter((m) => m.complete).map((m) => m.name));
   // Presets are listed smallest first in CHAT_PRESETS, so the first match wins.
   for (const filename of Object.keys(CHAT_PRESETS)) {
-    if (installedNames.has(filename)) return filename;
+    if (completeNames.has(filename)) return filename;
   }
   return null;
 }
@@ -752,6 +738,8 @@ module.exports = {
   onSecurityResult,
   onLoadProgress,
   unload,
+  pickDefaultChatModel,
+  isChatPreset,
   docsStatus: () => docsStatusFromCache(),
   docsRefresh: async () => {
     const body = await refreshDocs();
