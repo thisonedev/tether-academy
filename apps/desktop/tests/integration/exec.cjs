@@ -12,6 +12,10 @@ const { bareImports, bareRequires, pairForExec, runExec } = require('../helpers/
 const PROC = bareRequires('process');
 const PROC_ESM = bareImports('process');
 
+// run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+// a raw newline in a failure message would drop everything after it.
+const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
+
 test('exec - guest code runs on the host and stdout streams back', async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'exec-stdout');
 
@@ -23,10 +27,11 @@ test('exec - guest code runs on the host and stdout streams back', async (t) => 
       + 'process.exit(0);',
   });
 
-  t.ok(result.stdout.includes('hi from host'));
-  t.ok(result.stdout.includes('platform:'), 'code really ran on the remote side');
-  t.is(result.code, 0);
-  t.is(result.stderr, '', 'a clean run produces no stderr');
+  const detail = oneLine(`code=${result.code} stdout=${result.stdout} stderr=${result.stderr}`);
+  t.ok(result.stdout.includes('hi from host'), `expected the greeting; ${detail}`);
+  t.ok(result.stdout.includes('platform:'), `code really ran on the remote side; ${detail}`);
+  t.is(result.code, 0, detail);
+  t.is(result.stderr, '', `a clean run produces no stderr; ${detail}`);
 });
 
 test('exec - stderr and a non-zero exit code propagate', async (t) => {
@@ -37,8 +42,9 @@ test('exec - stderr and a non-zero exit code propagate', async (t) => {
     code: PROC + 'process.stderr.write("boom\\n"); process.exit(7);',
   });
 
-  t.is(result.code, 7, 'exit code survives the round trip');
-  t.ok(result.stderr.includes('boom'));
+  const detail = oneLine(`code=${result.code} stdout=${result.stdout} stderr=${result.stderr}`);
+  t.is(result.code, 7, `exit code survives the round trip; ${detail}`);
+  t.ok(result.stderr.includes('boom'), detail);
 });
 
 // File mode writes the snippet to a real .mts file so lessons can use imports and get sensible stack traces.

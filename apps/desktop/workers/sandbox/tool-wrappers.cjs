@@ -8,7 +8,18 @@ const os = require('os');
 const path = require('path');
 const { isWindows } = require('which-runtime');
 
-const { mcpExecPaths, resolveMcpBins } = require('./mcp-bins.cjs');
+const { resolveMcpBins } = require('./mcp-bins.cjs');
+
+function realpathSafe(p) {
+  try { return fs.realpathSync(p); } catch { return p; }
+}
+
+// resolveMcpBins() returns the raw (pre-realpath) node/npm/npx symlinks;
+// writeUnixShim below execs realpathSafe(rawTarget) instead, so binding
+// the raw symlink path itself is both unnecessary (execDir already grants
+// its containing directory) and, on Linux, made bwrap fail outright with
+// "Can't create file at ...: No such file or directory" for the deep,
+// otherwise-untouched hostedtoolcache path.
 
 /**
  * @param {{ cacheDir: string, tmpDir?: string }} opts
@@ -23,8 +34,13 @@ function createToolWrappers(opts) {
   const paths = [];
   const isWin = isWindows;
 
-  function writeUnixShim(name, target) {
-    if (!target) return;
+  function writeUnixShim(name, rawTarget) {
+    if (!rawTarget) return;
+    // Linux binds by exact path; exec-ing the un-resolved symlink (e.g.
+    // .../bin/npx -> ../lib/node_modules/npm/bin/npx-cli.js) only works if
+    // that exact symlink path was bound too. appendExtraExec() binds the
+    // realpath's package root, so target the realpath directly.
+    const target = realpathSafe(rawTarget);
     const shim = path.join(dir, name);
     const body = [
       '#!/bin/sh',
@@ -69,10 +85,6 @@ function createToolWrappers(opts) {
     writeUnixShim('node', bins.node);
     writeUnixShim('npm', bins.npm);
     writeUnixShim('npx', bins.npx);
-  }
-
-  for (const p of mcpExecPaths()) {
-    if (p && !paths.includes(p)) paths.push(p);
   }
 
   const env = {

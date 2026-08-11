@@ -46,7 +46,10 @@ const CONFINEMENT_PROBE = `
   console.log('PROBE:' + JSON.stringify(out));
 `;
 
-const probeOf = (stdout) => JSON.parse(stdout.match(/PROBE:(\{.*\})/)[1]);
+const probeOf = (stdout) => {
+  const match = stdout.match(/PROBE:(\{.*\})/);
+  return match ? JSON.parse(match[1]) : null;
+};
 
 test('node-only - a node-only lesson runs on a peer via the node runtime', { skip: skipSwarmDownload }, async (t) => {
   t.timeout(SQLITE_TIMEOUT_MS + 60_000);
@@ -96,9 +99,11 @@ test('node-only - the node child is confined exactly like the bare one', { skip 
   const { host, guest, discoveryKey } = await pairForExec(t, 'node-runtime-confined');
   const before = host.getAudit().length;
 
-  // A dev machine already has this from real app use, so a denied read comes
-  // back EPERM; on a fresh CI runner nothing else creates it, and the probe
-  // would see ENOENT instead and pass for the wrong reason.
+  // macOS only: a dev machine already has this from real app use, so a
+  // denied read comes back EPERM; on a fresh CI runner nothing else
+  // creates it, and the probe would see ENOENT instead and pass for the
+  // wrong reason. Linux never mounts /home's contents in either way, so
+  // this has no effect there.
   fs.mkdirSync(appStateDir(), { recursive: true });
 
   const result = await runExec(
@@ -111,9 +116,20 @@ test('node-only - the node child is confined exactly like the bare one', { skip 
   t.is(entry?.runtime, 'node', 'the marker selected the node runtime');
 
   const probe = probeOf(result.stdout);
-  t.is(probe.ssh, 'EPERM', 'the generated home deny-list still applies');
-  t.is(probe.appState, 'EPERM', 'the app state directory is still refused');
-  t.is(probe.usr, 'EPERM', 'the write allowlist still applies');
+  t.ok(
+    probe,
+    oneLine(`the child produced a PROBE line; stdout=${result.stdout} stderr=${result.stderr}`),
+  );
+  if (!probe) return;
+
+  // macOS denies via sandbox-exec ACL on the real path, always EPERM. Linux
+  // never mounts /home's contents into the namespace at all (ENOENT), and
+  // remounts its default-deny root read-only rather than per-path (EROFS).
+  const homeDenied = process.platform === 'linux' ? 'ENOENT' : 'EPERM';
+  const writeDenied = process.platform === 'linux' ? 'EROFS' : 'EPERM';
+  t.is(probe.ssh, homeDenied, 'the generated home deny-list still applies');
+  t.is(probe.appState, homeDenied, 'the app state directory is still refused');
+  t.is(probe.usr, writeDenied, 'the write allowlist still applies');
   t.not(probe.electron, 'ALLOWED', 'require("electron") reaches no API');
 });
 

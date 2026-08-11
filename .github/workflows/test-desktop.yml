@@ -107,53 +107,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # peer.init()'s unconditional "[peer] ready" log never appears for any
-      # createWorkerPeers test, so reproduce that exact call outside
-      # brittle/run-tests.mjs where nothing can swallow the error.
-      - name: check worker-client init
-        if: runner.os == 'Linux'
-        working-directory: apps/desktop
-        run: |
-          cat > /tmp/init-probe.js <<'SCRIPT'
-          const path = require('path');
-          const req = (p) => require(path.join(process.cwd(), p));
-          const createTestnet = req('node_modules/hyperdht/testnet.js');
-          const hypercoreCrypto = req('node_modules/hypercore-crypto');
-          const client = req('electron/pear-end/worker-client.cjs');
-
-          function fakeDeviceIdentity() {
-            const kp = hypercoreCrypto.keyPair();
-            return {
-              publicKey: kp.publicKey.toString('hex'),
-              privateKey: kp.secretKey.toString('hex').slice(0, 64),
-              secretKey: kp.secretKey.toString('hex'),
-              createdAt: Date.now(),
-              identityPublicKey: kp.publicKey.toString('hex'),
-              source: 'tether-academy',
-            };
-          }
-
-          (async () => {
-            console.log('creating testnet...');
-            const testnet = await createTestnet(3);
-            console.log('testnet ready, calling client.init()...');
-            const timeout = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('init timed out after 15000ms')), 15000));
-            await Promise.race([
-              client.init({ deviceIdentity: fakeDeviceIdentity(), bootstrap: testnet.bootstrap }),
-              timeout,
-            ]);
-            console.log('init resolved');
-            await client.shutdownWorker();
-            await testnet.destroy();
-            process.exit(0);
-          })().catch((err) => {
-            console.error('init failed:', err);
-            process.exit(1);
-          });
-          SCRIPT
-          xvfb-run -a node /tmp/init-probe.js || echo "probe exit code: $?"
-
       - name: integration tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm --filter @tether-academy/desktop test:integration

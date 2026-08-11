@@ -51,7 +51,14 @@ async function pairedGuest(t, label) {
   return { host, guest, peerId: guestEvent.discoveryKey };
 }
 
-const probeOf = (stdout) => JSON.parse(stdout.match(/PROBE:(\{.*\})/)[1]);
+const probeOf = (stdout) => {
+  const match = stdout.match(/PROBE:(\{.*\})/);
+  return match ? JSON.parse(match[1]) : null;
+};
+
+// run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+// a raw newline in a failure message would drop everything after it.
+const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
 
 test('network-consent - a run that names no host is never asked and reaches nothing', async (t) => {
   const { host, guest, peerId } = await pairedGuest(t, 'network-none');
@@ -60,6 +67,12 @@ test('network-consent - a run that names no host is never asked and reaches noth
 
   t.is((await host.listDeviceRequests()).length, 0, 'nothing was put to a human');
   const probe = probeOf(result.stdout);
+  t.ok(
+    probe,
+    oneLine(`the child produced a PROBE line; stdout=${result.stdout} stderr=${result.stderr}`),
+  );
+  if (!probe) return;
+
   t.absent(probe.reached, `expected no egress; got ${JSON.stringify(probe)}`);
 });
 
@@ -82,7 +95,14 @@ test('network-consent - a run that names a host is held until the host answers',
   t.is(request.label, 'net test');
 
   t.is(await host.resolveDeviceRequest(request.requestId, true), true);
-  const probe = probeOf((await run).stdout);
+  const result = await run;
+  const probe = probeOf(result.stdout);
+  t.ok(
+    probe,
+    oneLine(`the child produced a PROBE line; stdout=${result.stdout} stderr=${result.stderr}`),
+  );
+  if (!probe) return;
+
   t.ok(probe.reached, `an approved run reaches the host; got ${JSON.stringify(probe)}`);
 });
 

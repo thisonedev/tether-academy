@@ -45,6 +45,8 @@ function spawnProbe(bin, args) {
     console.log('PROBE:' + JSON.stringify({
       status: r.status,
       error: r.error && r.error.message,
+      stdout: r.stdout,
+      stderr: r.stderr,
     }));
   `;
 }

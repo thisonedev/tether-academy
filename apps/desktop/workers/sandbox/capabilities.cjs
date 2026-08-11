@@ -96,12 +96,14 @@ function confinedPaths(userData, home = os.homedir()) {
  */
 function defaultTemplateVars(overrides = {}) {
   const appRoot = path.resolve(__dirname, '..', '..');
-  const coursesDir = path.resolve(appRoot, '..', '..', 'packages', 'courses');
+  const workspaceRoot = path.resolve(appRoot, '..', '..');
+  const coursesDir = path.resolve(workspaceRoot, 'packages', 'courses');
   const home = os.homedir();
   const tmpDir = realpathSafe(os.tmpdir());
   return {
     projectDir: overrides.projectDir || process.cwd(),
     appRoot,
+    workspaceRoot,
     coursesDir,
     homeDir: home,
     tmpDir,
@@ -165,9 +167,12 @@ function isAbsoluteBin(binName) {
 
 function lookupOnPath(binName) {
   const { execFileSyncCompat: execFileSync } = require('./exec-file-sync.cjs');
+  // 'command' is a shell builtin, not a file on PATH; execFileSync (no
+  // shell) can never find it and always fell through to the fallback dirs
+  // below. Invisible until a host has more than one install to diverge on.
   const [file, args] = process.platform === 'win32'
     ? ['where', [binName]]
-    : ['command', ['-v', binName]];
+    : ['which', [binName]];
   try {
     const out = execFileSync(file, args, {
       encoding: 'utf-8',
@@ -329,6 +334,19 @@ const CAPABILITIES = {
         'LIN:/usr/share/locale',
         'LIN:/usr/share/zoneinfo',
         'LIN:/usr/share/icu',
+        // The npx/npm/node PATH shims in tool-wrappers.cjs are #!/bin/sh
+        // scripts; the kernel needs that interpreter to exec them. Single
+        // file, not all of /usr/bin, to avoid widening what's execve'able
+        // in a namespace bwrap can't otherwise restrict by binary name.
+        'LIN:/bin/sh',
+        // npm-cli.js/npx-cli.js themselves are #!/usr/bin/env node scripts;
+        // the kernel needs env to resolve that shebang, same reasoning as
+        // /bin/sh above.
+        'LIN:/usr/bin/env',
+        // apps/desktop/node_modules symlinks hoisted deps into the pnpm
+        // workspace root's store, outside appRoot. Packaged builds ship a
+        // flat node_modules and never need this.
+        'LIN:<%= workspaceRoot %>/node_modules/.pnpm',
         'COM:/etc/resolv.conf',
         'COM:/etc/hosts',
         'COM:/etc/localtime',

@@ -34,15 +34,6 @@ function resolveMcpBins() {
   return cached;
 }
 
-/**
- * @returns {string[]}
- */
-function mcpExecPaths() {
-  const { node, npm, npx } = resolveMcpBins();
-  return [node, npm, npx].filter(Boolean);
-}
-
 module.exports = {
   resolveMcpBins,
-  mcpExecPaths,
 };

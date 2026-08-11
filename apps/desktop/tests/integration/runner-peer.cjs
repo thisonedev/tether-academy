@@ -12,6 +12,10 @@ const { buildLesson } = require('../../electron/runner-process.cjs');
 
 const COURSES_DIR = path.resolve(__dirname, '../../../../packages/courses');
 
+// run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+// a raw newline in a failure message would drop everything after it.
+const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
+
 const LESSON_SOURCE = [
   'import { loadModel, close } from "@qvac/sdk";',
   '',
@@ -57,12 +61,13 @@ test('runner-peer - a wrapped lesson runs on a remote peer with the QVAC SDK ava
     30_000,
   );
 
-  t.ok(result.stdout.includes('peer-runner:hello'), 'lesson ran');
-  t.ok(result.stdout.includes('peer-runner:platform='), 'ran on the remote side');
+  const detail = oneLine(`code=${result.code} stdout=${result.stdout} stderr=${result.stderr}`);
+  t.ok(result.stdout.includes('peer-runner:hello'), `lesson ran; ${detail}`);
+  t.ok(result.stdout.includes('peer-runner:platform='), `ran on the remote side; ${detail}`);
   t.ok(
     result.stdout.includes('peer-runner:loadModel=function'),
-    'the @qvac/sdk import resolved inside the sandbox',
+    `the @qvac/sdk import resolved inside the sandbox; ${detail}`,
   );
-  t.ok(result.stdout.includes('peer-runner:close=function'), 'close resolved too');
-  t.is(result.code, 0);
+  t.ok(result.stdout.includes('peer-runner:close=function'), `close resolved too; ${detail}`);
+  t.is(result.code, 0, detail);
 });

@@ -109,6 +109,25 @@ function findBwrap() {
   }
 }
 
+// Capability composition (static list + dynamic exec grants) can produce a
+// path that's a subpath of one already in the same list, e.g. a resolved
+// binary landing inside its own execDir grant, or a package's own file
+// landing inside its own package-root grant (in either insertion order).
+// bwrap doesn't tolerate re-binding into an already-bound path: it fails
+// the whole spawn with "Can't create file at ...", not just that one
+// entry. Sort broadest (shortest) path first so pruning is order-
+// independent, then keep the first occurrence of each and drop anything
+// nested under one already kept.
+function pruneCoveredPaths(paths) {
+  const sorted = [...paths].sort((a, b) => a.length - b.length);
+  const kept = [];
+  for (const p of sorted) {
+    if (kept.some((k) => p === k || p.startsWith(k.endsWith(path.sep) ? k : k + path.sep))) continue;
+    kept.push(p);
+  }
+  return kept;
+}
+
 function buildBwrapArgs(cap, { warnings = [] } = {}) {
   const args = [];
 
@@ -116,11 +135,17 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
   args.push('--die-with-parent');
   args.push('--new-session');
 
+  // Empty tmpfs root: unbound host paths are absent, not inherited with
+  // full host permissions. --remount-ro below locks it in; --proc is
+  // needed since an empty root has no procfs for the runtime to start.
+  args.push('--tmpfs', '/');
+  args.push('--proc', '/proc');
+
   // Scratch tmpfs so writes don't persist past the child; must precede the binds (bwrap applies ops in order).
   args.push('--tmpfs', '/tmp');
   args.push('--tmpfs', '/home');
 
-  for (const p of platformFilter(cap.fs?.read ?? [], 'linux')) {
+  for (const p of pruneCoveredPaths(platformFilter(cap.fs?.read ?? [], 'linux'))) {
     if (!p) continue;
     // Device nodes can't be bind-mounted; --dev-bind-try so a missing one doesn't fail the spawn.
     if (p === '/dev/null') args.push('--dev-bind', p, p);
@@ -131,13 +156,13 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     }
   }
 
-  for (const p of platformFilter(cap.fs?.write ?? [], 'linux')) {
+  for (const p of pruneCoveredPaths(platformFilter(cap.fs?.write ?? [], 'linux'))) {
     if (!p) continue;
     args.push('--bind-try', p, p);
   }
 
   // After the writable binds since bwrap applies ops in order; untested against a real bwrap.
-  for (const p of platformFilter(cap.fs?.readOnly ?? [], 'linux')) {
+  for (const p of pruneCoveredPaths(platformFilter(cap.fs?.readOnly ?? [], 'linux'))) {
     if (!p) continue;
     args.push('--ro-bind-try', p, p);
   }
@@ -151,6 +176,10 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     args.push('--dev-bind-try', '/dev/video0', '/dev/video0');
     warnings.push('linux sandbox: camera access granted to this run');
   }
+
+  // Non-recursive: locks the root, but /tmp, /home, and their bind-mounted
+  // writable subdirs (separate mounts) stay writable.
+  args.push('--remount-ro', '/');
 
   // unshare-all drops net; share only when mode isn't 'none'. bwrap can't
   // filter by domain, so 'all'/'localhost' both share the host net.
@@ -186,8 +215,6 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
       );
     }
   }
-
-  args.push('--process', '0');
 
   return args;
 }
