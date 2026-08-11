@@ -111,13 +111,17 @@ function findBwrap() {
 
 // Capability composition (static list + dynamic exec grants) can produce a
 // path that's a subpath of one already in the same list, e.g. a resolved
-// binary landing inside its own execDir grant. bwrap doesn't tolerate
-// re-binding into an already-bound path: it fails the whole spawn with
-// "Can't create file at ...", not just that one entry. Keep the first
-// occurrence of each path and drop anything nested under one already kept.
+// binary landing inside its own execDir grant, or a package's own file
+// landing inside its own package-root grant (in either insertion order).
+// bwrap doesn't tolerate re-binding into an already-bound path: it fails
+// the whole spawn with "Can't create file at ...", not just that one
+// entry. Sort broadest (shortest) path first so pruning is order-
+// independent, then keep the first occurrence of each and drop anything
+// nested under one already kept.
 function pruneCoveredPaths(paths) {
+  const sorted = [...paths].sort((a, b) => a.length - b.length);
   const kept = [];
-  for (const p of paths) {
+  for (const p of sorted) {
     if (kept.some((k) => p === k || p.startsWith(k.endsWith(path.sep) ? k : k + path.sep))) continue;
     kept.push(p);
   }
