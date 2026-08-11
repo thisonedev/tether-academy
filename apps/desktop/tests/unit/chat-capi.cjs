@@ -5,7 +5,7 @@ const test = require('brittle');
 // The send() path matches this against the user's latest message. Keep the
 // definition here in lockstep with the inline check in chat.cjs; if one moves,
 // update the other.
-const KEYWORD_PATTERN = /(\b[A-Z][A-Z0-9_]{2,}|@[\w./-]+|\bclass\b|\bfunction\b|\bapi\b|\bmethod\b|\bmodule\b|\btype\b|\binterface\b)/;
+const KEYWORD_PATTERN = /(\b[A-Z][A-Z0-9_]{2,}|@[\w./-]+|\bclass\b|\bfunction\b|\bapi\b|\bmethod\b|\bmodule\b|\btype\b|\binterface\b|\bmcp\b|\bqvac\b|\bsdk\b|\brag\b|\bgguf\b|\bllm\b)/;
 const TERM_LOOKUP_PATTERN = /\b(?:what'?s|what is|define|explain)\s+(?:an?\s+|the\s+)?[\w().'-]{1,24}\s*\??\s*$/i;
 const wantsApiDetails = (text) => KEYWORD_PATTERN.test(text) || TERM_LOOKUP_PATTERN.test(text.trim());
 
@@ -25,6 +25,12 @@ test('chat-capi - matches lowercase term lookups', (t) => {
   t.ok(wantsApiDetails("what's mcp?"), 'lowercase acronym in a "what\'s X" question');
   t.ok(wantsApiDetails('what is rag'), 'lowercase acronym in a "what is X" question');
   t.ok(wantsApiDetails('define completion()'), 'define + short term');
+});
+
+test('chat-capi - matches lowercase domain acronyms anywhere in the message', (t) => {
+  t.ok(wantsApiDetails('hey, any recent changes about mcp in the qvac docs?'), 'mcp/qvac mentioned mid-sentence');
+  t.ok(wantsApiDetails('does the sdk support rag'), 'sdk and rag as plain words');
+  t.ok(wantsApiDetails('what gguf format does this use'), 'gguf mentioned mid-sentence');
 });
 
 test('chat-capi - skips greetings and short questions', (t) => {

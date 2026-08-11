@@ -420,10 +420,10 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
             type="button"
             onClick={handleStop}
             aria-label="Stop response"
-            className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-red-500/20 text-red-400 transition-colors hover:bg-red-500/30"
+            className="inline-flex shrink-0 items-center justify-center gap-1 rounded text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
             style={{ height: '24px', width: '24px', boxSizing: 'border-box', padding: 0 }}
           >
-            <Square className="size-3 fill-current" />
+            <Square className="size-4 fill-current" />
           </button>
         ) : noModelConfigured ? (
           <Link

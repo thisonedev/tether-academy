@@ -72,3 +72,60 @@ test('stripMarkdown - flush emits held text when closer never arrives', (t) => {
   // Closer never came. Flush emits the held text as visible characters.
   t.is(strip.flush(), '**unclosed');
 });
+
+test('stripMarkdown - unpaired dash splits into a new, capitalized sentence', (t) => {
+  const strip = createMarkdownStripper();
+  t.is(strip.push("Just drop a line — I'm all ears!"), "Just drop a line. I'm all ears!");
+  const strip2 = createMarkdownStripper();
+  t.is(strip2.push('Here is the plan — start small.'), 'Here is the plan. Start small.');
+});
+
+test('stripMarkdown - unpaired dash always gets exactly one space after the period', (t) => {
+  const strip = createMarkdownStripper();
+  t.is(
+    strip.push("Drop a line if you're stuck —or if you want to dive into something else."),
+    "Drop a line if you're stuck. Or if you want to dive into something else.",
+  );
+});
+
+test('stripMarkdown - paired dashes drop the whole aside, not just the dashes', (t) => {
+  const strip = createMarkdownStripper();
+  t.is(
+    strip.push("the code that would produce output — the part these checks don't cover — is still missing"),
+    'the code that would produce output is still missing',
+  );
+});
+
+test('stripMarkdown - a dash with no surrounding space is a range, not a clause break', (t) => {
+  const strip = createMarkdownStripper();
+  t.is(strip.push('ages 10–20 are fine'), 'ages 10-20 are fine');
+});
+
+test('stripMarkdown - en dash resolves the same way as em dash', (t) => {
+  const strip = createMarkdownStripper();
+  const out = strip.push('word – word.') + strip.flush();
+  t.is(out, 'word. Word.');
+});
+
+test('stripMarkdown - a dash still unresolved at flush gets a forced decision, never leaks raw', (t) => {
+  const strip = createMarkdownStripper();
+  const first = strip.push('word ');
+  const second = strip.push('— more words');
+  const out = first + second + strip.flush();
+  t.absent(out.includes('—') || out.includes('–'), 'no raw dash character survives');
+});
+
+test('stripMarkdown - chunk boundary right before the dash still gets exactly one space', (t) => {
+  const strip = createMarkdownStripper();
+  const out =
+    strip.push('why TypeScript developers never get lost ') +
+    strip.push('— they always use switch statements.') +
+    strip.flush();
+  t.is(out, 'why TypeScript developers never get lost. They always use switch statements.');
+});
+
+test('stripMarkdown - chunk boundary before an unresolved dash still gets exactly one space', (t) => {
+  const strip = createMarkdownStripper();
+  const out = strip.push('word ') + strip.push('— more words') + strip.flush();
+  t.is(out, 'word. More words');
+});

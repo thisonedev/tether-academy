@@ -13,11 +13,11 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 
-// ~4 pages of an llms.txt and a multi-section answer. The 0.6B preset
-// strips docs anyway; this cap applies to 1.7B and up.
+// Bounds the cached raw file, not the prompt (DOCS_PROMPT_MAX_BYTES below
+// does that); llms-full.txt is ~1MB as of 2026-08-11, so this leaves headroom.
 const DOCS_URL = 'https://docs.qvac.tether.io/llms-full.txt';
 const DOCS_TTL_MS = 6 * 60 * 60 * 1000;
-const DOCS_DISK_MAX_BYTES = 320 * 1024;
+const DOCS_DISK_MAX_BYTES = 2 * 1024 * 1024;
 const DOCS_PROMPT_MAX_BYTES = 12 * 1024;
 const DOCS_TIMEOUT_MS = 8_000;
 const DOCS_FETCH_ENABLED = process.env.ACADEMY_CHAT_FETCH_DOCS !== '0';
@@ -57,46 +57,36 @@ async function writeCacheFile(body) {
   }
 }
 
-const MAX_DOCS_REDIRECTS = 3;
-
-function fetchWithTimeout(url, timeoutMs, redirectsLeft = MAX_DOCS_REDIRECTS) {
-  return new Promise((resolve, reject) => {
-    const lib = require('node:https');
-    const req = lib.get(url, { timeout: timeoutMs }, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        if (redirectsLeft <= 0) {
-          reject(new Error('docs fetch exceeded the redirect limit'));
-          return;
-        }
-        resolve(fetchWithTimeout(new URL(res.headers.location, url).toString(), timeoutMs, redirectsLeft - 1));
-        return;
+// Uses the global fetch (undici), not node:https: Cloudflare's bot check
+// blocks node:https's TLS/HTTP client fingerprint on this host regardless of
+// headers sent, but passes undici's.
+async function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('docs fetch timed out')), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+    if (!res.ok) {
+      throw new Error(`docs fetch failed with status ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let total = 0;
+    let text = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > DOCS_DISK_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error('docs fetch exceeded the size cap');
       }
-      if (res.statusCode && res.statusCode >= 400) {
-        res.resume();
-        reject(new Error(`docs fetch failed with status ${res.statusCode}`));
-        return;
-      }
-      let total = 0;
-      const chunks = [];
-      res.setEncoding('utf-8');
-      res.on('data', (chunk) => {
-        total += Buffer.byteLength(chunk, 'utf-8');
-        if (total > DOCS_DISK_MAX_BYTES) {
-          res.destroy();
-          reject(new Error('docs fetch exceeded the size cap'));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      res.on('end', () => resolve(chunks.join('')));
-      res.on('error', reject);
-    });
-    req.on('timeout', () => {
-      req.destroy(new Error('docs fetch timed out'));
-    });
-    req.on('error', reject);
-  });
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function refreshDocs() {
