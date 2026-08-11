@@ -51,26 +51,6 @@ function spawnProbe(bin, args) {
   `;
 }
 
-// Diagnostic only: what the sandboxed process's own view of the shim and its
-// exec target actually looks like, to tell a PATH-resolution gap from a
-// bind gap for the target the shim execs.
-function shimDiagnosticProbe() {
-  return `
-    ${bareRequires('child_process', 'fs')}
-    const { spawnSync } = child_process;
-    const shimDir = (process.env.PATH || '').split(':')[0];
-    let shimBody = null;
-    try { shimBody = fs.readFileSync(shimDir + '/npx', 'utf8'); } catch (e) { shimBody = 'READ_FAILED: ' + e.code; }
-    const r = spawnSync('sh', ['-c', shimDir + '/npx --version 2>&1'], { encoding: 'utf8' });
-    console.log('DIAG:' + JSON.stringify({
-      path: process.env.PATH,
-      shimDir,
-      shimBody,
-      shDirect: { status: r.status, error: r.error && r.error.message, out: (r.stdout || '') + (r.stderr || '') },
-    }));
-  `;
-}
-
 // One pairing for both probes; the testnet and two Bare workers dominate cost.
 test('nested-spawn - a sandboxed exec child can spawn allowlisted binaries by name', async (t) => {
   const { guest, peerId } = await pairedGuest(t, 'nested-spawn');
@@ -86,18 +66,7 @@ test('nested-spawn - a sandboxed exec child can spawn allowlisted binaries by na
 
   // What MCP's StdioClientTransport does: a bare-named command via PATH.
   const npx = await probe('npx', ['--version']);
-  let diag = '';
-  if (!npx.includes('"status":0')) {
-    const diagResult = await runExec(
-      guest,
-      { peerId, mode: 'inline', code: shimDiagnosticProbe() },
-      20_000,
-    );
-    // run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
-    // a raw newline in a failure message would drop everything after it.
-    diag = ` | diag: ${(diagResult.stdout + diagResult.stderr).trim().replace(/\s*\n\s*/g, ' ')}`;
-  }
-  t.ok(npx.includes('"status":0'), `nested npx spawn must succeed inside the sandbox; got: ${npx}${diag}`);
+  t.ok(npx.includes('"status":0'), `nested npx spawn must succeed inside the sandbox; got: ${npx}`);
 
   // Where ffmpeg exists, Homebrew installs it as a symlink, which is the case that broke.
   if (!resolveExecName('ffmpeg')) {

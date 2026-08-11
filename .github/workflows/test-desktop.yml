@@ -107,21 +107,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # Temporary: exec-nested-spawn.cjs fails inside the sandbox with
-      # "npx-cli.js: not found" even though /usr/local/lib is an explicit
-      # LIN capability grant that should already cover it. Checking what
-      # bwrap itself actually does, outside all the app's own JS logic.
-      - name: debug npx bind
-        if: runner.os == 'Linux'
-        run: |
-          NPX=$(command -v npx)
-          REAL=$(readlink -f "$NPX")
-          echo "npx=$NPX real=$REAL"
-          ls -la /usr/local/lib/ || echo "no /usr/local/lib"
-          ls -la "$(dirname "$REAL")" || echo "no dirname"
-          bwrap --unshare-all --ro-bind-try /usr/local/lib /usr/local/lib --proc /proc --dev-bind /dev/null /dev/null -- ls -la "$(dirname "$REAL")" || echo "bwrap ls failed: $?"
-          bwrap --unshare-all --ro-bind-try /usr/local/lib /usr/local/lib --proc /proc --dev-bind /dev/null /dev/null -- "$REAL" --version || echo "bwrap exec failed: $?"
-
       - name: integration tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm --filter @tether-academy/desktop test:integration

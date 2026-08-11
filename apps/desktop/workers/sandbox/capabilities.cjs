@@ -167,9 +167,12 @@ function isAbsoluteBin(binName) {
 
 function lookupOnPath(binName) {
   const { execFileSyncCompat: execFileSync } = require('./exec-file-sync.cjs');
+  // 'command' is a shell builtin, not a file on PATH; execFileSync (no
+  // shell) can never find it and always fell through to the fallback dirs
+  // below. Invisible until a host has more than one install to diverge on.
   const [file, args] = process.platform === 'win32'
     ? ['where', [binName]]
-    : ['command', ['-v', binName]];
+    : ['which', [binName]];
   try {
     const out = execFileSync(file, args, {
       encoding: 'utf-8',
