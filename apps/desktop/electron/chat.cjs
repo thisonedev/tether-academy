@@ -327,7 +327,7 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
   // leaves room for the lesson reference plus a multi-paragraph answer.
   const lastUserContent = messages[messages.length - 1]?.content || '';
   const wantsApiDetails =
-    /(\b[A-Z][A-Z0-9_]{2,}|@[\w./-]+|\bclass\b|\bfunction\b|\bapi\b|\bmethod\b|\bmodule\b|\btype\b|\binterface\b)/.test(
+    /(\b[A-Z][A-Z0-9_]{2,}|@[\w./-]+|\bclass\b|\bfunction\b|\bapi\b|\bmethod\b|\bmodule\b|\btype\b|\binterface\b|\bmcp\b|\bqvac\b|\bsdk\b|\brag\b|\bgguf\b|\bllm\b)/.test(
       lastUserContent,
     ) || /\b(?:what'?s|what is|define|explain)\s+(?:an?\s+|the\s+)?[\w().'-]{1,24}\s*\??\s*$/i.test(lastUserContent.trim());
   const docsBudget = Math.floor(ctxWindow / 4);
