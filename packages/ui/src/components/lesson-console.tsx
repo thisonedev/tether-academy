@@ -1,7 +1,8 @@
 'use client';
 
 import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
-import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, Loader2, Settings, Square, X } from 'lucide-react';
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAiBotModel } from './ai-bot-models.js';
 import type { OutputLine } from './lesson-workspace.js';
@@ -220,9 +221,10 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
     }
     let cancelled = false;
     (async () => {
-      const [current, configured] = await Promise.all([
+      const [current, configured, installed] = await Promise.all([
         window.academy!.chat!.currentModel().catch(() => null),
         window.academy!.chat!.configuredModel().catch(() => null),
+        window.academy!.models?.list().catch(() => []) ?? Promise.resolve([]),
       ]);
       if (cancelled) return;
       if (current) {
@@ -230,7 +232,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         setModelLoading(false);
         return;
       }
-      if (!configured) {
+      if (!configured || !installed.some((m) => m.name === configured && m.complete)) {
         setModelLoading(false);
         return;
       }
@@ -268,7 +270,8 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
     if (typeof window === 'undefined' || !window.academy?.models) return;
     try {
       const models = await window.academy.models.list();
-      const installedNames = models.filter((m) => isAiBotModel(m.name)).map((m) => m.name);
+      // A download in progress already exists at its final filename; only offer models that are actually done.
+      const installedNames = models.filter((m) => isAiBotModel(m.name) && m.complete).map((m) => m.name);
       setInstalledAiBotModels(installedNames.sort(byParamCount));
     } catch {
     }
@@ -376,12 +379,13 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
   }, []);
 
   const isStreaming = chatPendingRequestId !== null;
+  const noModelConfigured = !readOnly && !chatUnavailable && !modelLoading && !modelName;
   const disabledReason = readOnly
     ? undefined
     : chatUnavailable
       ? 'AI chat is only available in the desktop app.'
-      : !modelName && !modelLoading
-        ? 'Configure the AI bot in Settings to ask questions.'
+      : noModelConfigured
+        ? 'Configure AI bot to ask questions'
         : undefined;
 
   return (
@@ -421,6 +425,16 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
           >
             <Square className="size-3 fill-current" />
           </button>
+        ) : noModelConfigured ? (
+          <Link
+            href="/settings"
+            aria-label="Pick a model in Settings to enable chat"
+            title="Pick a model in Settings to enable chat"
+            className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-canvas-muted text-canvas-muted-foreground transition-colors hover:bg-canvas-border hover:text-canvas-foreground"
+            style={{ height: '24px', width: '24px', boxSizing: 'border-box', padding: 0 }}
+          >
+            <Settings className="size-3.5" />
+          </Link>
         ) : (
           <button
             type="button"

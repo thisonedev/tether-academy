@@ -265,6 +265,13 @@ export function SettingsPage() {
     return map;
   }, [models]);
 
+  // A download in progress already occupies its final filename, so the checkmark needs completeness too.
+  const modelCompleteByName = useMemo(() => {
+    const map = new Map<string, boolean>();
+    (models ?? []).forEach((m) => map.set(m.name, m.complete));
+    return map;
+  }, [models]);
+
   if (!hydrated || isDesktop === null) {
     return (
       <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
@@ -402,10 +409,11 @@ export function SettingsPage() {
                 </p>
               ) : (
                 chatCatalogue.map((entry) => {
-                  const active = configuredChatModel === entry.name;
+                  const downloadedId = modelIdByName.get(entry.name);
+                  const active =
+                    configuredChatModel === entry.name && downloadedId != null && modelCompleteByName.get(entry.name) === true;
                   const busy = configuringChatModel === entry.name;
                   const progress = modelProgress[entry.name];
-                  const downloadedId = modelIdByName.get(entry.name);
                   return (
                     <div key={entry.name} className="rounded-md border border-canvas-border bg-canvas-muted px-3 py-2.5">
                       <div className="flex items-center gap-3">
