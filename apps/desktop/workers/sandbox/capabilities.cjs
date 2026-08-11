@@ -339,6 +339,10 @@ const CAPABILITIES = {
         // file, not all of /usr/bin, to avoid widening what's execve'able
         // in a namespace bwrap can't otherwise restrict by binary name.
         'LIN:/bin/sh',
+        // npm-cli.js/npx-cli.js themselves are #!/usr/bin/env node scripts;
+        // the kernel needs env to resolve that shebang, same reasoning as
+        // /bin/sh above.
+        'LIN:/usr/bin/env',
         // apps/desktop/node_modules symlinks hoisted deps into the pnpm
         // workspace root's store, outside appRoot. Packaged builds ship a
         // flat node_modules and never need this.
