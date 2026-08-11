@@ -34,6 +34,8 @@ export interface AcademyModelEntry {
   usedIn: AcademyModelLessonRef[];
   /** Plain-language description from apps/desktop/electron/model-descriptions.json; empty when unregistered. */
   description: string;
+  /** False when the on-disk size is short of the SDK registry's expected size; true when there's nothing to check against. */
+  complete: boolean;
 }
 
 export interface AcademyModelsRemoveResult {
