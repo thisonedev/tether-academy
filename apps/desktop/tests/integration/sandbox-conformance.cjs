@@ -61,14 +61,15 @@ async function runRow(t, row) {
   }
 
   let out = '';
+  let err = '';
   child.stdout.on('data', (d) => (out += d));
-  child.stderr.on('data', () => {});
+  child.stderr.on('data', (d) => (err += d));
 
   const timer = setTimeout(() => child.kill('SIGKILL'), CHILD_TIMEOUT_MS);
   t.teardown(() => clearTimeout(timer));
   await new Promise((resolve) => child.on('exit', resolve));
   clearTimeout(timer);
-  return out.trim();
+  return { out: out.trim(), err: err.trim() };
 }
 
 for (const row of CONFORMANCE) {
@@ -81,11 +82,14 @@ for (const row of CONFORMANCE) {
       return;
     }
 
-    const out = await runRow(t, row);
+    // run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+    // a raw newline in a failure message would drop everything after it.
+    const { out, err } = await runRow(t, row);
+    const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
     if (expected === 'denied') {
-      t.ok(out.startsWith('blocked'), `expected a denial, got: ${out || '(no output)'}`);
+      t.ok(out.startsWith('blocked'), `expected a denial, got: out=${oneLine(out) || '(none)'} err=${oneLine(err) || '(none)'}`);
     } else {
-      t.absent(out.startsWith('blocked'), `expected it to be permitted, got: ${out}`);
+      t.absent(out.startsWith('blocked'), `expected it to be permitted, got: out=${oneLine(out)} err=${oneLine(err)}`);
       if (row.note) t.comment(row.note);
     }
   });

@@ -61,9 +61,13 @@ async function runSandboxed(t, code, grants = []) {
 const attempt = (body) =>
   `try { ${body} } catch (e) { process.stdout.write('blocked: ' + e.code + '\\n'); process.exit(0); }`;
 
+// run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
+// a raw newline in a failure message would drop everything after it.
+const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
+
 test('sandbox-spawn - cannot read ~/.ssh private keys', { skip }, async (t) => {
   const sshPath = path.join(os.homedir(), '.ssh', 'id_rsa');
-  const { out } = await runSandboxed(
+  const { out, err } = await runSandboxed(
     t,
     attempt(
       `const p = require('node:fs').readFileSync(${JSON.stringify(sshPath)}, 'utf8');` +
@@ -71,7 +75,7 @@ test('sandbox-spawn - cannot read ~/.ssh private keys', { skip }, async (t) => {
     ),
   );
 
-  t.ok(out.startsWith('blocked'), `expected a denial, got: ${out}`);
+  t.ok(out.startsWith('blocked'), `expected a denial, got: out=${out} err=${oneLine(err)}`);
 });
 
 // The deny-list is generated from $HOME rather than a fixed set of names, so an ordinary home directory nobody named must still be out of reach.
@@ -89,7 +93,7 @@ test('sandbox-spawn - cannot read home directories the run has no claim on', { s
   }
   t.ok(probes.length > 0, 'this home has directories to check');
 
-  const { out } = await runSandboxed(
+  const { out, err } = await runSandboxed(
     t,
     attempt(
       `const fs = require('node:fs');`
@@ -102,12 +106,12 @@ test('sandbox-spawn - cannot read home directories the run has no claim on', { s
     ),
   );
 
-  t.absent(out.includes('READABLE'), `every probed directory must be denied, got: ${out}`);
+  t.absent(out.includes('READABLE'), `every probed directory must be denied, got: out=${out} err=${oneLine(err)}`);
 });
 
 test('sandbox-spawn - cannot write outside the scratch dir', { skip }, async (t) => {
   // /tmp would not prove anything, since os.tmpdir() is allowlisted on purpose.
-  const { out } = await runSandboxed(
+  const { out, err } = await runSandboxed(
     t,
     attempt(
       `require('node:fs').writeFileSync('/usr/sb-evil.txt', 'x');` +
@@ -115,11 +119,11 @@ test('sandbox-spawn - cannot write outside the scratch dir', { skip }, async (t)
     ),
   );
 
-  t.ok(out.startsWith('blocked'), `expected a denial, got: ${out}`);
+  t.ok(out.startsWith('blocked'), `expected a denial, got: out=${out} err=${oneLine(err)}`);
 });
 
 test('sandbox-spawn - can still read the app bundle it runs from', { skip }, async (t) => {
-  const { out } = await runSandboxed(
+  const { out, err } = await runSandboxed(
     t,
     attempt(
       `const p = require('node:fs').readFileSync(${JSON.stringify(path.join(project, 'package.json'))}, 'utf8');` +
@@ -127,7 +131,7 @@ test('sandbox-spawn - can still read the app bundle it runs from', { skip }, asy
     ),
   );
 
-  t.ok(out.startsWith('ok '), `read of the app bundle must succeed, got: ${out}`);
+  t.ok(out.startsWith('ok '), `read of the app bundle must succeed, got: out=${out} err=${oneLine(err)}`);
 });
 
 const reachExample =
@@ -137,14 +141,14 @@ const reachExample =
   `req.setTimeout(6000, () => { process.stdout.write('timeout\\n'); process.exit(0); });`;
 
 test('sandbox-spawn - an ungranted run cannot reach a host', { skip }, async (t) => {
-  const { out } = await runSandboxed(t, reachExample);
-  t.ok(out.startsWith('blocked'), `expected a denial, got: ${out}`);
+  const { out, err } = await runSandboxed(t, reachExample);
+  t.ok(out.startsWith('blocked'), `expected a denial, got: out=${out} err=${oneLine(err)}`);
 });
 
 // Known gap, asserted rather than left as a comment: sandbox-exec cannot filter by domain, so a granted run reaches every host.
 test('sandbox-spawn - a granted run reaches any host', { skip }, async (t) => {
-  const { out } = await runSandboxed(t, reachExample, ['network']);
+  const { out, err } = await runSandboxed(t, reachExample, ['network']);
 
-  t.ok(/^(reached|timeout)/.test(out), `expected the grant to open egress, got: ${out}`);
+  t.ok(/^(reached|timeout)/.test(out), `expected the grant to open egress, got: out=${out} err=${oneLine(err)}`);
   t.comment(`network outcome: ${out} (per-domain filtering is not available under sandbox-exec)`);
 });
