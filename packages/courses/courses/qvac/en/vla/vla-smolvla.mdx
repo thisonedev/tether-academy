@@ -89,6 +89,8 @@ The `stats` object has per-stage timings: vision encoder, language model, ODE so
 
 > Note: `vlaPadState` is the helper that pads a short state vector to the model's `maxStateDim`. For SmolVLA, the state is six floats (end-effector pose). For π₀.₅ the state is tokenised into the prompt instead, the state buffer is ignored.
 
+> Note: `vlaSetEmbodiment` switches a loaded GR00T multi-embodiment model between robot configurations, such as `vlaSetEmbodiment({ modelId, embodiment: "real_droid" })`. SmolVLA and π₀.₅ do not support this call. See the GR00T example when you need to change embodiments.
+
 ## Put it to the test
 
 1. Call `loadModel` with `modelSrc: SMOLVLA_LIBERO_VISION_Q8`, `modelType: "ggml-vla"`, and `modelConfig: { backend: "cpu" }`.
