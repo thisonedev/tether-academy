@@ -107,6 +107,29 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # Temporary: bwrap still fails with "Can't create file at
+      # .../x64/bin/npm: No such file or directory" after removing the only
+      # code path that looked like it added that raw path. Printing exactly
+      # what our own resolver computes, unsandboxed, instead of guessing again.
+      - name: debug tool-wrappers resolution
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: |
+          node -e "
+          const { resolveMcpBins } = require('./workers/sandbox/mcp-bins.cjs');
+          const { createToolWrappers } = require('./workers/sandbox/tool-wrappers.cjs');
+          const fs = require('fs');
+          const bins = resolveMcpBins();
+          console.log('bins:', JSON.stringify(bins));
+          for (const [k, v] of Object.entries(bins)) {
+            if (!v) continue;
+            try { console.log(k, 'realpath:', fs.realpathSync(v)); }
+            catch (e) { console.log(k, 'realpath FAILED:', e.message); }
+          }
+          const w = createToolWrappers({ cacheDir: '/tmp/academy-npm-cache-debug' });
+          console.log('wrapper paths:', JSON.stringify(w.paths, null, 2));
+          "
+
       - name: integration tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm --filter @tether-academy/desktop test:integration
