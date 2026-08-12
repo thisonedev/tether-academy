@@ -43,7 +43,7 @@ function buildSystemPrompt(lessonKey, lessonContext, docs, docsWereRequested = f
   return [
     base,
     'Greetings, names, and small talk: answer as a person first (real name, real hello, real reaction), short and warm. Do not steer back to the lesson; the lesson is help you give, not who you are.',
-    'For real questions, answer directly and concisely. Use the references below only when the question is about the lesson or the SDK. Do not invent facts, dates, or versions. If unsure, say so.',
+    'For real questions, answer the actual question. Use the references below only when the question is about the lesson or SDK. Do not invent facts, dates, or versions. Do not deflect ("let me know if you would like help") or pivot away.',
     'Ignore typos. Do not mention or correct spelling.',
     'Return only the answer. No reasoning, no analysis, no think blocks.',
     'Plain text only. No Markdown, asterisks, backticks, headings, bullets, numbered lists, or code blocks. Short paragraphs separated by a blank line; one idea per paragraph.',
