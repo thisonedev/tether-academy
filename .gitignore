@@ -17,6 +17,8 @@ dist
 *.pem
 .env
 .env*.local
+.hermes
+.claude
 
 # copied from apps/cli/install.sh by apps/web/scripts/copy-install-sh.mjs
 apps/web/public/install.sh
