@@ -1,6 +1,6 @@
 {
   "name": "tether-academy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
@@ -17,6 +17,8 @@
     "format": "pnpm --filter @tether-academy/web format",
     "sync:examples": "pnpm --filter @academy/courses sync:examples",
     "sync:examples:check": "pnpm --filter @academy/courses sync:examples:check",
+    "lessons:check": "pnpm --filter @academy/courses lessons:check",
+    "lessons:check:quick": "pnpm --filter @academy/courses lessons:check:quick",
     "verify:tests": "pnpm --filter @academy/courses verify:tests",
     "verify:tests:check": "pnpm --filter @academy/courses verify:tests:check",
     "check:yaml": "pnpm --filter @academy/courses check:yaml",

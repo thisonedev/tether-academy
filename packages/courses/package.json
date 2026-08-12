@@ -17,6 +17,8 @@
     "clean": "rm -rf dist",
     "sync:examples": "node scripts/sync-examples.mjs",
     "sync:examples:check": "node scripts/sync-examples.mjs --check",
+    "lessons:check": "node scripts/lessons-check.mjs",
+    "lessons:check:quick": "node scripts/lessons-check.mjs --quick",
     "verify:tests": "node scripts/verify-tests.mjs",
     "verify:tests:check": "node scripts/verify-tests.mjs --check",
     "check:yaml": "node scripts/check-yaml.cjs",
@@ -27,6 +29,7 @@
     "@academy/validation": "workspace:*",
     "fumadocs-core": "^15.0.0",
     "fumadocs-mdx": "13.0.0",
+    "mongodb": "^6.10.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
