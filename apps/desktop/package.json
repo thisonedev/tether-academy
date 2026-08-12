@@ -49,7 +49,7 @@
   "dependencies": {
     "@academy/validation": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "@qvac/sdk": "^0.15.0",
+    "@qvac/sdk": "^0.17.0",
     "@sqliteai/sqlite-wasm": "^3.50.4-sync.0.8.30-vector.0.9.23",
     "b4a": "^1.8.1",
     "bare-crypto": "^1.15.3",
