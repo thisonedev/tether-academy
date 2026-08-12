@@ -22,11 +22,11 @@ expectedOutput:
 
 Now that we know how to ingest and search, let's handle longer documents.
 
-A 1024-token embedding model can't take a 5000-word article in one shot. `chunk: true` tells `ragIngest` to split documents before embedding. The search results we saw before were whole documents. Chunked search returns the *passage* that matched, which is what we actually want for question-answering.
+A 1024-token embedding model can't take a 5000-word article as a single input. `chunk: true` tells `ragIngest` to split documents before embedding. The search results we saw before were whole documents. Chunked search returns the *passage* that matched, which is what we want for question-answering.
 
 The default strategy is `paragraph`: the SDK splits on blank lines, then groups paragraphs to roughly hit `chunkSize` tokens. `chunkOverlap` keeps a few tokens of shared context at every boundary so a sentence that straddles two chunks isn't lost.
 
-`chunk: true` splits each document before embedding. The default `paragraph` strategy splits on blank lines, then groups to roughly hit `chunkSize` tokens like so:
+`chunk: true` splits each document before embedding. The default `paragraph` strategy splits on blank lines, then groups paragraphs to roughly hit `chunkSize` tokens:
 
 ```ts
 const result = await ragIngest({

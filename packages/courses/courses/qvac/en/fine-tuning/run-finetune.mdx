@@ -27,7 +27,7 @@ expectedOutput:
   - "▸ Result status: COMPLETED"
 ---
 
-Now that we've confirmed the base model is fine-tunable, it's time to actually run a training job.
+Now that we've confirmed the base model is fine-tunable, it's time to run a training job.
 
 `finetune({ modelId, options })` starts a LoRA training run against a chat dataset. The handle exposes a `progressStream` we can iterate to watch training tick by tick, with a `result` promise that resolves with the final status.
 

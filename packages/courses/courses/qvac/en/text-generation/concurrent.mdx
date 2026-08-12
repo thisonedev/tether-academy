@@ -24,7 +24,7 @@ expectedOutput:
 
 In the previous lessons we've been calling `completion()` once at a time. Now let's see what happens when we fire two calls simultaneously.
 
-A loaded model is one native context under the hood: one KV-cache, one decode loop. Two completions on the same model cannot literally run at the same time. The SDK uses a per-`(kind, modelId)` FIFO admission queue, so the second request waits its turn instead of being rejected with `RequestRejectedByPolicyError`.
+A loaded model is one native context: one KV-cache, one decode loop. Two completions on the same model cannot run at the same time. The SDK uses a per-`(kind, modelId)` FIFO admission queue, so the second request waits its turn instead of being rejected with `RequestRejectedByPolicyError`.
 
 The trick is calling `completion()` twice in the same tick before awaiting either.
 

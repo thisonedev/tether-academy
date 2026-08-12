@@ -28,7 +28,7 @@ Wan 2.1 T2V (`WAN2_1_T2V_1_3B_FP16`) is the text-to-video model in the SDK. The 
 
 The first call takes the longest, since the three GGUF files together run hundreds of megabytes. Subsequent `video()` calls reuse the loaded model.
 
-`mode: "video"` switches the diffusion engine from image generation to video generation (a sequence of frames). Note that without `mode: "video"`, the engine tries to render a single image instead of a clip. The `loadModel` call looks like:
+`mode: "video"` switches the diffusion engine from image generation to video generation (a sequence of frames). Without `mode: "video"`, the engine tries to render a single image instead of a clip. The `loadModel` call looks like:
 
 ```ts
 const videoId = await loadModel({
