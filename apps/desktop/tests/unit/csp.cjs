@@ -32,11 +32,10 @@ test('csp - script-src does not name any remote origin', (t) => {
 });
 
 test('csp - the electron header and the web <meta> agree on the policy', (t) => {
-  // The Electron header is CONTENT_SECURITY_POLICY; the web <meta> is every directive except frame-ancestors, which a <meta> tag ignores.
+  // frame-ancestors is the one directive a <meta> ignores, so it stays only in the Electron header.
   const source = fs.readFileSync(WEB_LAYOUT, 'utf8');
-  // Extracts the quoted directive string literals from the contentSecurityPolicy array.
   const directives = [];
-  const re = /"((?:default|script|style|img|font|worker|connect|object|base|form)[^"]*)"/g;
+  const re = /"((?:default|script|style|img|media|font|worker|connect|object|base|form)[^"]*)"/g;
   let m;
   while ((m = re.exec(source)) !== null) {
     directives.push(m[1]);

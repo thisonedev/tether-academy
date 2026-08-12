@@ -1,6 +1,5 @@
 // Spawned via ELECTRON_RUN_AS_NODE so the CJS main can run an ESM .mts snippet.
-// Unsandboxed, unlike peer-exec: the source here is course content or the
-// user's own edit of it.
+// Unsandboxed (unlike peer-exec) — source is course content or the user's edit of it.
 const { spawn } = require('node:child_process');
 const { rm } = require('node:fs/promises');
 const { mkdtempSync, writeFileSync } = require('node:fs');
@@ -8,7 +7,10 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const path = require('node:path');
 
-const MAX_RUNTIME_MS = 5 * 60 * 1000;
+// Cold music-lesson runs pull ~3.3 GB of ACE-Step models (DiT alone is ~1.45 GB),
+// so on slow connections the load alone can take minutes. 10 minutes leaves
+// headroom for that without making intentional aborts feel laggy.
+const MAX_RUNTIME_MS = 10 * 60 * 1000;
 
 // Electron-as-node (ELECTRON_RUN_AS_NODE) still claims its own Dock icon on
 // macOS unless told otherwise; see electron/dock-hide-shim.cjs.
@@ -16,7 +18,7 @@ const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
 
 const { buildLesson } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
-const { lessonCwd, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
+const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
 const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 
@@ -44,6 +46,9 @@ function runExample({ source, language, argv, onChunk }) {
   const dir = mkdtempSync(join(tmpdir(), 'ta-run-'));
   const file = join(dir, 'snippet.mts');
   const extraArgv = Array.isArray(argv) ? argv.filter((a) => typeof a === 'string') : [];
+  // Peer-exec precreates output dirs. Mirror that here so a local-run
+  // `output/<chapter>/file` doesn't ENOENT.
+  precreateOutputDirs(wrapped, childCwd);
 
   writeFileSync(file, wrapped, 'utf-8');
 
@@ -92,9 +97,7 @@ function runExample({ source, language, argv, onChunk }) {
     } catch {
       try {
         child.kill(signal);
-      } catch {
-        // already gone
-      }
+      } catch {}
     }
   };
 
@@ -153,9 +156,7 @@ function runExample({ source, language, argv, onChunk }) {
       // Re-baseline in case this run downloaded a model.
       try {
         acceptAll();
-      } catch {
-        // advisory only
-      }
+      } catch {}
       const fullOutput = `${output.result('stdout')}${output.result('stderr')}`;
       if (killed)
         settle({

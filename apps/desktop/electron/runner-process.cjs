@@ -36,6 +36,7 @@ const BARE_PLUGINS = [
   'tts-ggml',
   'ggml-ocr',
   'sdcpp-generation',
+  'audiogen-ggml',
   'ggml-vla',
   'ggml-classification',
 ];
