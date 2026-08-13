@@ -1,0 +1,142 @@
+---
+title: "Build RAG with MongoDB Atlas Vector Search"
+sourceExample: "packages/sdk/examples/rag/rag-mongodb.ts"
+platforms: ['node']
+tests:
+  - id: connects-mongo
+    description: 'Connects to a MongoClient on localhost:27017'
+    pattern: "new\\s+MongoClient\\s*\\(\\s*[`\"']mongodb://"
+  - id: embeds-and-inserts
+    description: 'Calls embed() per document and insertMany()'
+    pattern: "embed\\s*\\(\\s*\\{[^}]*modelId[^}]*text[\\s\\S]{0,200}insertMany"
+  - id: creates-vector-index
+    description: 'Calls createSearchIndex with type vectorSearch and numDimensions: 1024'
+    pattern: "createSearchIndex[\\s\\S]{0,300}vectorSearch"
+  - id: runs-vector-search
+    description: 'Runs an aggregation with $vectorSearch and $meta vectorSearchScore'
+    pattern: "\\$vectorSearch[\\s\\S]{0,400}vectorSearchScore"
+hints:
+  - "Connect to a MongoDB deployment with `new MongoClient('mongodb://localhost:27017/?directConnection=true')`. The Docker image `mongodb/mongodb-atlas-local` includes Atlas Vector Search. Ping the admin DB and bail with a setup message if the connection fails."
+  - "Embed each document with `embed({ modelId, text })`, then `collection.insertMany(documents)`. Create the index with `collection.createSearchIndex({ name, type: 'vectorSearch', definition: { fields: [{ type: 'vector', path: 'embedding', numDimensions: 1024, similarity: 'cosine' }, { type: 'filter', path: 'category' }] } })`. numDimensions is fixed at index creation and must match the model: GTE Large is 1024."
+  - "Embed the query, then run `collection.aggregate([{ $vectorSearch: { index, path, queryVector, filter: { category: { $eq: category } }, numCandidates: 100, limit: 3 } }, { $project: { _id: 0, id: 1, category: 1, text: 1, score: { $meta: 'vectorSearchScore' } } }]).toArray()`. Poll the index with `collection.listSearchIndexes(name)` until `queryable === true` before querying, because index builds are async."
+expectedOutput:
+  - "▸ Connected to MongoDB server"
+  - "▸ Embedding documents..."
+  - "▸ Creating vector search index..."
+  - "▸ Top 3 most similar documents:"
+  - "1. (Score:"
+---
+
+The QVAC RAG chapter has a built-in workspace model, but production setups usually want their own vector store. MongoDB Atlas Vector Search is one option: the SDK contributes the embedding model, and you write the storage layer and the scan.
+
+This lesson builds the RAG flow against MongoDB directly. `embed()` and `loadModel()` are the SDK pieces; the MongoClient, the index, and the `$vectorSearch` aggregation are yours.
+
+Before the SDK can search, give it a local Atlas Vector Search endpoint. Start the single-node `mongodb/mongodb-atlas-local` container on `localhost:27017`:
+
+```ts
+const client = new MongoClient("mongodb://localhost:27017/?directConnection=true");
+try {
+  await client.connect();
+  await client.db("admin").command({ ping: 1 });
+  console.log("▸ Connected to MongoDB server");
+  return client;
+} catch {
+  console.error("✖ Failed to connect to MongoDB server");
+  process.exit(1);
+}
+```
+
+With MongoDB accepting connections, load the embedding model whose output width will define the index. `GTE_LARGE_FP16` produces 1024 dimensions:
+
+```ts
+const modelId = await loadModel({ modelSrc: GTE_LARGE_FP16 });
+```
+
+Now put searchable data behind the connection. Embed each sample and insert the vector with its `category` into the `documents` collection:
+
+```ts
+console.log("▸ Embedding documents...");
+const documents = [];
+for (const sample of samples) {
+  const { embedding } = await embed({ modelId, text: sample.text });
+  documents.push({ id: sample.id, category: sample.category, text: sample.text, embedding });
+}
+await collection.insertMany(documents);
+```
+
+The collection has vectors now, so define the index against their exact width. Set `numDimensions` to 1024 and expose `category` as a filter field:
+
+```ts
+await collection.createSearchIndex({
+  name: INDEX_NAME,
+  type: "vectorSearch",
+  definition: {
+    fields: [
+      { type: "vector", path: "embedding", numDimensions: 1024, similarity: "cosine" },
+      { type: "filter", path: "category" },
+    ],
+  },
+});
+```
+
+Index creation is asynchronous. Poll `queryable` before searching, otherwise an early aggregation can look empty even though the documents are present. The readiness check is as follows:
+
+```ts
+for (let attempt = 0; attempt < 60; attempt++) {
+  const [index] = (await collection.listSearchIndexes(INDEX_NAME).toArray()) as {
+    queryable?: boolean;
+  }[];
+  if (index?.queryable) break;
+  if (attempt === 59) throw new Error(`Index ${INDEX_NAME} did not become queryable`);
+  await wait(1000);
+}
+```
+
+Once the index reports ready, embed the query and send one `$vectorSearch` aggregation. `numCandidates` controls the candidate pool, `limit` controls top-K, and `$project` exposes the score for inspection. The search query would look like this:
+
+```ts
+const { embedding: queryEmbedding } = await embed({ modelId, text: query });
+
+const results = await collection
+  .aggregate<{ id: number; category: string; text: string; score: number }>([
+    {
+      $vectorSearch: {
+        index: INDEX_NAME,
+        path: "embedding",
+        queryVector: queryEmbedding,
+        filter: { category: { $eq: category } },
+        numCandidates: 100,
+        limit: 3,
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        id: 1,
+        category: 1,
+        text: 1,
+        score: { $meta: "vectorSearchScore" },
+      },
+    },
+  ])
+  .toArray();
+
+console.log("▸ Top 3 most similar documents:");
+results.forEach((result, index) => {
+  console.log(`${index + 1}. (Score: ${result.score.toFixed(4)}, Category: ${result.category})`);
+  console.log(`   ${result.text}`);
+  console.log();
+});
+```
+
+The `filter: { category: { $eq: category } }` clause restricts the search to documents in the requested category. Without the filter, the top-K is global; with it, only same-category documents are candidates.
+
+`unloadModel({ modelId })` and `client.close()` end the run.
+
+> Note: the `$vectorSearch` stage runs on the MongoDB server, not in the SDK. The candidate enumeration, the cosine similarity scoring, and the limit step are all server-side. The SDK only emits the query embedding; everything past that is a single aggregation round-trip. The desktop runner probes `localhost:27017` before this lesson runs; if a server answers, the lesson exercises it directly, otherwise the runner falls back to an in-process `MongoClient` mock so the lesson still completes.
+
+## Put it to the test
+
+1. Connect to MongoDB at `mongodb://localhost:27017/?directConnection=true`. Load `GTE_LARGE_FP16` with `loadModel`.
+2. Embed each sample document with `embed({ modelId, text })` and `collection.insertMany` the result. `collection.createSearchIndex` with `type: 'vectorSearch'`, `numDimensions: 1024`, and a `category` filter field. Poll `collection.listSearchIndexes` until `queryable === true`.
+3. Embed the query string with `embed({ modelId, text: query })`. Run `collection.aggregate([{ $vectorSearch: { index, path, queryVector, filter, numCandidates: 100, limit: 3 } }, { $project: { ..., score: { $meta: 'vectorSearchScore' } } }]).toArray()`. Log `Score`, `Category`, and `text` per result.

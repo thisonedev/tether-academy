@@ -1,0 +1,176 @@
+---
+title: "Transcribe long audio files in silence-aware chunks"
+sourceExample: "packages/sdk/examples/asr/parakeet-tdt-filesystem-chunked.ts"
+platforms: ['node']
+tests:
+  - id: loads-parakeet-tdt
+    description: 'Loads PARAKEET_TDT_0_6B_V3_Q8_0 with modelType parakeet-transcription'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*PARAKEET_TDT_0_6B_V3_Q8_0[\\s\\S]*?parakeet-transcription"
+  - id: detects-silences
+    description: 'Uses ffmpeg silencedetect to find silence intervals'
+    pattern: "silencedetect"
+  - id: bounds-segments
+    description: 'Caps segments at 60 seconds'
+    pattern: "MAX_SEGMENT_S|maximumCut"
+  - id: decodes-per-segment
+    description: 'Decodes each segment with ffmpeg -ss/-t and transcribes the bytes'
+    pattern: "decodeSegment|transcribe\\s*\\(\\s*\\{[^}]*modelId[^}]*audioChunk"
+hints:
+  - "ffmpeg and ffprobe must be on PATH. Gate on both with spawnSync(tool, ['-version'], { stdio: 'ignore' }) and check error.code === 'ENOENT' at startup. `runCommand` rejects on a non-zero exit too, which would misreport a working tool as missing."
+  - "Detect silences with `ffmpeg -i <audio> -vn -af silencedetect=noise=-35dB:d=0.5 -f null -`. Parse `silence_start: <s>` and `silence_end: <s>` lines from stderr. Then pick cuts: target 45 s, minimum 10 s, maximum 60 s; choose the silence midpoint closest to the target."
+  - "For each cut, run `ffmpeg -ss <start> -i <audio> -t <duration> -vn -ar 16000 -ac 1 -sample_fmt s16 -f s16le pipe:1` to decode the segment, then call `await transcribe({ modelId, audioChunk: bytes })`. Push trimmed non-empty results onto a transcript array; join and log at the end."
+expectedOutput:
+  - "▸ Segment 1/1: 00:00:00.0 - 00:00:05.4"
+  - "This is a test, and this is another test."
+  - "▸ Complete transcript"
+  - "This is a test, and this is another test."
+  - "▸ Done"
+---
+
+The single-file `transcribe()` lesson handles short clips. A 90-minute podcast or a two-hour meeting is too long for one inference pass: the engine's working memory budget is fixed, and the audio path is just bytes. Long audio has to be split.
+
+Splitting by fixed time intervals places cuts in the middle of sentences. Cutting at silence boundaries keeps each chunk a coherent unit of speech. ffmpeg's `silencedetect` filter finds them; we read the silence timestamps, pick cuts near our target length, and run `transcribe()` once per chunk.
+
+Keep the file lesson's Parakeet load. The same checkpoint and addon setup carries over:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0,
+  modelType: "parakeet-transcription",
+});
+```
+
+The audio path comes from `process.argv[2]` with a fallback to the repo's sample WAV, and the script exits with a usage hint if the file is missing:
+
+```ts
+const audioFilePath =
+  process.argv[2] ?? "./examples/qvac/transcription/input/sample-16khz.wav";
+if (!fs.existsSync(audioFilePath)) {
+  console.error(`✖ ${audioFilePath} does not exist`);
+  console.error(`Usage: tsx <file>.ts <audio-file>`);
+  process.exit(1);
+}
+
+// Gate on ffmpeg and ffprobe at startup. spawnSync's error.code is the
+// canonical check for "not on PATH"; a non-zero exit is a different problem.
+for (const tool of ["ffmpeg", "ffprobe"]) {
+  const check = spawnSync(tool, ["-version"], { stdio: "ignore" });
+  if (check.error?.code === "ENOENT") {
+    console.error(`✖ ${tool} not found on PATH`);
+    process.exit(1);
+  }
+}
+```
+
+With the audio path in hand, the next step is figuring out where to cut. ffmpeg's `silencedetect` filter writes `silence_start` and `silence_end` lines to stderr as it scans the file; pick those up and turn them into `{ start, end }` intervals. The detection pass looks like so:
+
+```ts
+const result = await runCommand("ffmpeg", [
+  "-hide_banner", "-nostats", "-i", audioPath,
+  "-vn", "-af", `silencedetect=noise=${SILENCE_NOISE_DB}dB:d=${SILENCE_DURATION_S}`,
+  "-f", "null", "-",
+]);
+
+const silences: SilenceInterval[] = [];
+let currentStart: number | null = null;
+for (const line of result.stderr.split("\n")) {
+  const startMatch = line.match(/silence_start:\s*([0-9.]+)/);
+  if (startMatch?.[1]) currentStart = Number.parseFloat(startMatch[1]);
+  const endMatch = line.match(/silence_end:\s*([0-9.]+)/);
+  if (endMatch?.[1] && currentStart !== null) {
+    const end = Number.parseFloat(endMatch[1]);
+    if (Number.isFinite(end) && end > currentStart) {
+      silences.push({ start: currentStart, end });
+    }
+    currentStart = null;
+  }
+}
+```
+
+`noise=-35dB` is the threshold below which ffmpeg counts audio as silence; `d=0.5` requires at least half a second of silence to flag an interval. Both constants tune how chatty the cuts become.
+
+Use those intervals to keep every segment under 60 seconds while cutting near the 45-second target. The 60 s cap bounds the inference memory; the 45 s target is the largest cut the loop can usually make before the silence search has to backtrack. The result is the ranges `transcribe()` can process independently:
+
+```ts
+const TARGET_SEGMENT_S = 45;
+const MAX_SEGMENT_S = 60;
+const MIN_SEGMENT_S = 10;
+
+function createAudioSegments(duration: number, silences: SilenceInterval[]) {
+  const silenceMidpoints = silences.map(({ start, end }) => start + (end - start) / 2);
+  const segments: AudioSegment[] = [];
+  let start = 0;
+
+  while (duration - start > MAX_SEGMENT_S) {
+    const target = start + TARGET_SEGMENT_S;
+    const minimumCut = start + MIN_SEGMENT_S;
+    const maximumCut = start + MAX_SEGMENT_S;
+    const candidates = silenceMidpoints.filter(
+      (c) => c >= minimumCut && c <= maximumCut,
+    );
+    const first = candidates[0];
+    const cut =
+      first === undefined
+        ? Math.min(target, duration - MIN_SEGMENT_S)
+        : candidates.slice(1).reduce((best, c) =>
+            Math.abs(c - target) < Math.abs(best - target) ? c : best,
+          first);
+
+    segments.push({ start, end: cut });
+    start = cut;
+  }
+  if (duration > start) segments.push({ start, end: duration });
+  return segments;
+}
+```
+
+If no silence falls inside the window, fall back to a 45 s cut and let the next pass cover the rest. The `MIN_SEGMENT_S` lower bound stops a cut from ending up before the engine has enough audio to recognize speech.
+
+With the ranges fixed, the next step is decoding each one to the bytes the model consumes. ffmpeg's `-ss` selects the start, `-t` selects the duration, and the output pipe carries s16le 16 kHz mono PCM straight to `transcribe()`. The per-segment call looks like so:
+
+```ts
+async function decodeSegment(audioPath: string, segment: AudioSegment) {
+  return (await runCommand("ffmpeg", [
+    "-hide_banner", "-loglevel", "error",
+    "-ss", segment.start.toFixed(3),
+    "-i", audioPath,
+    "-t", (segment.end - segment.start).toFixed(3),
+    "-vn", "-ar", "16000", "-ac", "1",
+    "-sample_fmt", "s16", "-f", "s16le", "pipe:1",
+  ])).stdout;
+}
+
+for (const [index, segment] of segments.entries()) {
+  console.log(
+    `▸ Segment ${index + 1}/${segments.length}: ${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}`,
+  );
+  const audioChunk = await decodeSegment(audioFilePath, segment);
+  const text = await transcribe({ modelId, audioChunk });
+  const normalized = text.trim();
+  if (normalized.length > 0 && !normalized.includes("[No speech detected]")) {
+    transcript.push(normalized);
+    console.log(normalized);
+  }
+}
+```
+
+Each `-ss` / `-t` pair bounds one decode, so the returned 16 kHz mono PCM matches `transcribe()`. Join the per-segment text only after every range has completed:
+
+```ts
+console.log("\n▸ Complete transcript");
+console.log(transcript.join(" "));
+
+await unloadModel({ modelId });
+```
+
+`unloadModel` runs after the loop, so the model stays loaded across all segment calls. Each segment reuses the same `modelId`, no reload between calls.
+
+> Note: the audio format passed to ffmpeg is whatever the source file is. ffmpeg normalizes anything it understands to the requested `-ar 16000 -ac 1 -sample_fmt s16` output. If the input is a WAV with a 44-byte header, the `-ss` flag seeks into the PCM range correctly; if it is a compressed format like MP3, ffmpeg's seek accuracy drops slightly. For transcript-quality boundaries the 0.3 s rounding from `toFixed(3)` is fine either way.
+
+## Put it to the test
+
+1. Gate on `ffmpeg` and `ffprobe` being on `PATH` using `spawnSync(tool, ['-version'], { stdio: 'ignore' })` and `error.code === 'ENOENT'`. Define `runCommand`, `getAudioDuration`, `detectSilences`, `createAudioSegments`, `decodeSegment`, and `formatTimestamp` above `main`.
+2. Read the WAV path from `process.argv[2]`. Call `loadModel({ modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0, modelType: "parakeet-transcription" })`.
+3. Detect silences with ffmpeg `silencedetect=noise=-35dB:d=0.5`, parse `silence_start`/`silence_end` lines from stderr, then `createAudioSegments(duration, silences)` with `MAX_SEGMENT_S = 60`, `TARGET_SEGMENT_S = 45`, `MIN_SEGMENT_S = 10`.
+4. For each segment, decode with ffmpeg `-ss` / `-t` to s16le 16 kHz mono PCM, call `await transcribe({ modelId, audioChunk })`, push trimmed non-empty results onto `transcript`. Log `▸ Segment N/M: <ts> - <ts>` before each call.
+5. Log the joined transcript and `unloadModel({ modelId })` at the end.

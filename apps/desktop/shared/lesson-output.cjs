@@ -34,6 +34,15 @@ function precreateOutputDirs(src, cwd) {
     /(outputParametersDir|checkpointSaveDir)\s*:\s*['"]([^'"]+)['"]/g,
     /fs\.writeFileSync\s*\(\s*['"]([^'"]+)['"]/g,
     /\bwriteFileSync\s*\(\s*['"]([^'"]+)['"]/g,
+    // Lessons that read a CLI argv or env var but fall back to a chapter-folder
+    // default like `const x = process.argv[2] ?? "output/.../file"` still need
+    // the default directory pre-created on disk.
+    /=\s*process\.argv\[\d\]\s*\?\?\s*['"]([^'"]+)['"]/g,
+    // Lessons that build a chapter-relative output path at runtime via
+    // `const outputDir = "output/...";` (no argv). The `fs.writeFileSync`
+    // call further down uses `path.join(outputDir, "file.avi")`, so the
+    // string literal here is the only place the directory is named.
+    /(?:const|let|var)\s+(?:outputDir|outputPath|outputPrefix|outDir)\s*=\s*['"]([^'"]+)['"]/g,
   ];
   for (const re of patterns) {
     let m;
@@ -93,9 +102,8 @@ function formatBytes(bytes) {
 }
 
 /**
- * What the run added, grouped by folder, past a size worth mentioning.
- * Growth and new files both count because a resumed finetune rewrites a
- * checkpoint in place.
+ * Run delta per folder (≥32 MB added). Growth + new files both count — a
+ * resumed finetune rewrites a checkpoint in place.
  * @param {Map<string, number>} before From snapshotOutputs, taken pre-run.
  * @returns {string} Chunk text to print, empty when there is nothing to report.
  */
@@ -136,10 +144,9 @@ function formatRunError(err) {
   const text = String(raw).trim();
   if (!text) return 'unknown error';
 
-  // The QVAC SDK throws an AbortError-shaped wrapper with code INFERENCE_CANCELLED
-  // when the user clicks Stop on a long video / image generation. The original
-  // message points into a node_modules file path that is not useful in the
-  // lesson output panel.
+  // The QVAC SDK throws an INFERENCE_CANCELLED error pointing into a
+  // node_modules path that's not useful in the lesson panel. Collapse it
+  // to a short word.
   if (/INFERENCE_CANCELLED|AbortedError|was cancelled before it could complete/i.test(text)) {
     return 'stopped';
   }

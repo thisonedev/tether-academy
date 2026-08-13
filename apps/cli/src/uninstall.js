@@ -9,7 +9,6 @@ const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
 const { home, versionsDir, currentLink, backupsDir, lockPath } = require('./home');
-const { printSplash } = require('./splash');
 
 function shimPath() {
   return path.join(os.homedir(), '.local', 'bin', 'tether-academy');
@@ -82,8 +81,6 @@ function confirm(question) {
 }
 
 async function uninstall({ purge = false, yes = false } = {}) {
-  printSplash('uninstalling');
-
   const targets = plan({ purge });
   if (targets.length === 0) {
     console.log('Nothing to remove: no install found.');
@@ -129,7 +126,7 @@ async function uninstall({ purge = false, yes = false } = {}) {
     // non-empty or already gone; either is fine
   }
 
-  console.log(`\nRemoved ${targets.length} path${targets.length === 1 ? '' : 's'}.`);
+  console.log(`\n✓ Removed ${targets.length} path${targets.length === 1 ? '' : 's'}.`);
   console.log('Reinstall with: curl -fsSL https://tetheracademy.cc/install.sh | sh');
 }
 

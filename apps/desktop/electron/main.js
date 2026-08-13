@@ -23,6 +23,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const { runExample } = require('../runner.cjs');
+const { createThinkingFilter } = require('./chat-thinking-filter.cjs');
 const {
   listModels,
   removeModel,
@@ -212,10 +213,26 @@ async function runAcademy(parsed, evt) {
 
   if (parsed.peerId) {
     // Runtime must match the host: a Bare build rewrites node: imports to Bare
-    // packages, which a Node child cannot load, and vice versa.
-    const { nodeOnlyImports } = await loadIpcValidation();
-    const runtime = nodeOnlyImports(parsed.source).length > 0 ? 'node' : 'bare';
-    const wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime });
+    // packages, which a Node child cannot load, and vice versa. Checked on the
+    // wrapped source so the `mongodb`-mock rewrite counts as Bare-safe.
+    // Uses detectNodeOnly, not nodeOnlyImports: buildLesson resolves specifiers
+    // to absolute paths, which nodeOnlyImports skips as local files.
+    // forceMock: true — a probe of this host says nothing about the peer's.
+    const { buildLesson, decideMockImports } = require('./runner-process.cjs');
+    const { detectNodeOnly } = require('../workers/peer/exec-validate.cjs');
+    const { mockImports, note } = await decideMockImports(parsed.source, { forceMock: true });
+    let runtime;
+    let wrapped;
+    for (const candidate of ['bare', 'node']) {
+      wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime: candidate, mockImports, mockNote: note });
+      if (detectNodeOnly(wrapped) === null) {
+        runtime = candidate;
+        break;
+      }
+    }
+    if (runtime === undefined) {
+      runtime = 'node';
+    }
     let emitter;
     try {
       emitter = pearEnd.peer.exec({
@@ -239,13 +256,19 @@ async function runAcademy(parsed, evt) {
     }
     // Capped so a run that prints in a loop cannot grow main-process memory unbounded.
     const collected = createAccumulator();
+    // Strips <think>...</think> reasoning traces from model output.
+    const thinkingFilter = createThinkingFilter();
+    // Collapses multi-space indent from util.inspect / JSON.stringify output
+    // so SDK log lines print with single-space separators.
+    const collapseIndent = (s) => s.replace(/[ \t]{2,}/g, ' ');
     // Measured from the last output, not the start: a first run downloads the model
     // and streams progress for as long as that takes.
     let noteActivity = () => {};
     emitter.on('stdout', (data) => {
-      collected.append('stdout', data);
+      const cleaned = collapseIndent(thinkingFilter.push(data.toString()));
+      collected.append('stdout', cleaned);
       noteActivity();
-      sendChunk({ stream: 'stdout', data });
+      sendChunk({ stream: 'stdout', data: cleaned });
     });
     emitter.on('stderr', (data) => {
       collected.append('stderr', data);

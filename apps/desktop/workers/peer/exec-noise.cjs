@@ -44,7 +44,9 @@ const NOISE_LINE = [
   // call site; the allowlist below covers SDK helpers wrapping the same
   // logging without the prefix.
   /^llama_/i,
-  /^(common_init_result|common_init_from_model_and_params|initFromConfig|parse|load_internals): /i,
+  // The SDK's own wrapper logs these with a leading `<monotonic-time> <LEVEL> `
+  // stamp (e.g. `0.08.823.404 I initFromConfig: ...`) instead of bare `tag: `.
+  /^(?:[\d.]+\s+[A-Z]\s+)?(common_init_result|common_init_from_model_and_params|initFromConfig|parse|load_internals): /i,
   // ggml backend probing and the Metal device dump, both `<tag>: <message>`.
   // A crash's assert and frames don't match this shape, so it still shows up.
   /^ggml_[a-z0-9_]+: /i,

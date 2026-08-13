@@ -1,0 +1,106 @@
+---
+title: "Generate music from a caption"
+sourceExample: "packages/sdk/examples/audiogen/generate-music.ts"
+platforms: ['node']
+tests:
+  - id: loads-audiogen
+    description: 'Loads ACE-Step AudioGen with modelType audiogen'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelType\\s*:\\s*[`'\"]audiogen[`'\"]"
+  - id: passes-text-enc
+    description: 'Sets modelConfig.textEncModelSrc (QVAC registry descriptor)'
+    pattern: "textEncModelSrc"
+  - id: passes-lm-and-dit
+    description: 'Sets modelConfig.lmModelSrc and modelConfig.ditModelSrc (QVAC registry descriptors)'
+    pattern: "lmModelSrc[\\s\\S]*?ditModelSrc"
+  - id: calls-audiogen
+    description: 'Calls audioGen with caption and lyrics'
+    pattern: "audioGen\\s*\\(\\s*\\{[^}]*caption[^}]*lyrics"
+  - id: writes-wav
+    description: 'Writes the audio.pcm bytes as a WAV file with createWav'
+    pattern: "createWav|writeFileSync[\\s\\S]{0,80}\\.wav"
+hints:
+  - "loadModel({ modelType: 'audiogen', modelConfig: { textEncModelSrc, lmModelSrc, ditModelSrc, vaeModelSrc, useGPU: true, inferenceSteps: 8 } }) pulls the four ACE-Step models from the QVAC registry descriptors exported by @qvac/sdk. Import the AUDIOGEN_* constants instead of using direct HuggingFace URLs; the ACE-Step repository requires authentication for those files."
+  - "audioGen({ modelId, caption, lyrics: '[Instrumental]', seed: 42, duration: 10 }) returns a run with progressStream, audio (Promise<{ pcm, sampleRate, channels, bitsPerSample }>), and stats. Drain progressStream with for await to log stage/step/total; await run.audio and run.stats with Promise.all to overlap the two awaits."
+  - "Wrap the raw PCM bytes in a 44-byte WAV header with createWav(pcm, sampleRate, channels, bitsPerSample), then writeFileSync the result. sampleRate / channels / bitsPerSample come from the audio object, not from any constant."
+expectedOutput:
+  - "▸ Generating:"
+  - "▸ Saved output/music-gen/audiogen-output.wav"
+  - "▸ Model unloaded"
+---
+
+Welcome to the music chapter. In this first lesson, we're going to call ACE-Step and write a `.wav`. The text chapters took prompts and returned tokens; this one takes a description of a sound and returns audio.
+
+ACE-Step is a four-stage bundle under a single `modelId`. A caption first runs through a text encoder (Qwen3 Embedding 0.6B) to become a sequence of tokens. The ACE-Step 5Hz LM then schedules those tokens across time, deciding what happens at each second of the clip. The V15 Turbo DiT takes that schedule and denoises it into audio latents, which takes several seconds for a short clip. A VAE finally decodes the latents back into raw PCM. The `audiogen` modelType is the one key the SDK uses to load all four together:
+
+```ts
+const modelId = await loadModel({
+  modelType: "audiogen",
+  modelConfig: {
+    textEncModelSrc: AUDIOGEN_QWEN3_EMBEDDING_0_6B_Q8_0,
+    lmModelSrc: AUDIOGEN_ACESTEP_5HZ_LM_0_6B_Q8_0,
+    ditModelSrc: AUDIOGEN_ACESTEP_V15_TURBO_Q4_K_M,
+    vaeModelSrc: AUDIOGEN_VAE_BF16,
+    useGPU: true,
+    inferenceSteps: 8,
+  },
+});
+```
+
+The V15 Turbo DiT is the slow stage. It does eight denoising passes through a transformer every time you call `audioGen`. `useGPU: true` runs those passes on the GPU; without it the SDK runs them on the CPU instead.
+
+The turbo default is eight inference steps: lower is faster and noisier, higher is slower and cleaner. With the four checkpoints loaded under one `modelId`, `audioGen` hands the caption to ACE-Step and gets back a run with progress, audio, and stats:
+
+```ts
+const run = audioGen({
+  modelId,
+  caption: "Lo-fi hip hop with mellow piano, soft drums, and a warm bass line",
+  lyrics: "[Instrumental]",
+  seed: 42,
+  duration: 10,
+});
+```
+
+`audioGen` takes four kinds of input:
+
+- `caption` - a natural-language description of the music
+- `lyrics: "[Instrumental]"` - a string the language model reads; pass real lyrics for a sung vocal track
+- `seed` - an integer pinning the noise so the same caption + seed reproduces the clip
+- `duration` - an integer of seconds the SDK caps at a few tens before quality drops
+
+Between `loadModel` resolving and the WAV writing to disk, the reader sees nothing. Drain the per-stage ticks while audio and stats resolve in parallel so the terminal moves instead of hanging, for example:
+
+```ts
+for await (const progress of run.progressStream) {
+  console.log(`▸ ${progress.stage}: ${progress.step}/${progress.total}`);
+}
+
+const [audio, stats] = await Promise.all([run.audio, run.stats]);
+```
+
+The progress loop walks through `stage: step/total` lines naming which sub-model is currently working: text encoding, language-model token prediction, DiT diffusion, VAE decoding. `Promise.all` overlaps the audio and stats awaits so neither one waits on the other; both finish around the same time the diffusion does.
+
+Last step on the way out: `run.audio` resolves to raw PCM with no RIFF/WAVE header around it, so the file won't play until you add one yourself. You can add it like this:
+
+```ts
+const wav = createWav(audio.pcm, audio.sampleRate, audio.channels, audio.bitsPerSample);
+writeFileSync(outputPath, wav);
+
+const samplesPerChannel = audio.pcm.byteLength / (audio.bitsPerSample / 8) / audio.channels;
+console.log(
+  `▸ Generated ${samplesPerChannel} samples per channel at ` +
+    `${audio.sampleRate} Hz (${audio.channels} channels)`,
+);
+if (stats) console.log(`▸ Stats: ${JSON.stringify(stats)}`);
+console.log(`▸ Saved ${outputPath}`);
+
+await unloadModel({ modelId });
+```
+
+`createWav` is prefilled in `starting.ts`; it builds the 44-byte header from the exact `audio.sampleRate` / `audio.channels` / `audio.bitsPerSample` fields the run returns. After that it's a normal `writeFileSync` and a final `unloadModel({ modelId })`.
+
+## Put it to the test
+
+1. Call `loadModel({ modelType: "audiogen", modelConfig: { textEncModelSrc: AUDIOGEN_QWEN3_EMBEDDING_0_6B_Q8_0, lmModelSrc: AUDIOGEN_ACESTEP_5HZ_LM_0_6B_Q8_0, ditModelSrc: AUDIOGEN_ACESTEP_V15_TURBO_Q4_K_M, vaeModelSrc: AUDIOGEN_VAE_BF16, useGPU: true, inferenceSteps: 8 } })`.
+2. Call `audioGen({ modelId, caption: "...", lyrics: "[Instrumental]", seed: 42, duration: 10 })`.
+3. Drain `run.progressStream` with `for await` logging `▸ <stage>: <step>/<total>`, then `await Promise.all([run.audio, run.stats])`.
+4. Wrap `audio.pcm` in a WAV header with `createWav(audio.pcm, audio.sampleRate, audio.channels, audio.bitsPerSample)` and `writeFileSync` the result. Log the sample count, channel count, sample rate, and stats JSON, then `unloadModel({ modelId })`.

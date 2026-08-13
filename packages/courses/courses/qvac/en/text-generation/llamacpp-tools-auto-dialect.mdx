@@ -1,0 +1,116 @@
+---
+title: "Call tools with automatic dialect detection"
+sourceExample: "packages/sdk/examples/tools/llamacpp-tools-auto-dialect.ts"
+platforms: ['node']
+tests:
+  - id: loads-llamacpp
+    description: 'Loads a tool-capable model with modelType llamacpp-completion and tools: true'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*llamacpp-completion[\\s\\S]{0,200}tools\\s*:\\s*true"
+  - id: passes-tools
+    description: 'Passes a tools array to completion()'
+    pattern: "completion[\\s\\S]{0,300}tools\\s*[:,]"
+  - id: drains-tool-call-stream
+    description: 'Iterates result.toolCallStream and branches on evt.type === "toolCall"'
+    pattern: "toolCallStream[\\s\\S]{0,200}event\\.type|toolCallStream[\\s\\S]{0,200}evt\\.type"
+hints:
+  - "loadModel({ modelSrc, modelType: 'llamacpp-completion', modelConfig: { ctx_size: 4096, tools: true } }) brings in any tool-capable GGUF. The SDK infers the tool-call format from the model name/path. Qwen3.5/3.6, Gemma4, GPT-OSS, DeepSeek V3.2/V4, LFM all work without a toolDialect override."
+  - "completion({ modelId, history, stream: true, tools }) returns { tokenStream, toolCallStream, toolCalls, ... }. Drain tokenStream and toolCallStream in parallel with Promise.all; the token stream yields text, the tool-call stream yields { type: 'toolCall', call: { name, arguments } } events."
+  - "result.toolCalls is a Promise<ToolCall[]> that resolves after both streams drain. Use it to get the final list of calls and dispatch them."
+expectedOutput:
+  - "▸ Model loaded:"
+  - "▸ get_weather("
+  - "▸ Final tool calls:"
+---
+
+The tool-calls lesson hard-codes one dialect for one model family. The auto-dialect path is simpler: the SDK inspects the model's name or path at load time, matches it against a registry of known tool-call formats, and routes to the right parser automatically.
+
+Turn on the tool-call layer at load time. With `tools: true`, the SDK can choose a dialect from the GGUF metadata or model URL:
+
+```ts
+const modelId = await loadModel({
+  modelSrc,
+  modelType: "llamacpp-completion",
+  modelConfig: { ctx_size: 4096, tools: true },
+});
+```
+
+Supported families include Qwen3.5/3.6, Gemma4, GPT-OSS, DeepSeek V3.2/V4, and LFM. If the model name or path doesn't match a known dialect, the load still succeeds but tool calls fail at inference time. Pass a `toolDialect` override in `modelConfig` if you want to bypass the inference and pin a format explicitly.
+
+The model needs a contract before it can request a tool. Define each entry with a name, a description, and JSON Schema parameters:
+
+```ts
+const tools = [
+  {
+    name: "get_weather",
+    description: "Get the current weather for a city",
+    parameters: {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+    },
+  },
+  {
+    name: "get_horoscope",
+    description: "Get today's horoscope for a zodiac sign",
+    parameters: {
+      type: "object",
+      properties: { sign: { type: "string" } },
+      required: ["sign"],
+    },
+  },
+];
+```
+
+With the contract in place, pass `tools` beside the conversation history. The completion now exposes token and tool-call streams separately:
+
+```ts
+const result = completion({ modelId, history, stream: true, tools });
+```
+
+Those streams represent one response, so drain both before reading the final calls. `Promise.all` keeps neither stream waiting on the other. The parallel drain looks like so:
+
+```ts
+const tokensTask = (async () => {
+  for await (const token of result.tokenStream) {
+    process.stdout.write(token);
+  }
+})();
+
+const toolsTask = (async () => {
+  for await (const evt of result.toolCallStream) {
+    if (evt.type === "toolCall") {
+      console.log(`\n▸ ${evt.call.name}(${JSON.stringify(evt.call.arguments)})`);
+    }
+  }
+})();
+
+await Promise.all([tokensTask, toolsTask]);
+```
+
+Each `toolCall` event carries `evt.call.name` and `evt.call.arguments`. The arguments are already parsed into a JS object; pass them straight to the matching function.
+
+After both streams finish, read `result.toolCalls` for the complete call list and print the summary. The post-stream read is as follows:
+
+```ts
+const toolCalls: ToolCall[] = await result.toolCalls;
+
+console.log("\n\n▸ Final tool calls:");
+if (toolCalls.length > 0) {
+  for (const call of toolCalls) {
+    console.log(`▸ ${call.name}(${JSON.stringify(call.arguments)})`);
+  }
+} else {
+  console.log("▸ (none)");
+}
+
+await unloadModel({ modelId, clearStorage: false });
+```
+
+> Note: the auto-dialect logic is best-effort. If you bring a model that uses a non-standard tool-call format, the SDK falls through to no tool parsing and the `toolCallStream` stays empty. Pin the dialect explicitly in `modelConfig.toolDialect` when you bring your own model with a known format that the auto-detector misses.
+
+## Put it to the test
+
+1. Call `loadModel({ modelSrc, modelType: "llamacpp-completion", modelConfig: { ctx_size: 4096, tools: true } })` with a tool-capable GGUF path or URL.
+2. Define a `tools` array with `{ name, description, parameters }` entries. Call `completion({ modelId, history, stream: true, tools })`.
+3. Drain `tokenStream` (write each token to stdout) and `toolCallStream` (branch on `evt.type === "toolCall"` and log `▸ <name>(<arguments>)`) in parallel with `Promise.all`.
+4. Await `result.toolCalls` and log the final list. `unloadModel({ modelId, clearStorage: false })`.

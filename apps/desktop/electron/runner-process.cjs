@@ -5,9 +5,191 @@
 // registered by hand.
 
 const { createRequire } = require('node:module');
+const net = require('node:net');
 const path = require('node:path');
 
 const parentRequire = createRequire(__filename);
+
+// In-process MongoClient drop-in for the rag-mongodb lesson: runs
+// $vectorSearch/cosine similarity without a real Atlas server. Inlined as
+// source text (see mockPreamble) rather than written to disk, since
+// peer-exec ships the wrapped snippet to a device with no shared filesystem.
+const MONGO_MOCK_BODY = `
+  const STATE = { collections: new Map() };
+
+  function getCollection(dbName, collName) {
+    if (!STATE.collections.has(dbName)) STATE.collections.set(dbName, new Map());
+    const db = STATE.collections.get(dbName);
+    if (!db.has(collName)) db.set(collName, { docs: [], indexes: new Map() });
+    return db.get(collName);
+  }
+
+  function cosine(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      na += a[i] * a[i];
+      nb += b[i] * b[i];
+    }
+    const denom = Math.sqrt(na) * Math.sqrt(nb);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
+  class AggregateCursor {
+    constructor(stages, state) {
+      this._stages = stages;
+      this._state = state;
+    }
+    async toArray() {
+      let rows = this._state.docs.slice();
+      for (const stage of this._stages) {
+        if ('$vectorSearch' in stage) {
+          const v = stage.$vectorSearch;
+          const queryVec = v.queryVector;
+          const filter = v.filter || {};
+          const numCandidates = v.numCandidates ?? 100;
+          const limit = v.limit ?? 10;
+          rows = rows.filter((doc) => {
+            for (const [field, cond] of Object.entries(filter)) {
+              const expected = cond && typeof cond === 'object' && '$eq' in cond ? cond.$eq : cond;
+              if (doc[field] !== expected) return false;
+            }
+            return true;
+          });
+          const scored = rows.map((doc) => ({
+            doc,
+            score: typeof doc[v.path] === 'object' && queryVec
+              ? cosine(Array.from(doc[v.path]), Array.from(queryVec))
+              : 0,
+          }));
+          scored.sort((a, b) => b.score - a.score);
+          const top = scored.slice(0, Math.max(numCandidates, limit)).slice(0, limit);
+          rows = top.map(({ doc, score }) => ({ ...doc, score }));
+        } else if ('$project' in stage) {
+          const proj = stage.$project;
+          rows = rows.map((row) => {
+            const out = {};
+            for (const [field, include] of Object.entries(proj)) {
+              if (field === '_id' && include === 0) continue;
+              if (include === 1) out[field] = row[field];
+              else if (include && typeof include === 'object' && '$meta' in include) {
+                if (include.$meta === 'vectorSearchScore') out[field] = row.score;
+              }
+            }
+            return out;
+          });
+        }
+      }
+      return rows;
+    }
+  }
+
+  class Collection {
+    constructor(dbName, name) {
+      this._dbName = dbName;
+      this._name = name;
+    }
+    get _state() {
+      return getCollection(this._dbName, this._name);
+    }
+    async drop() {
+      if (STATE.collections.has(this._dbName)) {
+        STATE.collections.get(this._dbName).delete(this._name);
+      }
+    }
+    async insertMany(docs) {
+      const state = this._state;
+      for (const d of docs) state.docs.push({ ...d });
+      return { acknowledged: true, insertedCount: docs.length };
+    }
+    async createSearchIndex(spec) {
+      const state = this._state;
+      state.indexes.set(spec.name, { ...spec, queryable: true });
+      return spec.name;
+    }
+    listSearchIndexes(name) {
+      const state = this._state;
+      const idx = state.indexes.get(name);
+      const list = idx ? [{ name, queryable: idx.queryable ?? true }] : [];
+      return { toArray: async () => list };
+    }
+    aggregate(stages) {
+      return new AggregateCursor(stages, this._state);
+    }
+  }
+
+  class Db {
+    constructor(name) { this._name = name; }
+    collection(name) { return new Collection(this._name, name); }
+    async command() { return { ok: 1 }; }
+  }
+
+  class MongoClient {
+    constructor(_url) { this._url = _url; }
+    async connect() { return this; }
+    async close() {}
+    db(name) { return new Db(name); }
+  }
+`;
+
+// Per-lesson mock modules, matched against the lesson source and inlined by
+// mockPreamble in place of the real import.
+const MOCKS_BY_TRIGGER = [
+  {
+    trigger: /from\s+["']mongodb["']/,
+    spec: 'mongodb',
+    note: 'No MongoDB at localhost:27017; running against the in-process mock.',
+    realNote: 'MongoDB at localhost:27017 reachable; running against the real driver.',
+    exports: ['MongoClient'],
+    inlineSource: MONGO_MOCK_BODY,
+  },
+];
+
+function detectMockImports(source) {
+  for (const entry of MOCKS_BY_TRIGGER) {
+    if (entry.trigger.test(source)) return entry.spec;
+  }
+  return null;
+}
+
+function probeTcp(port, host = '127.0.0.1', deadlineMs = 250) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.setTimeout(deadlineMs, () => finish(false));
+    socket.connect(port, host);
+  });
+}
+
+/**
+ * @param {{ forceMock?: boolean }} opts `forceMock` skips the reachability
+ *   probe and always mocks — for peer-exec, where the probe would only ever
+ *   describe the initiating device's own localhost, not the peer's.
+ */
+async function decideMockImports(source, opts = {}) {
+  const spec = detectMockImports(source);
+  if (spec === null) {
+    return { mockImports: {}, note: null, real: false };
+  }
+  const entry = MOCKS_BY_TRIGGER.find((e) => e.spec === spec);
+  if (!opts.forceMock) {
+    const reachable = await probeTcp(27017);
+    if (reachable) {
+      return { mockImports: {}, note: entry.realNote, real: true };
+    }
+  }
+  return { mockImports: { [spec]: entry }, note: entry.note, real: false };
+}
 
 // Node builtins the course samples use, mapped to their Bare package, resolved
 // to absolute paths so the snippet needs no resolution root of its own.
@@ -36,6 +218,7 @@ const BARE_PLUGINS = [
   'tts-ggml',
   'ggml-ocr',
   'sdcpp-generation',
+  'audiogen-ggml',
   'ggml-vla',
   'ggml-classification',
 ];
@@ -85,6 +268,44 @@ function resolveAllImports(src, runtime) {
       return resolved === spec ? match : `${head}${quote}${resolved}${quote}`;
     },
   );
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Removes the named import for each mocked specifier and records the bound
+// names for mockPreamble() to rebind.
+function stripMockedImports(src, mockMap) {
+  let out = src;
+  const bindingsBySpec = {};
+  for (const spec of Object.keys(mockMap)) {
+    const re = new RegExp(
+      `^[ \\t]*import\\s+\\{([^}]+)\\}\\s+from\\s+(['"])${escapeRegExp(spec)}\\2;?[ \\t]*$`,
+      'm',
+    );
+    const m = out.match(re);
+    if (!m) continue;
+    bindingsBySpec[spec] = m[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => s.replace(/\s+as\s+/, ': '));
+    out = out.replace(re, '');
+  }
+  return { src: out, bindingsBySpec };
+}
+
+function mockPreamble(mockMap, bindingsBySpec) {
+  let out = '';
+  for (const [spec, entry] of Object.entries(mockMap)) {
+    const bindings = bindingsBySpec[spec];
+    if (!bindings || bindings.length === 0) continue;
+    const safeName = spec.replace(/[^a-zA-Z0-9_]/g, '_');
+    out += `const __academyMock_${safeName} = (() => {\n${entry.inlineSource}\n  return { ${entry.exports.join(', ')} };\n})();\n`;
+    out += `const { ${bindings.join(', ')} } = __academyMock_${safeName};\n`;
+  }
+  return out;
 }
 
 function stripForNode(src) {
@@ -272,6 +493,12 @@ function __academyIsTeardownNoise(err) {
   if (/\bis shutting down\b/i.test(m)) return true;
   if (/\bin-flight rpc\b/i.test(m)) return true;
   if (/^Worker exited mid-request\b/i.test(m)) return true;
+  // The SDK worker logs teardown chatter as plain text via console.error
+  // ("Transcription failed: Model was unloaded" and similar). Match the
+  // common patterns so the lesson panel doesn't turn red on a deliberate Stop.
+  if (/\bmodel was unloaded\b|\bmodel.*unloaded\b/i.test(m)) return true;
+  if (/\b(transcription|translation|tts|text-to-speech) failed\b/i.test(m)) return true;
+  if (/\bstream aborted\b|\bstream.*aborted\b/i.test(m)) return true;
   return false;
 }
 process.on('uncaughtException', (err) => {
@@ -315,24 +542,34 @@ function barePreamble(source) {
 }
 
 /**
- * @param {{ source: string, cwd: string, runtime?: 'node' | 'bare' }} opts
- *   `runtime` is where the result runs: Bare for peer-exec, Node locally.
+ * @param {{ source: string, cwd: string, runtime?: 'node' | 'bare', mockImports?: Record<string, object>, mockNote?: string|null }} opts
+ *   `mockImports` is the decision `decideMockImports` already made (this
+ *   function is sync and can't run that probe itself). `mockNote`, when set,
+ *   prints as a stderr line at the top of the wrap.
  * @returns {string}
  */
-function buildLesson({ source, cwd, runtime = 'node' }) {
+function buildLesson({ source, cwd, runtime = 'node', mockImports = {}, mockNote }) {
+  const { src: unmockedSource, bindingsBySpec } = stripMockedImports(source, mockImports);
   const resolvedSource = routeWritesThroughDedupe(
-    resolveFixturePaths(resolveAllImports(source, runtime), cwd),
+    resolveFixturePaths(resolveAllImports(unmockedSource, runtime), cwd),
   );
-  const importedNames = extractImportedNames(source);
+  const importedNames = extractImportedNames(unmockedSource);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
   const importLine = `import { ${namesForImport.join(', ')} } from ${JSON.stringify(parentRequire.resolve('@qvac/sdk'))};\n`;
   const hooked = hookLessonExit(stripForNode(resolvedSource));
   const runtimePreamble = runtime === 'bare' ? barePreamble(source) : '';
-  return `${runtimePreamble}${importLine}${dedupePreamble(runtime)}${hooked}\n`;
+  // stdout, not stderr: the lesson's own console.log lines are on stdout, and
+  // the two streams don't interleave in true chronological order once captured.
+  const noteLine = mockNote ? `console.log(${JSON.stringify('▸ ' + mockNote)});\n` : '';
+  const mockPre = mockPreamble(mockImports, bindingsBySpec);
+  return `${runtimePreamble}${importLine}${dedupePreamble(runtime)}${noteLine}${mockPre}${hooked}\n`;
 }
 
 module.exports = {
   buildLesson,
   BARE_BUILTINS,
   BARE_PLUGINS,
+  detectMockImports,
+  decideMockImports,
+  probeTcp,
 };

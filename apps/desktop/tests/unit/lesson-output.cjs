@@ -107,6 +107,12 @@ test('lesson-output - SDK-owned output dirs are pre-created on the host', (t) =>
   t.ok(fs.existsSync(path.join(dir, 'output', 'finetune', 'checkpoints')));
 });
 
+test('lesson-output - const outputDir with a chapter folder is pre-created', (t) => {
+  const dir = tmp(t);
+  precreateOutputDirs('const outputDir = "output/video-gen";\nfs.writeFileSync(path.join(outputDir, "x.avi"), b);', dir);
+  t.ok(fs.existsSync(path.join(dir, 'output', 'video-gen')));
+});
+
 test('lesson-output - a lesson cannot mkdir its way out of the workspace', (t) => {
   const dir = tmp(t);
   precreateOutputDirs('fs.writeFileSync("../../escaped/evil.png", x)', dir);

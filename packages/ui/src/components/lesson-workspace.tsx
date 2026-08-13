@@ -14,6 +14,7 @@ import {
   Play,
   RotateCcw,
   Square,
+  Sparkles,
   X,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -295,7 +296,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const [isAnimating, setIsAnimating] = useState(false);
   const [stopRequested, setStopRequested] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
-  const [hasShownModal, setHasShownModal] = useState(false);
+  const [chapterReady, setChapterReady] = useState(false);
   const [argvOverrides, setArgvOverrides] = useState<Record<string, string>>({});
   const [argvCaptured, setArgvCaptured] = useState<Record<string, string>>({});
   const [lastRemoteRun, setLastRemoteRun] = useState<
@@ -323,7 +324,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     pendingVerifyRef.current = null;
     setRunMode(isDesktop ? 'this-device' : 'simulated');
     setShowCompleteModal(false);
-    setHasShownModal(false);
+    setChapterReady(false);
   }, [data.startingCode, data.readOnly, isDesktop]);
 
   useEffect(() => {
@@ -496,16 +497,17 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
         }
       })();
     }
-    if (isLastLessonOfChapter && !hasShownModal) {
-      setShowCompleteModal(true);
-      setHasShownModal(true);
+    if (isLastLessonOfChapter) {
+      // Don't auto-pop the celebration modal; let the reader check the run
+      // first. The Next button shows it on click, and a small badge on the
+      // run output flags that the chapter is done.
+      setChapterReady(true);
     }
   }, [
     allPassed,
     isLastLessonOfChapter,
     data.currentChapter,
     data.currentLesson,
-    hasShownModal,
     markLessonComplete,
   ]);
 
@@ -714,7 +716,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                 },
               ];
         finalizeRunEntry(lines, 'ok');
-        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
       if (!selectedPeerId) {
@@ -727,7 +728,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           ],
           'ok',
         );
-        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
       // Remote run: same downstream path as this-device, with peerId set below.
@@ -930,17 +930,12 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     }
 
     finalizeRunEntry(producedOutput, runStatus);
-
-    if (isLastLessonOfChapter && !data.readOnly) {
-      check();
-    }
   }, [
     runMode,
     userCode,
     data.expectedOutput,
     data.tests,
     data.readOnly,
-    isLastLessonOfChapter,
     resolveArgv,
     isDesktop,
     check,
@@ -1081,13 +1076,34 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
               </span>
             )}
             {data.nextUrl ? (
-              <Link
-                href={data.nextUrl}
-                className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-3 py-2 text-sm text-canvas-foreground transition-colors hover:bg-canvas-muted"
+              chapterReady ? (
+                <button
+                  type="button"
+                  onClick={() => setShowCompleteModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                >
+                  <Sparkles className="size-4" />
+                  <span className="hidden sm:inline">Finish chapter</span>
+                  <ArrowRight className="size-4" />
+                </button>
+              ) : (
+                <Link
+                  href={data.nextUrl}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-3 py-2 text-sm text-canvas-foreground transition-colors hover:bg-canvas-muted"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ArrowRight className="size-4" />
+                </Link>
+              )
+            ) : chapterReady ? (
+              <button
+                type="button"
+                onClick={() => setShowCompleteModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 transition-colors hover:bg-emerald-500/20"
               >
-                <span className="hidden sm:inline">Next</span>
-                <ArrowRight className="size-4" />
-              </Link>
+                <Sparkles className="size-4" />
+                <span className="hidden sm:inline">Course complete</span>
+              </button>
             ) : null}
           </div>
         </nav>

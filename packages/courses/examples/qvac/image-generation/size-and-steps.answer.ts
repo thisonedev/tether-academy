@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { loadModel, FLUX_2_KLEIN_4B_Q4_0, QWEN3_4B_Q4_K_M, FLUX_2_KLEIN_4B_VAE, diffusion, unloadModel } from "@qvac/sdk";
 
 async function main() {
+  const lastLogged = new Map();
   const modelId = await loadModel({
     modelSrc: FLUX_2_KLEIN_4B_Q4_0,
     modelType: "sdcpp-generation",
@@ -9,9 +10,12 @@ async function main() {
       llmModelSrc: QWEN3_4B_Q4_K_M,
       vaeModelSrc: FLUX_2_KLEIN_4B_VAE,
     },
-    onProgress: ({ percentage, downloaded, total }) => {
+    onProgress: ({ percentage, downloaded, total, downloadKey }) => {
+      const bucket = Math.floor(percentage / 10) * 10;
+      if (lastLogged.get(downloadKey) === bucket) return;
+      lastLogged.set(downloadKey, bucket);
       const mb = (n) => (n / 1e6).toFixed(1);
-      console.log(`▸ Downloading ${percentage.toFixed(0)}% (${mb(downloaded)}/${mb(total)} MB)`);
+      console.log(`▸ Downloading ${bucket}% (${mb(downloaded)}/${mb(total)} MB)`);
     },
   });
 

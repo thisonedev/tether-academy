@@ -387,7 +387,7 @@ const CAPABILITIES = {
         '::1',
       ],
     },
-    exec: ['ffmpeg', 'ffplay'],
+    exec: ['ffmpeg', 'ffplay', 'ffprobe'],
     // Off by default, granted per run. A denied macOS capture returns
     // silence rather than an error, so a wrong default here is invisible.
     device: {

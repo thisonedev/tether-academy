@@ -1,6 +1,5 @@
 // Spawned via ELECTRON_RUN_AS_NODE so the CJS main can run an ESM .mts snippet.
-// Unsandboxed, unlike peer-exec: the source here is course content or the
-// user's own edit of it.
+// Unsandboxed (unlike peer-exec) — source is course content or the user's edit of it.
 const { spawn } = require('node:child_process');
 const { rm } = require('node:fs/promises');
 const { mkdtempSync, writeFileSync } = require('node:fs');
@@ -8,17 +7,25 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const path = require('node:path');
 
-const MAX_RUNTIME_MS = 5 * 60 * 1000;
+// Cold music-lesson runs pull ~3.3 GB of ACE-Step models (DiT alone is ~1.45 GB),
+// so on slow connections the load alone can take minutes. 10 minutes leaves
+// headroom for that without making intentional aborts feel laggy.
+const MAX_RUNTIME_MS = 10 * 60 * 1000;
+
+// Native inference ignores SIGTERM (see exec-host.cjs's SIGKILL_GRACE_MS), so
+// Stop needs a follow-up SIGKILL after this grace window.
+const SIGKILL_GRACE_MS = 3_000;
 
 // Electron-as-node (ELECTRON_RUN_AS_NODE) still claims its own Dock icon on
 // macOS unless told otherwise; see electron/dock-hide-shim.cjs.
 const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
 
-const { buildLesson } = require('./electron/runner-process.cjs');
+const { buildLesson, decideMockImports } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
-const { lessonCwd, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
+const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
 const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
+const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
@@ -36,14 +43,40 @@ function runExample({ source, language, argv, onChunk }) {
     };
   }
 
+  // Stop may land while the mock-vs-real probe is still pending; bail before
+  // spawning if so.
+  let aborted = false;
+  let abortHandler = () => false;
+  const promise = (async () => {
+    const { mockImports, note } = await decideMockImports(source);
+    if (aborted) {
+      return { ok: false, output: '[runner] aborted before spawn', stopRequested: true };
+    }
+    const spawned = runSpawn({ source, argv, mockImports, mockNote: note, onChunk, registerAbort: (fn) => { abortHandler = fn; } });
+    return spawned.promise;
+  })();
+  return {
+    promise,
+    abort: () => {
+      if (aborted) return false;
+      aborted = true;
+      return abortHandler();
+    },
+  };
+}
+
+function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort }) {
   const coursesDir = path.join(__dirname, '..', '..', 'packages', 'courses');
   // Lesson writes are relative, so the child runs in the writable workspace.
   const childCwd = lessonCwd();
   const outputsBefore = snapshotOutputs(childCwd);
-  const wrapped = buildLesson({ source, cwd: coursesDir });
+  const wrapped = buildLesson({ source, cwd: coursesDir, mockImports, mockNote });
   const dir = mkdtempSync(join(tmpdir(), 'ta-run-'));
   const file = join(dir, 'snippet.mts');
   const extraArgv = Array.isArray(argv) ? argv.filter((a) => typeof a === 'string') : [];
+  // Peer-exec precreates output dirs. Mirror that here so a local-run
+  // `output/<chapter>/file` doesn't ENOENT.
+  precreateOutputDirs(wrapped, childCwd);
 
   writeFileSync(file, wrapped, 'utf-8');
 
@@ -92,17 +125,15 @@ function runExample({ source, language, argv, onChunk }) {
     } catch {
       try {
         child.kill(signal);
-      } catch {
-        // already gone
-      }
+      } catch {}
     }
   };
 
+  let stopRequested = false;
   const promise = new Promise((resolve) => {
     // Same 1 MiB per-stream cap peer-exec uses.
     const output = createAccumulator();
     let killed = false;
-    let stopRequested = false;
     const settle = (value) => {
       if (stopRequested && typeof value === 'object' && value) {
         value.stopRequested = true;
@@ -115,8 +146,15 @@ function runExample({ source, language, argv, onChunk }) {
     }, MAX_RUNTIME_MS);
     // Strips the same model-loader/sandbox chatter the peer path strips.
     const stderrFilter = createNoiseFilter();
+    // Strips <think>...</think> reasoning traces from model output.
+    const thinkingFilter = createThinkingFilter();
+    // Collapses multi-space indent from util.inspect / JSON.stringify output
+    // so SDK log lines print with single-space separators.
+    const collapseIndent = (s) => s.replace(/[ \t]{2,}/g, ' ');
     const handleChunk = (stream) => (chunk) => {
-      const s = stream === 'stderr' ? stderrFilter.push(chunk.toString()) : chunk.toString();
+      let s = chunk.toString();
+      if (stream === 'stderr') s = stderrFilter.push(s);
+      else s = collapseIndent(thinkingFilter.push(s));
       if (!s) return;
       output.append(stream, s);
       if (onChunk) onChunk({ stream, data: s });
@@ -153,9 +191,7 @@ function runExample({ source, language, argv, onChunk }) {
       // Re-baseline in case this run downloaded a model.
       try {
         acceptAll();
-      } catch {
-        // advisory only
-      }
+      } catch {}
       const fullOutput = `${output.result('stdout')}${output.result('stderr')}`;
       if (killed)
         settle({
@@ -172,8 +208,13 @@ function runExample({ source, language, argv, onChunk }) {
     aborted = true;
     stopRequested = true;
     killGroup('SIGTERM');
+    const killTimer = setTimeout(() => {
+      if (child.exitCode === null && !child.killed) killGroup('SIGKILL');
+    }, SIGKILL_GRACE_MS);
+    if (typeof killTimer.unref === 'function') killTimer.unref();
     return true;
   };
+  registerAbort(abort);
 
   return { promise, abort };
 }

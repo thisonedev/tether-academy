@@ -24,11 +24,11 @@ expectedOutput:
   - "Not too controversial."
 ---
 
-The previous lesson decoded a neural file in one shot. This one feeds it chunk by chunk to simulate a live stream.
+The previous lesson decoded a neural file all at once. This one feeds it chunk by chunk to simulate a live stream.
 
 `bciTranscribeStream` opens a duplex session. Writing bytes into `session.write(chunk)` feeds the sliding window, and iterating the session reads the decoded text as the window advances. The session is fully streaming on both sides: writes don't have to wait for the previous decode to finish, and the reader doesn't have to wait for a full file.
 
-Loading the BCI model is the first step. The `whisperConfig` and `bciConfig` tell the engine which day of neural data we're transcribing. The load is the same shape as the previous lesson:
+Loading the BCI model is the first step. `whisperConfig` and `bciConfig` tell the engine which day of neural data we're transcribing:
 
 ```ts
 const modelId = await loadModel({
@@ -40,13 +40,13 @@ const modelId = await loadModel({
 });
 ```
 
-For this, `emit: "delta"` is the flag that switches the session from "emit the full transcript on every read" to "emit just the new text since the last read". The session open looks like this:
+The session needs one behavior change before it can stream useful updates. Set `emit: "delta"` so each read contains only the new tokens instead of replaying the full transcript. The session options would look like this:
 
 ```ts
 const session = await bciTranscribeStream({ modelId, emit: "delta" });
 ```
 
-Sequential read-then-write would deadlock, so the consume task runs as an IIFE in parallel with the write loop. Writes run in main flow, with `await consume` after `session.end()`. The 64KB-chunk pipeline looks like:
+Sequential read-then-write would deadlock, so the consume task runs as an IIFE in parallel with the write loop, with `await consume` after `session.end()`. Writing in 64KB chunks looks like:
 
 ```ts
 const consume = (async () => {

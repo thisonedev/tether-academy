@@ -69,11 +69,10 @@ function shortName(filename: string | null | undefined): string {
   return name.replace(/-/g, ' ');
 }
 
-// Parameter count in billions, parsed from a filename like
-// "Qwen3-0.6B-Q4_0.gguf" -> 0.6 or "Llama-3.2-1B-Instruct-Q4_0.gguf" -> 1.
-// Only a number immediately followed by `B` counts, so the `3.2` in a version
-// string and the `4` in a `Q4_K_M` quantisation tag are both ignored.
-// Unknown names sort last rather than collapsing to 0 and jumping the queue.
+// Extracts the billions parameter count from filenames like Qwen3-0.6B-Q4_0
+// → 0.6 or Llama-3.2-1B-Instruct-Q4_0 → 1. Only a number immediately
+// followed by `B` counts, so version strings and quantisation tags skip.
+// Unknown names sort last rather than collapsing to 0.
 function paramCountB(filename: string): number {
   const match = /(\d+(?:\.\d+)?)B(?![a-z])/i.exec(filename);
   return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
@@ -740,6 +739,7 @@ function SavedPreview({ file }: { file: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    let objectUrl: string | null = null;
     setSrc(null);
     setKind(null);
     if (!isPreviewable(file)) return () => {};
@@ -767,11 +767,23 @@ function SavedPreview({ file }: { file: string }) {
         } else if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
           setKind('audio');
         }
-        setSrc(`data:${res.mime};base64,${res.base64}`);
+        // Route audio/video through a blob URL so Chromium can stream-decode
+        // it and fire loadedmetadata — the data: URL path sometimes leaves the
+        // player stuck at 0:00 / 0:00. Images keep the data: URL; CSP forbids
+        // blobs for them anyway.
+        if (lower.endsWith('.wav') || lower.endsWith('.mp3') || lower.endsWith('.mp4') || lower.endsWith('.webm') || lower.endsWith('.mov') || lower.endsWith('.avi')) {
+          const bytes = Uint8Array.from(atob(res.base64), (c) => c.charCodeAt(0));
+          const blob = new Blob([bytes], { type: res.mime });
+          objectUrl = URL.createObjectURL(blob);
+          setSrc(objectUrl);
+        } else {
+          setSrc(`data:${res.mime};base64,${res.base64}`);
+        }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [file]);
 
@@ -780,9 +792,9 @@ function SavedPreview({ file }: { file: string }) {
     return <img src={src} alt="Saved by this run" className="max-h-72 max-w-full rounded" />;
   }
   if (kind === 'video') {
-    return <video src={src} controls className="max-h-72 max-w-full rounded" />;
+    return <video src={src} controls preload="metadata" className="max-h-72 max-w-full rounded" />;
   }
-  return <audio src={src} controls className="w-full" />;
+  return <audio src={src} controls preload="metadata" className="w-full" />;
 }
 
 function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {

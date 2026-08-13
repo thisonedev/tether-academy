@@ -1,0 +1,150 @@
+---
+title: "Stream microphone transcripts with Parakeet EOU"
+sourceExample: "packages/sdk/examples/asr/parakeet-microphone-stream.ts"
+platforms: ['node']
+tests:
+  - id: loads-eou-model
+    description: 'Loads PARAKEET_EOU_120M_V1_Q8_0'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*PARAKEET_EOU_120M_V1_Q8_0"
+  - id: opens-parakeet-session
+    description: 'Opens transcribeStream with parakeetStreamingConfig'
+    pattern: "transcribeStream\\s*\\(\\s*\\{[^}]*parakeetStreamingConfig"
+  - id: pipes-audio
+    description: 'Hooks ffmpeg stdout chunks into session.write'
+    pattern: "ffmpeg\\.stdout\\.on\\s*\\(\\s*['\"]data['\"]"
+  - id: handles-events
+    description: 'Branches on event.type to handle text vs endOfTurn'
+    pattern: "event\\.type\\s*===?\\s*['\"]endOfTurn['\"]"
+hints:
+  - "loadModel({ modelSrc: PARAKEET_EOU_120M_V1_Q8_0 }) pulls the Parakeet end-of-turn model. No modelType override; the addon routes from the GGUF metadata."
+  - "transcribeStream({ modelId, parakeetStreamingConfig: { chunkMs: 1000, emitPartials: true } }) opens the duplex session. parakeetStreamingConfig controls the chunk size and whether partial transcripts stream out before the EOU fires."
+  - "ffmpeg must be on PATH; gate on it with spawnSync('ffmpeg', ['-version']) at startup. startMicrophone({ sampleRate: 16000, format: 's16le' }) spawns it; pipe ffmpeg.stdout.on('data', (chunk) => { try { session.write(chunk) } catch {} }) into the session. The try/catch swallows the abort during teardown."
+expectedOutput:
+  - "▸ Listening... speak and pause to see transcripts. End-of-turn boundaries fire when the EOU model emits an <EOU> token."
+  - "hello there."
+  - "▸ [endOfTurn] turn boundary detected"
+---
+
+The Parakeet batch lesson waits for fixed-size windows before each `transcribe()` call. The streaming version of Parakeet uses a duplex `transcribeStream()` session instead, the same shape as the Whisper microphone lesson, but with a Parakeet-specific config and an end-of-turn model underneath.
+
+Use the EOU checkpoint when the stream itself should mark turn boundaries. Pair it with `parakeetStreamingConfig` so one session yields both `text` and `endOfTurn` events:
+
+```ts
+const modelId = await loadModel({ modelSrc: PARAKEET_EOU_120M_V1_Q8_0 });
+
+const session = await transcribeStream({
+  modelId,
+  parakeetStreamingConfig: {
+    chunkMs: 1000,
+    emitPartials: true,
+  },
+});
+```
+
+`chunkMs: 1000` is the model's lookahead window. The EOU checkpoint decides whether to commit the buffered audio as a turn or hold it open for more speech. `emitPartials: true` makes the session yield in-progress text chunks before the final commit; set it to `false` to wait until each turn closes.
+
+Keep the batch lesson's ffmpeg setup, but send each 16 kHz mono `s16le` chunk into the open streaming session:
+
+```ts
+ffmpeg.stdout.on("data", (chunk: Buffer) => {
+  try {
+    session.write(chunk);
+  } catch {
+    // session.write throws during teardown; swallow it.
+  }
+});
+```
+
+The try/catch around `session.write` ignores the abort when the worker is being torn down at shutdown. Without it, a Ctrl+C raises an unhandled stream error.
+
+Read the session as an async iterable and branch on its event type. Parakeet returns text events and turn-boundary events, unlike Whisper's `TranscribeSegment` objects. The model emits a stream of partials while the user is still talking; each partial is a candidate for the final text, and the next partial supersedes it. Writing each partial straight to `stdout` races the next one and the user sees interleaved characters with stray whitespace. Debounce the writes instead: hold each partial for a short window, replace it if a new one arrives, then write the latest version once. The EOU boundary flushes whatever is pending so the final partial of the turn lands on its own line before the `[endOfTurn]` marker. The tokenizer also leaves raw whitespace runs in partials, so collapse them before writing. The event loop looks as follows:
+
+```ts
+const PARTIAL_DEBOUNCE_MS = 80;
+let pendingText: string | null = null;
+let pendingTimer: NodeJS.Timeout | null = null;
+
+// Collapse runs of whitespace the tokenizer leaves in raw partials.
+function collapseSpacing(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+function flushPending() {
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  if (pendingText !== null) {
+    process.stdout.write(`\n${collapseSpacing(pendingText)}`);
+    pendingText = null;
+  }
+}
+
+function schedulePartial(text: string) {
+  const cleaned = collapseSpacing(text);
+  if (cleaned.length === 0) return;
+  pendingText = cleaned;
+  if (pendingTimer) return;
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    if (pendingText !== null) {
+      process.stdout.write(`\n${pendingText}`);
+      pendingText = null;
+    }
+  }, PARTIAL_DEBOUNCE_MS);
+}
+
+for await (const event of session) {
+  if (event.type === "text") {
+    const trimmed = event.text.trim();
+    if (trimmed.length > 0) {
+      schedulePartial(event.text);
+    }
+  } else if (event.type === "endOfTurn") {
+    flushPending();
+    console.log("\n▸ [endOfTurn] turn boundary detected");
+  }
+}
+```
+
+The `text` events arrive as partials (when `emitPartials: true`) or as the final committed string (when `false`). The `endOfTurn` event fires once per utterance the EOU model commits. Pair the two: schedule each partial on its own line, then log the turn boundary so the UI knows to insert a hard line break.
+
+A live microphone needs a single exit path. Let `cleanup()` kill ffmpeg, end the session, and unload the model when `SIGINT` or `SIGTERM` arrives. The SDK worker logs teardown chatter to stderr after `unloadModel` ("SDK is shutting down", "Transcription failed: Model was unloaded", and similar). Wrap `process.stderr.write` at the top of the script so every teardown path is covered, not just `cleanup()`:
+
+```ts
+// Drop the SDK's teardown chatter from stderr.
+const realStderrWrite = process.stderr.write.bind(process.stderr);
+(process.stderr.write as unknown) = (chunk: string | Buffer, ...rest: unknown[]) => {
+  const s = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  if (/SDK is shutting down|is shutting down soon/i.test(s)) return true;
+  if (/in-flight rpc|worker exited mid-request/i.test(s)) return true;
+  if (/model was unloaded|model.*unloaded/i.test(s)) return true;
+  if (/transcription failed|translation failed|tts failed|text-to-speech failed/i.test(s)) return true;
+  if (/stream aborted|stream.*aborted/i.test(s)) return true;
+  return realStderrWrite(chunk, ...(rest as []));
+};
+
+async function cleanup() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  ffmpeg.kill();
+  try { session.end(); } catch {}
+  await unloadModel({ modelId }).catch(() => {});
+  process.exit(0);
+}
+
+process.on("SIGINT", () => void cleanup());
+process.on("SIGTERM", () => void cleanup());
+```
+
+`session.end()` is fire-and-forget; it doesn't await drain. The stderr filter is global so anything the SDK writes during teardown is dropped. `unloadModel().catch(() => {})` swallows the `WorkerShutdownError` that fires on the in-flight RPC drain after Ctrl+C.
+
+> Note: Parakeet's streaming path does not yield standalone VAD events the way Whisper's session does. Voice-activity detection is folded into the EOU model, and turn boundaries come back as `endOfTurn` events instead. If you need explicit VAD events, pair `PARAKEET_EOU_120M_V1_Q8_0` with `VAD_SILERO_5_1_2` and the session will emit both.
+
+## Put it to the test
+
+1. Call `loadModel({ modelSrc: PARAKEET_EOU_120M_V1_Q8_0 })`. No `modelType` override.
+2. Gate on `ffmpeg` being on `PATH` at startup. Define the mic helper (`startMicrophone`) above `main`. Spawn ffmpeg with `startMicrophone({ sampleRate: 16000, format: "s16le" })`.
+3. Open `const session = await transcribeStream({ modelId, parakeetStreamingConfig: { chunkMs: 1000, emitPartials: true } })`. Pipe `ffmpeg.stdout.on("data", (chunk) => { try { session.write(chunk) } catch {} })` into the session.
+4. Iterate with `for await (const event of session)`. Branch on `event.type`: log `event.text` for `text` events, log `▸ [endOfTurn]` for `endOfTurn` events.
+5. Wire `cleanup()` to `SIGINT` and `SIGTERM`. `cleanup()` kills ffmpeg, ends the session, and unloads the model.

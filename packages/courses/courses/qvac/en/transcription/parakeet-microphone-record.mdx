@@ -1,0 +1,95 @@
+---
+title: "Transcribe the microphone live with Parakeet TDT"
+sourceExample: "packages/sdk/examples/asr/parakeet-microphone-record.ts"
+platforms: ['node']
+tests:
+  - id: loads-parakeet
+    description: 'Loads PARAKEET_TDT_0_6B_V3_Q8_0 with modelType parakeet-transcription'
+    pattern: "loadModel\\s*\\(\\s*\\{[^}]*PARAKEET_TDT_0_6B_V3_Q8_0[\\s\\S]*?parakeet-transcription"
+  - id: chunks-bytes
+    description: 'Chunks the mic buffer to a fixed byte size before transcribing'
+    pattern: "CHUNK_SIZE|audioChunk\\s*=\\s*buffer\\.subarray"
+  - id: calls-transcribe
+    description: 'Calls transcribe({ modelId, audioChunk }) per chunk'
+    pattern: "transcribe\\s*\\(\\s*\\{[^}]*modelId[^}]*audioChunk"
+  - id: gates-mic
+    description: 'Spawns ffmpeg via startMicrophone for s16le 16 kHz mono capture'
+    pattern: "startMicrophone\\s*\\(\\s*\\{[^}]*format\\s*:\\s*[`'\"]s16le"
+hints:
+  - "loadModel({ modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0, modelType: 'parakeet-transcription' }) pulls the Parakeet model in. No VAD, no language code."
+  - "Chunk the live mic bytes to a fixed window before each transcribe() call. 3 s at 16 kHz s16le mono = 16000 * 2 * 3 = 96000 bytes; slice buffer.subarray(0, CHUNK_SIZE) and shift the buffer forward each time you fire."
+  - "Gate on ffmpeg with spawnSync('ffmpeg', ['-version']) at startup. startMicrophone({ sampleRate: 16000, format: 's16le' }) spawns the OS default mic; pipe ffmpeg.stdout.on('data', (chunk) => { ... }) and accumulate until CHUNK_SIZE is reached, then call transcribe({ modelId, audioChunk }) inside an async IIFE guarded by a `processing` flag so overlapping chunks don't pile up."
+expectedOutput:
+  - "▸ Listening... speak and pause to see transcriptions."
+  - "▸ Ready. Speak into the mic."
+  - "The first sentence the user said."
+  - "A second sentence comes back from Parakeet."
+---
+
+The Whisper microphone lesson uses `transcribeStream()` for live captions. Parakeet TDT does not need a streaming session, so we'll batch it instead: drain the mic into a buffer, slice a 3 s window, and fire `transcribe()` on each slice. Each call returns a plain string.
+
+The trade is latency for simplicity. Whisper's streaming path runs a VAD and gives back partial segments; Parakeet's batch path waits for the full chunk to land before transcribing. For a fixed-window live transcription, batch is enough.
+
+Start with the same Parakeet addon used by the filesystem lesson. `modelType: "parakeet-transcription"` selects the engine, and this recording path needs no `modelConfig` overrides:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0,
+  modelType: "parakeet-transcription",
+});
+```
+
+The model is ready, so feed it live bytes. Capture 16 kHz mono `s16le` from the same ffmpeg child-process pattern as the Whisper lesson, then accumulate each stdout chunk as a frame. Here's how it would look like:
+
+```ts
+const CHUNK_SIZE = 16000 * 2 * 3; // 3 s at 16 kHz s16le mono
+
+ffmpeg.stdout.on("data", (chunk: Buffer) => {
+  buffer = Buffer.concat([buffer, chunk]);
+  if (buffer.length < CHUNK_SIZE || processing) return;
+
+  const audioChunk = buffer.subarray(0, CHUNK_SIZE);
+  buffer = buffer.subarray(CHUNK_SIZE);
+  processing = true;
+
+  void (async () => {
+    try {
+      const text = await transcribe({ modelId, audioChunk });
+      const trimmed = text.trim();
+      if (trimmed.length > 0 && !trimmed.includes("[No speech detected]")) {
+        console.log(trimmed);
+      }
+    } finally {
+      processing = false;
+    }
+  })();
+});
+```
+
+The `processing` flag prevents overlapping chunks. While one `transcribe()` is in flight, we drop new audio until it returns. The `Buffer.subarray` calls trim the consumed bytes off the front without copying. The `transcribe()` call returns a string, not an array, so we filter the empty string and the `[No speech detected]` placeholder before logging.
+
+Before leaving the microphone open, make missing ffmpeg an immediate error and put both the child process and model behind one `cleanup()` handler:
+
+```ts
+async function cleanup() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  ffmpeg.kill();
+  await unloadModel({ modelId }).catch(() => {});
+  process.exit(0);
+}
+
+process.on("SIGINT", () => void cleanup());
+process.on("SIGTERM", () => void cleanup());
+```
+
+`unloadModel().catch(() => {})` swallows the `WorkerShutdownError` that fires on the in-flight RPC drain after Ctrl+C. The `try / finally` around `transcribe()` flips `processing` back to `false` even on a thrown error, so a failed chunk doesn't leave the mic muted.
+
+> Note: chunking by bytes only works because the input format is fixed. If you switch to `f32le`, the byte-per-sample ratio changes, and 3 s of audio stops being `CHUNK_SIZE` bytes. Either recompute `BYTES_PER_SAMPLE` for the chosen format, or work in sample counts and multiply at the boundary.
+
+## Put it to the test
+
+1. Call `loadModel({ modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0, modelType: "parakeet-transcription" })`. No `modelConfig` overrides.
+2. Gate on `ffmpeg` being on `PATH` at startup. Define the mic helper (`startMicrophone`) above `main`. Spawn ffmpeg with `startMicrophone({ sampleRate: 16000, format: "s16le" })`.
+3. Hook `ffmpeg.stdout.on("data", ...)` to accumulate `CHUNK_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_DURATION_S` bytes, then slice `audioChunk = buffer.subarray(0, CHUNK_SIZE)` and call `await transcribe({ modelId, audioChunk })` inside an async IIFE guarded by a `processing` flag. Log the trimmed result if it's not empty or `[No speech detected]`.
+4. Wire `cleanup()` to `SIGINT` and `SIGTERM`. `cleanup()` kills ffmpeg, unloads the model, and exits.
