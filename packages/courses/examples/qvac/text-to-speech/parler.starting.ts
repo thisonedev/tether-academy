@@ -1,5 +1,3 @@
-// Starter template. Fill in the TODOs before running; the placeholder state will throw.
-// The .answer.ts file shows the completed version.
 import { loadModel, textToSpeech, unloadModel } from "@qvac/sdk";
 
 async function main() {
