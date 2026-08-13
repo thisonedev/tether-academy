@@ -1,0 +1,112 @@
+---
+title: "Synthesize speech with Parler-TTS"
+sourceExample: "packages/sdk/examples/tts/parler.ts"
+platforms: ['node']
+tests:
+  - id: sets-parler-engine
+    description: 'Sets modelConfig.ttsEngine to "parler"'
+    pattern: "ttsEngine\\s*:\\s*[`\"']parler[`\"']"
+  - id: uses-parler-url
+    description: 'Uses a Parler-TTS model source (registry constant or HF URL)'
+    pattern: "TTS_MINI_V1_EN_PARLER_TTS_Q8_0|parler[-_]tts|modelSrc\\s*:\\s*[`\"']https://huggingface"
+  - id: passes-emotion
+    description: 'Passes an emotion label to textToSpeech'
+    pattern: "emotion\\s*:\\s*[`\"'](?:happy|sad|angry|neutral|confused|curious|emphatic|sympathetic|calm)[`\"']"
+  - id: writes-wav
+    description: 'Wraps the audio buffer in a WAV header and writes it'
+    pattern: "writeFileSync|createWav"
+hints:
+  - "loadModel({ modelSrc: TTS_MINI_V1_EN_PARLER_TTS_Q8_0, modelConfig: { ttsEngine: 'parler', voice: 'Laura', seed: 42 } }) loads the Parler-TTS model. The SDK ships it as a registry constant with engine metadata, so no modelType override is needed. voice is required and selects one of the named speakers bundled with the checkpoint."
+  - "textToSpeech({ modelId, text: '...', inputType: 'text', stream: false, emotion: 'happy' }) returns a result with buffer (Promise<number[]>) holding 44.1 kHz mono PCM samples as plain numbers. The emotion label is Parler-specific; valid values are happy, sad, angry, neutral, confused, curious, emphatic, sympathetic, calm."
+  - "result.buffer is a plain number array, not a typed array. Wrap it with Int16Array.from() before treating it as Int16Array. Then wrap the 44-byte WAV header (RIFF / WAVE / fmt / data) around it and write with fs.writeFileSync to disk."
+expectedOutput:
+  - "▸ TTS complete. Total samples:"
+  - "▸ Saved parler-output.wav"
+  - "▸ Model unloaded"
+---
+
+The other TTS engines in this SDK pick the voice and let the model decide how it sounds. Parler-TTS adds a third input on top of text and voice: an emotion label. The engine renders that affect into the speech.
+
+Start by selecting Parler explicitly. The checkpoint and `ttsEngine: "parler"` choose its schema, and the required voice must come from the voices shipped with that checkpoint. The model configuration would look like so:
+
+```ts
+const modelId = await loadModel({
+  modelSrc: TTS_MINI_V1_EN_PARLER_TTS_Q8_0,
+  modelConfig: {
+    ttsEngine: "parler",
+    voice: "Laura",
+    seed: 42,
+  },
+});
+```
+
+`seed: 42` pins the noise so the same text + voice + emotion renders the same audio on every run.
+
+Reuse the text-to-speech call from the other engine lessons, then add Parler's `emotion` field to steer the delivery:
+
+```ts
+const result = textToSpeech({
+  modelId,
+  text: "Hey, how are you doing today?",
+  inputType: "text",
+  stream: false,
+  emotion: "happy",
+});
+
+const audioBuffer = Int16Array.from(await result.buffer);
+console.log(`▸ TTS complete. Total samples: ${audioBuffer.length}`);
+```
+
+Valid emotion labels are `happy`, `sad`, `angry`, `neutral`, `confused`, `curious`, `emphatic`, `sympathetic`, `calm`. The schema rejects anything outside the list.
+
+The returned buffer is raw 44.1 kHz mono PCM, not a playable container. Add the 44-byte WAV header before writing the file. The conversion would look like this:
+
+```ts
+function createWav(pcm: Int16Array, sampleRate: number): Uint8Array {
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const byteLength = pcm.byteLength;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const blockAlign = channels * (bitsPerSample / 8);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + byteLength, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, byteLength, true);
+
+  const wav = new Uint8Array(44 + byteLength);
+  wav.set(new Uint8Array(header), 0);
+  wav.set(new Uint8Array(pcm.buffer, pcm.byteOffset, byteLength), 44);
+  return wav;
+}
+
+const wav = createWav(audioBuffer, 44100);
+fs.writeFileSync("parler-output.wav", wav);
+```
+
+The header encodes the chunk size, the sample rate, the channel count, and the bit depth. The PCM bytes go straight after; no transformation, no resampling.
+
+The audio is on disk, so release the Parler model before the process exits:
+
+```ts
+await unloadModel({ modelId });
+```
+
+> Note: Parler outputs 44.1 kHz mono like Supertonic, not 24 kHz like Chatterbox. If you're building a voice pipeline that switches between engines, normalise the sample rate at the boundary so downstream consumers don't have to handle per-engine quirks.
+
+## Put it to the test
+
+1. Call `loadModel({ modelSrc: TTS_MINI_V1_EN_PARLER_TTS_Q8_0, modelConfig: { ttsEngine: "parler", voice: "Laura", seed: 42 } })`.
+2. Call `textToSpeech({ modelId, text, inputType: "text", stream: false, emotion: "happy" })` and `await result.buffer`.
+3. Convert `result.buffer` to an `Int16Array` with `Int16Array.from(...)`, wrap it in a 44-byte WAV header with `createWav(pcm, 44100)`, then `fs.writeFileSync("parler-output.wav", wav)`.
+4. `unloadModel({ modelId })`.
