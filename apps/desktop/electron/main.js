@@ -23,6 +23,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const { runExample } = require('../runner.cjs');
+const { createThinkingFilter } = require('./chat-thinking-filter.cjs');
 const {
   listModels,
   removeModel,
@@ -239,13 +240,16 @@ async function runAcademy(parsed, evt) {
     }
     // Capped so a run that prints in a loop cannot grow main-process memory unbounded.
     const collected = createAccumulator();
+    // Strips <think>...</think> reasoning traces from model output.
+    const thinkingFilter = createThinkingFilter();
     // Measured from the last output, not the start: a first run downloads the model
     // and streams progress for as long as that takes.
     let noteActivity = () => {};
     emitter.on('stdout', (data) => {
-      collected.append('stdout', data);
+      const cleaned = thinkingFilter.push(data.toString());
+      collected.append('stdout', cleaned);
       noteActivity();
-      sendChunk({ stream: 'stdout', data });
+      sendChunk({ stream: 'stdout', data: cleaned });
     });
     emitter.on('stderr', (data) => {
       collected.append('stderr', data);

@@ -21,6 +21,7 @@ const { createAccumulator } = require('./electron/run-accumulator.cjs');
 const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
 const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
+const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
@@ -118,8 +119,12 @@ function runExample({ source, language, argv, onChunk }) {
     }, MAX_RUNTIME_MS);
     // Strips the same model-loader/sandbox chatter the peer path strips.
     const stderrFilter = createNoiseFilter();
+    // Strips <think>...</think> reasoning traces from model output.
+    const thinkingFilter = createThinkingFilter();
     const handleChunk = (stream) => (chunk) => {
-      const s = stream === 'stderr' ? stderrFilter.push(chunk.toString()) : chunk.toString();
+      let s = chunk.toString();
+      if (stream === 'stderr') s = stderrFilter.push(s);
+      else s = thinkingFilter.push(s);
       if (!s) return;
       output.append(stream, s);
       if (onChunk) onChunk({ stream, data: s });
