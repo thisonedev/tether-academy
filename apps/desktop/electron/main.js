@@ -215,15 +215,17 @@ async function runAcademy(parsed, evt) {
     // Runtime must match the host: a Bare build rewrites node: imports to Bare
     // packages, which a Node child cannot load, and vice versa. Checked on the
     // wrapped source so the `mongodb`-mock rewrite counts as Bare-safe.
+    // Uses detectNodeOnly, not nodeOnlyImports: buildLesson resolves specifiers
+    // to absolute paths, which nodeOnlyImports skips as local files.
     // forceMock: true — a probe of this host says nothing about the peer's.
     const { buildLesson, decideMockImports } = require('./runner-process.cjs');
-    const { nodeOnlyImports } = await loadIpcValidation();
+    const { detectNodeOnly } = require('../workers/peer/exec-validate.cjs');
     const { mockImports, note } = await decideMockImports(parsed.source, { forceMock: true });
     let runtime;
     let wrapped;
     for (const candidate of ['bare', 'node']) {
       wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime: candidate, mockImports, mockNote: note });
-      if (nodeOnlyImports(wrapped).length === 0) {
+      if (detectNodeOnly(wrapped) === null) {
         runtime = candidate;
         break;
       }
