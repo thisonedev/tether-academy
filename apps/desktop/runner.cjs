@@ -121,10 +121,13 @@ function runExample({ source, language, argv, onChunk }) {
     const stderrFilter = createNoiseFilter();
     // Strips <think>...</think> reasoning traces from model output.
     const thinkingFilter = createThinkingFilter();
+    // Collapses multi-space indent from util.inspect / JSON.stringify output
+    // so SDK log lines print with single-space separators.
+    const collapseIndent = (s) => s.replace(/[ \t]{2,}/g, ' ');
     const handleChunk = (stream) => (chunk) => {
       let s = chunk.toString();
       if (stream === 'stderr') s = stderrFilter.push(s);
-      else s = thinkingFilter.push(s);
+      else s = collapseIndent(thinkingFilter.push(s));
       if (!s) return;
       output.append(stream, s);
       if (onChunk) onChunk({ stream, data: s });

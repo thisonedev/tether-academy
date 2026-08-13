@@ -242,11 +242,14 @@ async function runAcademy(parsed, evt) {
     const collected = createAccumulator();
     // Strips <think>...</think> reasoning traces from model output.
     const thinkingFilter = createThinkingFilter();
+    // Collapses multi-space indent from util.inspect / JSON.stringify output
+    // so SDK log lines print with single-space separators.
+    const collapseIndent = (s) => s.replace(/[ \t]{2,}/g, ' ');
     // Measured from the last output, not the start: a first run downloads the model
     // and streams progress for as long as that takes.
     let noteActivity = () => {};
     emitter.on('stdout', (data) => {
-      const cleaned = thinkingFilter.push(data.toString());
+      const cleaned = collapseIndent(thinkingFilter.push(data.toString()));
       collected.append('stdout', cleaned);
       noteActivity();
       sendChunk({ stream: 'stdout', data: cleaned });
