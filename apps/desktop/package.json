@@ -69,6 +69,7 @@
     "hypercore-crypto": "^3.7.0",
     "hyperswarm": "^4.14.0",
     "keet-identity-key": "^3.2.0",
+    "mongodb": "^6.10.0",
     "paparam": "^1.10.0",
     "pear-runtime": "^1.1.4",
     "protomux": "^3.0.0",

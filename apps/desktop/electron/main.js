@@ -213,10 +213,24 @@ async function runAcademy(parsed, evt) {
 
   if (parsed.peerId) {
     // Runtime must match the host: a Bare build rewrites node: imports to Bare
-    // packages, which a Node child cannot load, and vice versa.
+    // packages, which a Node child cannot load, and vice versa. Checked on the
+    // wrapped source so the `mongodb`-mock rewrite counts as Bare-safe.
+    // forceMock: true — a probe of this host says nothing about the peer's.
+    const { buildLesson, decideMockImports } = require('./runner-process.cjs');
     const { nodeOnlyImports } = await loadIpcValidation();
-    const runtime = nodeOnlyImports(parsed.source).length > 0 ? 'node' : 'bare';
-    const wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime });
+    const { mockImports, note } = await decideMockImports(parsed.source, { forceMock: true });
+    let runtime;
+    let wrapped;
+    for (const candidate of ['bare', 'node']) {
+      wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime: candidate, mockImports, mockNote: note });
+      if (nodeOnlyImports(wrapped).length === 0) {
+        runtime = candidate;
+        break;
+      }
+    }
+    if (runtime === undefined) {
+      runtime = 'node';
+    }
     let emitter;
     try {
       emitter = pearEnd.peer.exec({

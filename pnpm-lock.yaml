@@ -92,6 +92,9 @@ importers:
       keet-identity-key:
         specifier: ^3.2.0
         version: 3.2.0(bare-abort-controller@1.1.2)(bare-buffer@3.6.2)(bare-events@2.9.1(bare-abort-controller@1.1.2))(bare-url@2.4.6)
+      mongodb:
+        specifier: ^6.10.0
+        version: 6.21.0
       paparam:
         specifier: ^1.10.0
         version: 1.10.1

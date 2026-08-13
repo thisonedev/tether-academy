@@ -12,11 +12,15 @@ const path = require('node:path');
 // headroom for that without making intentional aborts feel laggy.
 const MAX_RUNTIME_MS = 10 * 60 * 1000;
 
+// Native inference ignores SIGTERM (see exec-host.cjs's SIGKILL_GRACE_MS), so
+// Stop needs a follow-up SIGKILL after this grace window.
+const SIGKILL_GRACE_MS = 3_000;
+
 // Electron-as-node (ELECTRON_RUN_AS_NODE) still claims its own Dock icon on
 // macOS unless told otherwise; see electron/dock-hide-shim.cjs.
 const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
 
-const { buildLesson } = require('./electron/runner-process.cjs');
+const { buildLesson, decideMockImports } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
 const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
 const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
@@ -39,11 +43,34 @@ function runExample({ source, language, argv, onChunk }) {
     };
   }
 
+  // Stop may land while the mock-vs-real probe is still pending; bail before
+  // spawning if so.
+  let aborted = false;
+  let abortHandler = () => false;
+  const promise = (async () => {
+    const { mockImports, note } = await decideMockImports(source);
+    if (aborted) {
+      return { ok: false, output: '[runner] aborted before spawn', stopRequested: true };
+    }
+    const spawned = runSpawn({ source, argv, mockImports, mockNote: note, onChunk, registerAbort: (fn) => { abortHandler = fn; } });
+    return spawned.promise;
+  })();
+  return {
+    promise,
+    abort: () => {
+      if (aborted) return false;
+      aborted = true;
+      return abortHandler();
+    },
+  };
+}
+
+function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort }) {
   const coursesDir = path.join(__dirname, '..', '..', 'packages', 'courses');
   // Lesson writes are relative, so the child runs in the writable workspace.
   const childCwd = lessonCwd();
   const outputsBefore = snapshotOutputs(childCwd);
-  const wrapped = buildLesson({ source, cwd: coursesDir });
+  const wrapped = buildLesson({ source, cwd: coursesDir, mockImports, mockNote });
   const dir = mkdtempSync(join(tmpdir(), 'ta-run-'));
   const file = join(dir, 'snippet.mts');
   const extraArgv = Array.isArray(argv) ? argv.filter((a) => typeof a === 'string') : [];
@@ -102,11 +129,11 @@ function runExample({ source, language, argv, onChunk }) {
     }
   };
 
+  let stopRequested = false;
   const promise = new Promise((resolve) => {
     // Same 1 MiB per-stream cap peer-exec uses.
     const output = createAccumulator();
     let killed = false;
-    let stopRequested = false;
     const settle = (value) => {
       if (stopRequested && typeof value === 'object' && value) {
         value.stopRequested = true;
@@ -181,8 +208,13 @@ function runExample({ source, language, argv, onChunk }) {
     aborted = true;
     stopRequested = true;
     killGroup('SIGTERM');
+    const killTimer = setTimeout(() => {
+      if (child.exitCode === null && !child.killed) killGroup('SIGKILL');
+    }, SIGKILL_GRACE_MS);
+    if (typeof killTimer.unref === 'function') killTimer.unref();
     return true;
   };
+  registerAbort(abort);
 
   return { promise, abort };
 }
