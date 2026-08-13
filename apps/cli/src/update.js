@@ -6,7 +6,6 @@ const { run } = require('./proc');
 const { runAction } = require('./electron-bridge');
 const { home, versionsDir, currentLink, backupsDir, repoUrl, branch } = require('./home');
 const { UpdateLock, describeHolder } = require('./update-lock');
-const { printSplash } = require('./splash');
 
 const KEEP_VERSIONS = 3;
 const KEEP_BACKUPS = 3;
@@ -15,6 +14,14 @@ const SMOKE_TIMEOUT_MS = 30_000;
 function currentSha() {
   try {
     return fs.readlinkSync(currentLink()).split(path.sep).pop();
+  } catch {
+    return null;
+  }
+}
+
+function semverFor(checkoutDir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(checkoutDir, 'package.json'), 'utf8')).version;
   } catch {
     return null;
   }
@@ -95,19 +102,19 @@ async function update() {
   }
 
   try {
-    printSplash('updating');
     const before = currentSha();
-    console.log(`-> Backing up profile data...`);
+    console.log(`→ Backing up profile data...`);
     const backup = await backupProgressData();
+    if (backup) console.log(`  ✓ Backed up profile data`);
 
     const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);
     fs.mkdirSync(versionsDir(), { recursive: true });
-    console.log('-> Fetching updates...');
+    console.log('→ Fetching updates...');
     run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir], { quiet: true });
     const sha = run('git', ['-C', tmpDir, 'rev-parse', 'HEAD'], { quiet: true }).stdout.trim();
 
     if (sha === before) {
-      console.log('Already up to date!');
+      console.log('✓ Already up to date!');
       fs.rmSync(tmpDir, { recursive: true, force: true });
       return;
     }
@@ -119,13 +126,17 @@ async function update() {
     // Everything below happens in `finalDir`, never touching `current`. A
     // failure at any point here leaves the live install completely untouched.
     try {
-      console.log('-> Installing dependencies...');
+      console.log('→ Installing dependencies...');
       run('pnpm', ['install'], { cwd: finalDir, quiet: true });
-      console.log('-> Building (this can take a minute or two)...');
+      console.log('  ✓ Dependencies installed');
+      console.log('→ Building (this can take a minute or two)...');
       run('pnpm', ['build'], { cwd: finalDir, quiet: true });
-      console.log('-> Validating build...');
+      console.log('  ✓ Build complete');
+      console.log('→ Validating build...');
       run('pnpm', ['--filter', '@tether-academy/desktop', 'typecheck'], { cwd: finalDir, quiet: true });
+      console.log('  ✓ Build validated');
       await smokeTest(finalDir);
+      console.log('  ✓ Smoke test passed');
     } catch (err) {
       console.error(`Update validation failed: ${err.message}`);
       console.error(`The current install (${before ?? 'none'}) was left untouched.`);
@@ -136,10 +147,21 @@ async function update() {
 
     const tmpLink = `${currentLink()}.tmp-${process.pid}`;
     fs.symlinkSync(finalDir, tmpLink, 'dir');
+    const beforeDir = currentLink();
     fs.renameSync(tmpLink, currentLink()); // atomic swap
 
     pruneOldVersions(sha);
-    console.log(`\nUpdated ${before ? `${before.slice(0, 12)} -> ` : ''}${sha.slice(0, 12)}.`);
+    const beforeVersion = before ? semverFor(beforeDir) : null;
+    const afterVersion = semverFor(finalDir);
+    let summary;
+    if (beforeVersion && afterVersion && beforeVersion !== afterVersion) {
+      summary = `${beforeVersion} → ${afterVersion}`;
+    } else if (afterVersion) {
+      summary = afterVersion;
+    } else {
+      summary = `${before ? `${before.slice(0, 12)} → ` : ''}${sha.slice(0, 12)}`;
+    }
+    console.log(`\n✓ Updated ${summary}.`);
   } finally {
     lock.release();
   }

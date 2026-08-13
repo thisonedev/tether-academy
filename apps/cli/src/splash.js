@@ -25,4 +25,15 @@ function printSplash(subtitle) {
   console.log();
 }
 
-module.exports = { printSplash };
+function printBanner(text) {
+  if (!process.stdout.isTTY) return;
+  console.log();
+  for (const line of HEXAGON) {
+    console.log(GREEN + line + RESET);
+  }
+  console.log();
+  console.log(`${BOLD}⬡ ${text}${RESET}`);
+  console.log();
+}
+
+module.exports = { printSplash, printBanner };
