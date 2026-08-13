@@ -716,7 +716,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                 },
               ];
         finalizeRunEntry(lines, 'ok');
-        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
       if (!selectedPeerId) {
@@ -729,7 +728,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           ],
           'ok',
         );
-        if (isLastLessonOfChapter && !data.readOnly) check();
         return;
       }
       // Remote run: same downstream path as this-device, with peerId set below.
@@ -932,17 +930,12 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     }
 
     finalizeRunEntry(producedOutput, runStatus);
-
-    if (isLastLessonOfChapter && !data.readOnly) {
-      check();
-    }
   }, [
     runMode,
     userCode,
     data.expectedOutput,
     data.tests,
     data.readOnly,
-    isLastLessonOfChapter,
     resolveArgv,
     isDesktop,
     check,
