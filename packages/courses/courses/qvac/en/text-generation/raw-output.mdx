@@ -23,6 +23,29 @@ expectedOutput:
   - "▸ Raw output: {\"name\":\"Alice\",\"age\":30,\"occupation\":\"data engineer\"}"
   - "▸ Parsed: { name: 'Alice', age: 30, occupation: 'data engineer' }"
   - "▸ Schema-valid: true"
+questions:
+  - id: json-object-vs-json-schema
+    text: "What's the difference between `responseFormat: { type: 'json_object' }` and `type: 'json_schema'`?"
+    answers:
+      - text: "They're equivalent; json_schema is just a longer way to write json_object."
+        correct: false
+        feedback: "Check what small models are shown emitting with json_object above."
+      - text: "json_object only guarantees some valid JSON object with unpinned keys, while json_schema forces the exact keys, types, and required fields through the grammar engine."
+        correct: true
+      - text: "json_object is stricter because it validates against a schema automatically."
+        correct: false
+        feedback: "Think about which of the two options actually pins the keys."
+  - id: what-as-const-changes
+    text: "What does `as const` on `PERSON_SCHEMA` actually change?"
+    answers:
+      - text: "Nothing at runtime. It only changes how TypeScript narrows the type. The JSON Schema sent to the grammar engine is the same either way."
+        correct: true
+      - text: "It makes the schema's properties read-only, so completion() throws if a field gets mutated."
+        correct: false
+        feedback: "Check what the closing Note says the runtime actually does with this."
+      - text: "It marks every field in the schema as required for the grammar engine."
+        correct: false
+        feedback: "Look at where `required` is actually set in the schema, separate from `as const`."
 ---
 
 Sometimes we want structured data. `responseFormat` is the option: tell the model the shape we need, and the engine enforces it through grammar.
@@ -88,9 +111,3 @@ console.log("\n▸ Parsed:", parsed);
 The result is already valid JSON. No regex, no repair, no fallback parsing.
 
 > Note: `as const` on the schema tells TypeScript the value is read-only. The runtime API does not care, but the type system is happier this way.
-
-## Put it to the test
-
-1. Define a `PERSON_SCHEMA` (or similar) as a `const` JSON Schema object with `type: "object"`, `properties`, and `required`.
-2. Pass `responseFormat: { type: "json_schema", json_schema: { name: "person", schema: PERSON_SCHEMA } }` to `completion()`, stream `contentDelta` events.
-3. After the loop, `await result.final` and `JSON.parse(final.contentText)`. Log the parsed object.

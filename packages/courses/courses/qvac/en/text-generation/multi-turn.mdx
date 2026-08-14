@@ -24,6 +24,29 @@ expectedOutput:
   - "Paris."
   - "▸ Turn 2: user asks: And which river runs through it?"
   - "The Seine."
+questions:
+  - id: why-second-call-has-context
+    text: "Why does the second `completion()` request see the first turn's answer?"
+    answers:
+      - text: "completion() automatically remembers every prior request made with the same modelId."
+        correct: false
+        feedback: "Check what completion() remembers on its own from one call to the next."
+      - text: "The assistant's reply was pushed into the same history array before the second request, and that array is passed to completion() again."
+        correct: true
+      - text: "The SDK stores conversation state on the server between requests."
+        correct: false
+        feedback: "Think about what's actually responsible for carrying the conversation forward."
+  - id: what-if-you-forget-to-push
+    text: "What happens if you forget to push the assistant's reply into `history` before the next turn?"
+    answers:
+      - text: "The next call's input has only the user turns. A follow-up about the assistant's last answer has nothing to go on."
+        correct: true
+      - text: "The SDK throws an error because history is out of sync."
+        correct: false
+        feedback: "Re-read the Note about what happens if you forget to push the assistant turn."
+      - text: "completion() automatically re-inserts the missing assistant turn from its own cache."
+        correct: false
+        feedback: "Check whether the SDK does any of this bookkeeping automatically."
 ---
 
 The previous lesson made a single `completion()` call. This one uses it for a real conversation.
@@ -64,9 +87,3 @@ The same `history` reference goes into both calls. The first question and the mo
 > Note: `captureThinking: true` is the option the first lesson in this chapter introduced. It splits the model's `thinking` from the answer, so `contentDelta` only carries the final response. The thinking tokens arrive on `thinkingDelta` events too; we ignore them here so the runner's OUTPUT panel stays clean. The first lesson in this chapter shows how to surface the thinking when you want it.
 
 > Note: the SDK never mutates `history` for you. If you forget to push the assistant turn back, the next call's input contains only the user turns and the prior assistant answer is gone, so a follow-up that asks about it gets an answer without that context.
-
-## Put it to the test
-
-1. Above the first `completion()` call, declare `const history: Array<{ role: string; content: string }> = [{ role: "user", content: "What is the capital of France?" }]`.
-2. After awaiting the first response, push `{ role: "assistant", content: text1 }`, then push `{ role: "user", content: "And which river runs through it?" }`.
-3. Call `completion()` a second time, passing the same `history`, and stream its `contentDelta` tokens to stdout.

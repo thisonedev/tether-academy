@@ -19,6 +19,40 @@ hints:
 expectedOutput:
   - "▸ First turn: 24 tokens, 2.31s"
   - "▸ Second turn (cached): 12 tokens, 0.84s"
+questions:
+  - id: what-kvcache-saves
+    text: "What does `kvCache: true` actually save between the first and second `completion()` runs?"
+    answers:
+      - text: "The model's internal state after the first turn, so the second one skips reprocessing the prior turns."
+        correct: true
+      - text: "The full text of the conversation, as a compressed transcript."
+        correct: false
+        feedback: "Check what gets saved after the first turn."
+      - text: "The response time from the first request, to show a progress estimate for the second."
+        correct: false
+        feedback: "Think about what kvCache is meant to skip on the second run."
+  - id: what-happens-on-prefix-change
+    text: "What happens if the `history` prefix changes before the second `completion()` call?"
+    answers:
+      - text: "The SDK automatically updates the saved cache to match the new prefix."
+        correct: false
+        feedback: "Re-read what happens when the prefix doesn't match."
+      - text: "The cache key no longer matches, so it misses and falls back to a full reprocess."
+        correct: true
+      - text: "completion() throws an error because the cache is now invalid."
+        correct: false
+        feedback: "Check whether this is described as a failure or a fallback."
+  - id: why-cacheableassistantcontent
+    text: "Why push `final1.cacheableAssistantContent` into history instead of `final1.contentText`?"
+    answers:
+      - text: "cacheableAssistantContent is the exact text the cache was saved against, which keeps the prefix intact for the next cache hit."
+        correct: true
+      - text: "contentText and cacheableAssistantContent are always identical, so either one works."
+        correct: false
+        feedback: "Check when it's safe to fall back to contentText."
+      - text: "contentText isn't available until after the second call finishes."
+        correct: false
+        feedback: "Think about when contentText actually becomes available relative to the second turn."
 ---
 
 Generating the first response from a multi-turn history reprocesses every prior turn. The KV cache is the trick that skips that: save the model's internal state after the first turn, then replay it on the second turn with only the new user message.
@@ -57,9 +91,3 @@ console.log(`▸ Second (cached): ${JSON.stringify(final2.stats)}`);
 The two `stats` objects show the speedup. On a long-running assistant with thousands of prior turns, the cached path runs ten to a hundred times faster than the cold path.
 
 > Note: `final.cacheableAssistantContent` is the exact text the cache was saved against. Fall back to `final.contentText` if it's `undefined` (some models and tool-using flows don't expose it).
-
-## Put it to the test
-
-1. Build a `history` array starting with one user turn. First turn: call `completion({ modelId, history, kvCache: true, stream: true })`, drain `tokenStream`, then `await r1.final`.
-2. Push the assistant turn back into `history` using `final1.cacheableAssistantContent ?? final1.contentText`. Append the next user turn.
-3. Second turn: call `completion()` again with the same `history` and `kvCache: true`. Compare `final.stats` for both runs.

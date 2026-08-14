@@ -24,6 +24,29 @@ expectedOutput:
   - "Paris is the capital of France."
   - "▸ Final contentText: Paris is the capital of France."
   - "▸ Stop reason: eos"
+questions:
+  - id: tokenstream-vs-events
+    text: "What's the difference between `result.tokenStream` and `result.events`?"
+    answers:
+      - text: "tokenStream is a flat string iterable with no type information, while events dispatches each item by type (content, thinking, tool call, stats, done)."
+        correct: true
+      - text: "They carry completely different content; events doesn't include the model's text at all."
+        correct: false
+        feedback: "Check whether events actually drops the model's text, or just labels it."
+      - text: "tokenStream is only available after captureThinking is enabled."
+        correct: false
+        feedback: "Think about whether tokenStream's availability depends on captureThinking at all."
+  - id: what-final-returns
+    text: "What does `result.final` resolve to that the events loop already provided one token at a time?"
+    answers:
+      - text: "Different data than the events streamed, calculated fresh after the stream ends."
+        correct: false
+        feedback: "Check whether final introduces new information or just aggregates what the events already carried."
+      - text: "The same information (contentText, thinkingText, toolCalls, stats, stopReason) joined into one aggregated object, read once instead of assembled incrementally."
+        correct: true
+      - text: "Only the stopReason; the other fields still have to be built up from the events loop."
+        correct: false
+        feedback: "Look at the full list of fields named on final above."
 ---
 
 Earlier chapters used `result.tokenStream`, a flat string iterable of the model's text. The stream gives you raw output, but content and thinking look identical without type tags. The `events` surface dispatches each by type, so they arrive separately.
@@ -67,8 +90,3 @@ console.log(`▸ Stop reason: ${final.stopReason}`);
 ```
 
 > Note: `tokenStream` still works for simple cases, but new code should consume `events` for streaming and `final.contentText` for the aggregated result.
-
-## Put it to the test
-
-1. Iterate `result.events` with a `for await ... { switch (event.type) { ... } }`. Cases: `contentDelta` writes `event.text` to stdout, `thinkingDelta` writes `[think] ${event.text}` to stderr, `completionDone` breaks.
-2. After the loop, `await result.final` and log `final.contentText` and `final.stopReason`.
