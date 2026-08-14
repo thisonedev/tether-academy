@@ -22,6 +22,7 @@
     "verify:tests": "pnpm --filter @academy/courses verify:tests",
     "verify:tests:check": "pnpm --filter @academy/courses verify:tests:check",
     "check:yaml": "pnpm --filter @academy/courses check:yaml",
+    "generate-scorm": "node packages/scorm/scripts/build.mjs",
     "dev:desktop": "pnpm --filter @tether-academy/desktop dev",
     "start:desktop": "pnpm --filter @tether-academy/desktop start",
     "capture:desktop": "pnpm --filter @tether-academy/desktop capture",
@@ -30,5 +31,8 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "monaco-editor": "^0.56.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
   }
 }
