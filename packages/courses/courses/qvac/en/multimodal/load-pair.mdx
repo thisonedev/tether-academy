@@ -15,6 +15,29 @@ hints:
   - "The pair has to match. SmolVLM2 pairs with mmproj-smolvlm2. You can't mix an LLM constant with a different model's projector."
 expectedOutput:
   - "multimodalId: model-7f2a"
+questions:
+  - id: why-two-files
+    text: "Why does loading a multimodal model need two files instead of one?"
+    answers:
+      - text: "The language model handles text, but a separate projection model is needed to turn an image into the same vector space the language model operates in."
+        correct: true
+      - text: "One file holds the model weights and the other is a config file with hyperparameters."
+        correct: false
+        feedback: "Check what the concept paragraph says the second file actually does with an image."
+      - text: "The second file is a backup in case the first model fails to load."
+        correct: false
+        feedback: "Re-read what projectionModelSrc actually does, not just that it's present."
+  - id: mismatched-projector
+    text: "What happens if SMOLVLM2_500M_MULTIMODAL_Q8_0 is paired with the wrong mmproj projector?"
+    answers:
+      - text: "It produces nonsense output, since the two constants have to come from the same model family."
+        correct: true
+      - text: "loadModel throws immediately and refuses to load the mismatched pair."
+        correct: false
+        feedback: "Check what the Note says actually happens with a mismatched pair, not whether it's blocked."
+      - text: "The SDK automatically substitutes the matching projector."
+        correct: false
+        feedback: "Think about whether the SDK validates or corrects this pairing at all."
 ---
 
 We're starting a new chapter on multimodal models, and we're going to load a model that takes images alongside text.
@@ -38,8 +61,3 @@ console.log("multimodalId:", multimodalId);
 `multimodalId` looks the same as every other `modelId`. The difference is hidden in how `completion()` will treat `attachments` on history messages, which we'll see in the next two lessons.
 
 > Note: the two constants have to come from the same model family. `SMOLVLM2` pairs with `MMPROJ_SMOLVLM2`. Mixing an LLM constant with the wrong projector (or a non-multimodal LLM with a projector) produces nonsense output.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelSrc` set to the LLM constant and `modelConfig.projectionModelSrc` set to the matching mmproj.
-2. Store the result in a variable called `multimodalId` and log it.

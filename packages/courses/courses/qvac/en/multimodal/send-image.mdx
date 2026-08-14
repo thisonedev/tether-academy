@@ -21,6 +21,29 @@ hints:
   - "Same completion({ modelId, history, stream }) shape as text. One extra field on the message."
 expectedOutput:
   - "(streamed completion output describing the image)"
+questions:
+  - id: what-attachments-path-needs
+    text: "What does attachments[].path need to point the model at an image?"
+    answers:
+      - text: "A string path to a real file already on disk; the SDK reads the bytes itself."
+        correct: true
+      - text: "A base64-encoded string of the image data."
+        correct: false
+        feedback: "Check what type the concept paragraph gives for the path field."
+      - text: "A URL the SDK downloads before the completion runs."
+        correct: false
+        feedback: "Re-read what attachments[].path actually points to."
+  - id: completion-without-projector
+    text: "What happens if a multimodal completion runs without the projector loaded?"
+    answers:
+      - text: "The model silently ignores the attachment and responds as if no image was attached."
+        correct: true
+      - text: "completion() throws an error before the call can run."
+        correct: false
+        feedback: "Check what the Note describes happening: a thrown error, or a silent behavior change."
+      - text: "The SDK loads the projector automatically the moment it's needed."
+        correct: false
+        feedback: "Think about whether the projector loads on its own, or has to be there from the start."
 ---
 
 Now that we have a multimodal model in memory, it's time to give it an image.
@@ -53,9 +76,3 @@ process.stdout.write("\n");
 The path is relative to where we run the script from, or absolute if we prefer. We drop any local `.jpg` or `.png` at the path we pass in.
 
 > Note: the multimodal model needs the projector loaded (from the previous lesson) to interpret the image. If `projectionModelSrc` was missing, the model would silently ignore the attachment and respond as if no image was attached.
-
-## Put it to the test
-
-1. Add `attachments: [{ path: "./examples/qvac/multimodal/input/cat.png" }]` to the user message in `history`.
-2. Call `completion({ modelId: multimodalId, history, stream: true })`.
-3. Iterate `result.tokenStream` and write each token to stdout.
