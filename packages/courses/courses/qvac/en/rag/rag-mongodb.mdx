@@ -27,38 +27,38 @@ expectedOutput:
   - "1. (Score:"
 questions:
   - id: why-poll-queryable
-    text: "Why does the code above poll collection.listSearchIndexes until queryable is true before running the search?"
+    text: "What has to be true about the search index before running a query against it?"
     answers:
-      - text: "Index creation is asynchronous, so an early search could run against an index that isn't ready yet."
+      - text: "It has to report `queryable`; index creation is asynchronous, so an early search could run against an index that isn't ready yet."
         correct: true
-      - text: "MongoDB requires a fixed delay after every insertMany before any query can run."
+      - text: "It has to contain at least one document, checked after the search runs."
+        correct: false
+        feedback: "Think about what `listSearchIndexes` reports on, and whether checking after the fact would catch a stale index."
+      - text: "Nothing specific; `MongoDB` requires a fixed delay after every `insertMany` regardless of index state."
         correct: false
         feedback: "Check what specifically is being polled for: an index state, or a fixed timer."
-      - text: "Polling retries the embed() call until it succeeds."
-        correct: false
-        feedback: "Think about what listSearchIndexes actually reports on: embeddings, or index status."
   - id: what-category-filter-changes
-    text: "What does the filter: { category: { $eq: category } } clause change about the search results?"
+    text: "What does the `filter: { category: { $eq: category } }` clause change about the search results?"
     answers:
+      - text: "It replaces the vector search with an exact text match on category."
+        correct: false
+        feedback: "Re-read whether $`vectorSearch` still runs when this filter is present."
       - text: "It restricts candidates to the requested category, instead of ranking across the whole collection."
         correct: true
       - text: "It sorts the results by category alphabetically."
         correct: false
         feedback: "Check whether this clause changes the ordering, or changes which documents are eligible at all."
-      - text: "It replaces the vector search with an exact text match on category."
-        correct: false
-        feedback: "Re-read whether $vectorSearch still runs when this filter is present."
   - id: where-scoring-happens
-    text: "Where does the actual similarity scoring for $vectorSearch happen?"
+    text: "Where does the actual similarity scoring for $`vectorSearch` happen?"
     answers:
-      - text: "On the MongoDB server; the SDK only produces the query embedding."
+      - text: "On the `MongoDB` server; the SDK only produces the query embedding."
         correct: true
-      - text: "In the SDK, right after embed() returns the query vector."
-        correct: false
-        feedback: "Check what the Note says runs server-side versus what the SDK contributes."
-      - text: "Wherever the aggregate() results get logged, after they're returned."
+      - text: "Wherever the aggregate() results are logged, after they're returned."
         correct: false
         feedback: "Think about what a single aggregation round-trip implies about where the work happens."
+      - text: "In the SDK, right after `embed()` returns the query vector."
+        correct: false
+        feedback: "Check what runs server-side versus what the SDK contributes."
 ---
 
 The QVAC RAG chapter has a built-in workspace model, but production setups usually want their own vector store. MongoDB Atlas Vector Search is one option: the SDK contributes the embedding model, and you write the storage layer and the scan.

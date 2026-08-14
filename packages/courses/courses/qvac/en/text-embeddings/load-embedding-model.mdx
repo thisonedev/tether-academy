@@ -17,36 +17,36 @@ expectedOutput:
   - "modelId: model-7f2a"
 questions:
   - id: what-changes-for-embedding-model
-    text: "What actually changes when you load `GTE_LARGE_FP16` instead of an LLM like in chapter 1?"
+    text: "What changes when you load `GTE_LARGE_FP16` instead of an LLM?"
     answers:
-      - text: "Only the constant passed to modelSrc; the function, its options, and the returned modelId all stay the same."
+      - text: "`loadModel` returns the embedding itself instead of a `modelId`."
+        correct: false
+        feedback: "Think about what `loadModel` is responsible for versus what a separate embed invocation would do."
+      - text: "Only the constant passed to `modelSrc`; the function, its options, and the returned `modelId` all stay the same."
         correct: true
-      - text: "You invoke a separate loadEmbeddingModel function instead of loadModel."
+      - text: "You invoke a separate `loadEmbeddingModel` function instead of `loadModel`."
         correct: false
         feedback: "Check which function name the concept paragraph uses for loading an embedding model."
-      - text: "loadModel returns the embedding itself instead of a modelId."
-        correct: false
-        feedback: "Think about what loadModel is responsible for versus what a separate embed invocation would do."
   - id: why-save-modelid
-    text: "Why does it matter to hold on to modelId after this load, instead of loading a fresh model for each embedding request?"
+    text: "What is the primary advantage of holding on to the `modelId` that `loadModel` returns, instead of loading a fresh model for each embedding request?"
     answers:
-      - text: "Reusing the same modelId avoids reloading the model, which would waste time on every request."
+      - text: "Every embed invocation loads its own model automatically, so `modelId` is just for logging."
+        correct: false
+        feedback: "Consider what `modelId` is passed into on a later request."
+      - text: "Reusing the same `modelId` avoids reloading the model, which would waste time on every request."
         correct: true
-      - text: "modelId expires after one use and has to be regenerated for the next request."
+      - text: "`modelId` expires after one use and has to be regenerated for the next request."
         correct: false
         feedback: "Re-read what the concept paragraph says about reloading between requests."
-      - text: "Every embed invocation loads its own model automatically, so modelId is just for logging."
-        correct: false
-        feedback: "Consider what modelId is actually passed into on a later request."
 ---
 
 Now that we've finished chapter 2, we're going to start a new line of work: embeddings.
 
 An embedding is a list of numbers that encodes what a piece of text means. A real model maps a sentence to a 1024-number array. We can't read the numbers, but we can compare them with math, and two similar sentences end up with similar numbers.
 
-The QVAC SDK loads embedding models through the same `loadModel()` we used in chapter 1. Same import, same options, same `modelId` pattern. The only thing that changes is the constant we hand to `modelSrc`.
+The QVAC SDK loads embedding models through the same `loadModel()` used for LLMs, with identical imports, options, and `modelId` pattern. The only thing that changes is the constant handed to `modelSrc`.
 
-`GTE_LARGE_FP16` is the SDK's embedding model. The call is the same `loadModel` from chapter 1, with `GTE_LARGE_FP16` in `modelSrc`:
+`GTE_LARGE_FP16` is the SDK's embedding model constant. Pass it to `modelSrc`:
 
 ```ts
 const modelId = await loadModel({ modelSrc: GTE_LARGE_FP16 });

@@ -18,29 +18,29 @@ tests:
 hints:
   - "Add attachments: [{ path: '/abs/path/to/image.png' }] to any user message. The file must exist on disk."
   - "The path is a string, not a buffer. The SDK reads the file for you."
-  - "Same completion({ modelId, history, stream }) shape as text. One extra field on the message."
+  - "Same completion({ modelId, history, stream }) call as text. One extra field on the message."
 expectedOutput:
   - "(streamed completion output describing the image)"
 questions:
   - id: what-attachments-path-needs
-    text: "What does attachments[].path need to point the model at an image?"
+    text: "What does `attachments[].path` need to contain to point the model at an image?"
     answers:
-      - text: "A string path to a real file already on disk; the SDK reads the bytes itself."
-        correct: true
+      - text: "A URL the SDK downloads before the completion runs."
+        correct: false
+        feedback: "Re-read what attachments[].path points to."
       - text: "A base64-encoded string of the image data."
         correct: false
         feedback: "Check what type the concept paragraph gives for the path field."
-      - text: "A URL the SDK downloads before the completion runs."
-        correct: false
-        feedback: "Re-read what attachments[].path actually points to."
+      - text: "A string path to a real file already on disk; the SDK reads the bytes itself."
+        correct: true
   - id: completion-without-projector
     text: "What happens if a multimodal completion runs without the projector loaded?"
     answers:
+      - text: "`completion()` throws an error before the call can run."
+        correct: false
+        feedback: "Check what actually happens: a thrown error, or a silent behavior change."
       - text: "The model silently ignores the attachment and responds as if no image was attached."
         correct: true
-      - text: "completion() throws an error before the call can run."
-        correct: false
-        feedback: "Check what the Note describes happening: a thrown error, or a silent behavior change."
       - text: "The SDK loads the projector automatically the moment it's needed."
         correct: false
         feedback: "Think about whether the projector loads on its own, or has to be there from the start."
@@ -50,7 +50,7 @@ Now that we have a multimodal model in memory, it's time to give it an image.
 
 The multimodal model takes a prompt that includes an image as well as text. We tell it what to look at by attaching an image file to a user message. `attachments[].path` is the only thing it needs, a string path to a real file on disk.
 
-We don't swap the chat shape. We add `attachments` to the existing `history` message we already use for text completions.
+We don't swap the chat structure. We add `attachments` to the existing `history` message we already use for text completions.
 
 `attachments[].path` is the multimodal engine's API surface. The SDK reads the bytes; the projector runs before the message reaches the LLM. Adding an attachment to a user message is one extra field on the existing history entry:
 
@@ -58,7 +58,7 @@ We don't swap the chat shape. We add `attachments` to the existing `history` mes
 attachments: [{ path: "./examples/qvac/multimodal/input/cat.png" }],
 ```
 
-Calling `completion()` with the same shape as a text call is what kicks off the multimodal run. The only new field is the `attachments` array on the user message:
+Calling `completion()` the same way as a text call is what kicks off the multimodal run. The only new field is the `attachments` array on the user message:
 
 ```ts
 const result = completion({ modelId: multimodalId, history, stream: true });

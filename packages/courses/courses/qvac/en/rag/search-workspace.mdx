@@ -22,27 +22,27 @@ expectedOutput:
   - "Score 0.6234: Deep learning uses neural networks..."
 questions:
   - id: why-modelid-must-match
-    text: "Why must the modelId passed to ragSearch match the one used at ingest time?"
+    text: "What has to be true about the `modelId` passed to `ragSearch` for similarity scores to mean anything?"
     answers:
-      - text: "Different models put vectors in different spaces, so cross-model similarity scores are meaningless."
-        correct: true
-      - text: "ragSearch throws an error whenever the modelId doesn't match exactly."
-        correct: false
-        feedback: "Check what the concept paragraph says happens when the models differ, rather than assuming it throws."
-      - text: "modelId only affects how fast the search runs, not the scores."
+      - text: "`modelId` only affects how fast the search runs; the scores stay unaffected."
         correct: false
         feedback: "Re-read what determines whether a similarity score means anything at all."
-  - id: what-topk-controls
-    text: "What does topK actually control on a ragSearch call?"
-    answers:
-      - text: "How many results come back, not a minimum score a result has to clear."
+      - text: "Different models put vectors in different spaces, so cross-model similarity scores are meaningless."
         correct: true
+      - text: "`ragSearch` throws an error whenever the `modelId` doesn't match exactly."
+        correct: false
+        feedback: "Check what the concept paragraph says happens when the models differ, rather than assuming it throws."
+  - id: what-topk-controls
+    text: "What does `topK` control on a `ragSearch` call?"
+    answers:
       - text: "The minimum similarity score a result must clear to be included."
         correct: false
-        feedback: "Check the Note about what topK is, and what it explicitly isn't."
+        feedback: "Check what `topK` actually controls, and what it doesn't."
+      - text: "How many results come back; there's no minimum score a result has to clear."
+        correct: true
       - text: "How many documents get re-embedded before the search runs."
         correct: false
-        feedback: "Think about which lesson's call is responsible for embedding, and which one just queries."
+        feedback: "Think about whether `ragSearch` embeds new documents, or just queries what's already indexed."
 ---
 
 We've got a workspace from the previous lesson. This lesson queries it.
@@ -55,7 +55,7 @@ Result is sorted by score descending. The call passes all four options to `ragSe
 const results = await ragSearch({
   modelId,
   workspace,
-  query: "How do I make a peanut butter sandwich?",
+  query,
   topK: 3,
 });
 ```

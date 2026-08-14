@@ -18,30 +18,30 @@ expectedOutput:
   - "embeddings to the workspace"
 questions:
   - id: why-carry-embeddingmodelid
-    text: "Why does each RagEmbeddedDoc need to carry its own embeddingModelId?"
+    text: "What is a key consideration behind giving each `RagEmbeddedDoc` its own `embeddingModelId`?"
     answers:
-      - text: "It has to match the modelId passed to ragSearch later, since similarity scores only make sense between vectors from the same model."
-        correct: true
-      - text: "embeddingModelId picks which model ragSaveEmbeddings uses to compute the vector."
-        correct: false
-        feedback: "Check whether ragSaveEmbeddings computes anything, or just stores what it's handed."
       - text: "It's a display label with no effect on search results."
         correct: false
         feedback: "Think about what would go wrong if a search compared vectors from two different models as if they matched."
-  - id: why-no-model-needed
-    text: "Why doesn't ragSaveEmbeddings need a loaded model to run?"
-    answers:
-      - text: "It's a storage-only operation; the embeddings are already computed before this call runs."
+      - text: "`embeddingModelId` picks which model `ragSaveEmbeddings` uses to compute the vector."
+        correct: false
+        feedback: "Check whether `ragSaveEmbeddings` computes anything, or just stores what it's handed."
+      - text: "It has to match the `modelId` passed to `ragSearch` later, since similarity scores only make sense between vectors from the same model."
         correct: true
+  - id: why-no-model-needed
+    text: "What lets `ragSaveEmbeddings` skip loading a model?"
+    answers:
       - text: "It computes a cheaper approximate embedding without a full model."
         correct: false
-        feedback: "Re-read what the Note says ragSaveEmbeddings actually needs a model for."
-      - text: "It borrows whatever model ragSearch loaded earlier in the process."
+        feedback: "Re-read whether `ragSaveEmbeddings` needs a model at all, or just stores precomputed vectors."
+      - text: "It's a storage-only operation; the embeddings are already computed before this call runs."
+        correct: true
+      - text: "It borrows whatever model `ragSearch` loaded earlier in the process."
         correct: false
         feedback: "Think about the order these calls run in, and whether a search has even happened yet."
 ---
 
-Now that we have the chunk-embed-save pipeline running through `ragIngest`, we're going to break it apart. This lesson covers the third step on its own: saving vectors you've already computed.
+Now that we have the chunk-embed-save sequence running through `ragIngest`, we're going to break it apart. This lesson covers the third step on its own: saving vectors you've already computed.
 
 `ragSaveEmbeddings` stores one `RagEmbeddedDoc` per entry. Each one has an `id`, the `content`, the `embedding` (a `number[]`), and the `embeddingModelId` that produced the vector. The `embeddingModelId` must match the `modelId` passed to `ragSearch` later, since cosine similarity is only meaningful between vectors from the same model.
 

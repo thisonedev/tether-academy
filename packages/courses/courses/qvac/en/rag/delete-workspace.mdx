@@ -18,27 +18,27 @@ expectedOutput:
   - "▸ Deleted workspace"
 questions:
   - id: what-flips-close-to-delete
-    text: "What's the one thing that flips ragCloseWorkspace from closing a workspace to deleting it?"
+    text: "What makes `ragCloseWorkspace` delete a workspace instead of just closing it?"
     answers:
-      - text: "Passing deleteOnClose: true instead of omitting it or passing false."
-        correct: true
-      - text: "Calling a different function, ragDeleteWorkspace, instead of ragCloseWorkspace."
-        correct: false
-        feedback: "Check which function name the code example actually calls."
-      - text: "Calling ragIngest a second time against the same workspace name."
+      - text: "Calling `ragIngest` a second time against the same workspace name."
         correct: false
         feedback: "Think about which call above is responsible for removal, not for creation."
+      - text: "Calling a different function, `ragDeleteWorkspace`, instead of `ragCloseWorkspace`."
+        correct: false
+        feedback: "Check which function name the code example calls."
+      - text: "Passing `deleteOnClose: true` instead of omitting it or passing false."
+        correct: true
   - id: ingest-after-delete
-    text: "After ragCloseWorkspace runs with deleteOnClose: true, what happens if ragIngest targets that same workspace name again?"
+    text: "After `ragCloseWorkspace` runs with `deleteOnClose: true`, what happens if `ragIngest` targets that same workspace name again?"
     answers:
       - text: "It starts fresh, since the workspace and its on-disk data are gone."
         correct: true
-      - text: "It throws, because the name is now permanently reserved."
-        correct: false
-        feedback: "Check what the concept paragraph says the next ragIngest against that name does."
       - text: "It restores the deleted documents from a backup."
         correct: false
-        feedback: "Think about whether ragCloseWorkspace with deleteOnClose keeps any copy of the data around."
+        feedback: "Think about whether `ragCloseWorkspace` with `deleteOnClose` keeps any copy of the data around."
+      - text: "It throws, because the name is now permanently reserved."
+        correct: false
+        feedback: "Check what the concept paragraph says the next `ragIngest` against that name does."
 ---
 
 The list-and-close lesson closed the in-memory handle for a workspace without touching the data. This one drops the workspace and its on-disk files in one call.

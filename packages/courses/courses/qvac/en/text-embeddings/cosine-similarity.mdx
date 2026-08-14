@@ -24,43 +24,43 @@ expectedOutput:
   - "Similarity between texts 1 and 3 (different topics): 0.1138"
 questions:
   - id: why-skip-magnitude-division
-    text: "Strictly speaking, cosine similarity divides the dot product by the vectors' magnitudes. Why does cosineSimilarity here skip that step?"
+    text: "Cosine similarity divides the dot product by the vectors' magnitudes. Why does `cosineSimilarity` skip that division?"
     answers:
-      - text: "For normalized embeddings like these, the plain dot product alone already ranks similarity correctly."
-        correct: true
       - text: "Dividing by magnitude would throw a division-by-zero error on these particular vectors."
         correct: false
-        feedback: "Check what the concept paragraph says about GTE_LARGE_FP16's vectors before assuming this is about an error."
+        feedback: "Check what the concept paragraph says about `GTE_LARGE_FP16`'s vectors before assuming this is about an error."
+      - text: "For normalized embeddings like these, the plain dot product alone already ranks similarity correctly."
+        correct: true
       - text: "Dot product and cosine similarity are unrelated formulas, so there's nothing to divide."
         correct: false
-        feedback: "Re-read how cosineSimilarity is described relative to the dot product."
+        feedback: "Re-read how `cosineSimilarity` is described relative to the dot product."
   - id: what-higher-score-means
-    text: "What does a higher cosineSimilarity score between two embeddings indicate?"
+    text: "What does a higher `cosineSimilarity` score between two embeddings indicate?"
     answers:
-      - text: "The two pieces of text are closer in meaning."
-        correct: true
       - text: "The two pieces of text are more different in meaning."
         correct: false
         feedback: "Think about which pair, the fox sentences or the Python one, is expected to score higher."
       - text: "The two input strings are closer in length."
         correct: false
-        feedback: "Consider what embed() actually encodes about a piece of text."
+        feedback: "Consider what `embed()` encodes about a piece of text."
+      - text: "The two pieces of text are closer in meaning."
+        correct: true
   - id: purpose-of-nullish-coalescing
     text: "What's the purpose of `?? 0` in `(vecA[i] ?? 0) * (vecB[i] ?? 0)`?"
     answers:
-      - text: "It's a defensive fallback for an undefined array index, even though that never happens with these vectors."
-        correct: true
       - text: "It clamps negative numbers in the vector to zero."
         correct: false
-        feedback: "Think about what the ?? operator checks for, versus what a clamp like Math.max would do."
+        feedback: "Think about what the ?? operator checks for, versus what a clamp like `Math.max` would do."
+      - text: "It's a defensive fallback for an undefined array index, even though that never happens with these vectors."
+        correct: true
       - text: "It's required because a dot product can't be negative."
         correct: false
-        feedback: "Check the stated output range for cosineSimilarity in the concept paragraph."
+        feedback: "Check the stated output range for `cosineSimilarity` in the concept paragraph."
 ---
 
 We have three vectors from the last lesson. Two are similar (both about a fox). One is unrelated (Python). The comparison is one short function: multiply matching positions, then sum them up.
 
-For two 1024-dimension vectors `a` and `b`, the similarity is the dot product `Σᵢ aᵢ × bᵢ`, the sum of the element-wise products. That's all there is to it. Strictly speaking, "cosine similarity" divides by the magnitudes too, but for normalized embeddings like these the dot product alone ranks similarity correctly.
+For two 1024-dimension vectors `a` and `b`, the similarity is the dot product `Σᵢ aᵢ × bᵢ`, the sum of the element-wise products. That's all there is to it. "Cosine similarity" divides by the magnitudes too, but for normalized embeddings like these the dot product alone ranks similarity correctly.
 
 Same batch `embed()` call, but destructured into three named variables. Different destructuring pattern than the previous lesson, since we want three separate handles rather than one batch. You would destructure like so:
 
@@ -80,7 +80,7 @@ function cosineSimilarity(vecA: number[], vecB: number[]) {
 }
 ```
 
-With `cosineSimilarity` defined, the side-by-side compare is two calls and two logs. The similar pair (text 1 vs text 2) should land high (around 0.87), the unrelated one (text 1 vs text 3) should land low (around 0.11). `.toFixed(4)` rounds each to four decimal places so the numbers stay readable on one line:
+With `cosineSimilarity` defined, the side-by-side compare is two calls and two logs. The similar pair (text 1 vs text 2) should score high (around 0.87), the unrelated one (text 1 vs text 3) should score low (around 0.11). `.toFixed(4)` rounds each to four decimal places so the numbers stay readable on one line:
 
 ```ts
 const similarity1 = cosineSimilarity(emb1, emb2);

@@ -24,38 +24,38 @@ expectedOutput:
   - "Best match: How to assemble a peanut butter and jelly sandwich (score 0.8412)"
 questions:
   - id: why-corpus-and-query-embed-separately
-    text: "Why does this search embed the corpus in one batch request, but embed the query with its own separate invocation?"
+    text: "What's the difference between how the corpus and the query are embedded?"
     answers:
       - text: "The corpus is fixed and can be embedded once up front, while the query is a new value produced by each search."
         correct: true
-      - text: "A single embed() invocation can't accept a corpus and a query of different lengths."
-        correct: false
-        feedback: "Check whether a length mismatch is really what separates these two requests."
       - text: "Batch requests only support a fixed number of items at a time."
         correct: false
         feedback: "Think about how many documents got embedded in the batch request just above."
+      - text: "A single `embed()` invocation can't accept a corpus and a query of different lengths."
+        correct: false
+        feedback: "Check whether a length mismatch is really what separates these two requests."
   - id: bestscore-initial-value
-    text: "Why does the loop start `bestScore` at `-Infinity` instead of `0`?"
+    text: "Does starting `bestScore` at `0` instead of `-Infinity` change the search result?"
     answers:
-      - text: "It guarantees the very first score computed replaces it, even if every real score turned out to be negative."
+      - text: "Yes: a real score that turns out negative could lose to the starting `0` and never replace it."
         correct: true
-      - text: "0 would cause a division-by-zero error the first time the loop runs."
+      - text: "No: every real score still replaces `bestScore` no matter what it starts at."
+        correct: false
+        feedback: "Think about what happens if every real score in the corpus turns out to be negative."
+      - text: "No: the loop throws a division-by-zero error before comparison even matters, regardless of the starting value."
         correct: false
         feedback: "Check whether the loop body does any division at all."
-      - text: "-Infinity is a required return value for cosineSimilarity."
-        correct: false
-        feedback: "Look at what bestScore is used for versus what cosineSimilarity itself returns."
   - id: brute-force-scaling
     text: "As the corpus grows from three documents to a few hundred, what does this loop keep doing?"
     answers:
-      - text: "It still scores every corpus vector against the query one at a time, so the work grows with the corpus size."
-        correct: true
       - text: "It automatically switches to an on-disk index once the corpus passes some size."
         correct: false
         feedback: "Check whether there's any branching logic in the loop tied to corpus size."
       - text: "It stops working past a fixed number of documents."
         correct: false
-        feedback: "Consider what, if anything, actually bounds how many times this loop can run."
+        feedback: "Consider what, if anything, bounds how many times this loop can run."
+      - text: "It still scores every corpus vector against the query one at a time, so the work grows with the corpus size."
+        correct: true
 ---
 
 Now that we can compare two vectors, we're ready to build the smallest useful search engine.
@@ -68,13 +68,13 @@ Embedding the whole corpus in a single batch call would look like this:
 const { embedding: corpusVectors } = await embed({ modelId, text: corpus });
 ```
 
-The query goes through the same `embed()` API with a single string, destructured into a one-element array. Note that the `[queryEmbedding]` array-destructure is the same shape as the corpus destructure, just with a single element:
+The query goes through the same `embed()` API with a single string, destructured into a one-element array. Note that the `[queryEmbedding]` array-destructure follows the same pattern as the corpus destructure, just with a single element:
 
 ```ts
 const { embedding: [queryEmbedding] } = await embed({ modelId, text: query });
 ```
 
-With the corpus and query both embedded, the loop does the work: it scores every corpus vector against the query, tracks the highest score, and remembers its index. The whole thing runs in O(N·d), N cosine calls each touching d dimensions, and that's the brute-force shape `ragSearch` generalizes to a vector index for O(log N):
+With the corpus and query both embedded, the loop does the work: it scores every corpus vector against the query, tracks the highest score, and remembers its index. The whole thing runs in O(N·d), N cosine calls each touching d dimensions, and that's the brute-force approach `ragSearch` generalizes to a vector index for O(log N):
 
 ```ts
 let bestIdx = 0;

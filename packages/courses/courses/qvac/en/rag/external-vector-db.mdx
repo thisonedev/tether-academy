@@ -25,43 +25,43 @@ expectedOutput:
   - "distance:"
 questions:
   - id: sdk-vs-your-code
-    text: "In this pipeline, which pieces come from the QVAC SDK, and which are written directly against SQLite-Vector?"
+    text: "Which of the following is NOT provided by the QVAC SDK?"
     answers:
-      - text: "The SDK provides embed() and loadModel(); the schema, the index calls, and the scan query are all written against SQLite-Vector directly."
+      - text: "`vector_init`"
         correct: true
-      - text: "The SDK provides the whole pipeline, including the SQL schema and the scan query."
+      - text: "`embed()`"
         correct: false
-        feedback: "Check which functions in the code blocks come from an SDK import versus a raw db.exec call."
-      - text: "SQLite-Vector supplies the embedding model, and the SDK only stores the vectors."
+        feedback: "Check which library computes the embedding vector."
+      - text: "`loadModel()`"
         correct: false
-        feedback: "Think about which library actually turns text into a vector here."
+        feedback: "Check which library loads the embedding model into memory."
   - id: why-dimension-must-match
-    text: "Why does the dimension passed to vector_init have to match the embedding model exactly?"
+    text: "What is a key consideration behind matching the dimension passed to `vector_init` exactly to the embedding model?"
     answers:
       - text: "A mismatch fails at index time, since the index is built to expect vectors of a fixed width."
         correct: true
       - text: "A mismatched vector is silently padded with zeros to fit."
         correct: false
         feedback: "Re-read what the concept paragraph says happens on a dimension mismatch."
-      - text: "The dimension only affects query speed, not correctness."
+      - text: "The dimension only affects query speed; correctness isn't part of what it changes."
         correct: false
-        feedback: "Check where the concept paragraph says a mismatch actually shows up."
+        feedback: "Check where the concept paragraph says a mismatch shows up."
   - id: scan-without-init
-    text: "What happens to vector_quantize_scan if vector_init and vector_quantize were never called first?"
+    text: "Where do `vector_init` and `vector_quantize` have to be called relative to `vector_quantize_scan`?"
     answers:
-      - text: "The scan falls back to byte-level comparison instead of a real vector search."
+      - text: "After it, to verify the scan's results retroactively."
+        correct: false
+        feedback: "Check what the concept paragraph says a scan falls back to when these steps haven't run yet."
+      - text: "The scan calls `vector_init` itself automatically if needed, regardless of when you call it."
+        correct: false
+        feedback: "Think about whether any of these steps run implicitly, or whether each has to be called explicitly."
+      - text: "Before it; without them, the scan falls back to byte-level comparison instead of a real vector search."
         correct: true
-      - text: "The scan throws immediately and refuses to run."
-        correct: false
-        feedback: "Check what the concept paragraph says a scan falls back to, not whether it errors."
-      - text: "The scan calls vector_init itself automatically before running."
-        correct: false
-        feedback: "Think about whether any step here runs implicitly, or whether each has to be called explicitly."
 ---
 
 Production setups usually want their own vector store. SQLite-Vector is the example here, but the same pattern works with pgvector, LanceDB, or ChromaDB. This lesson builds the RAG flow against SQLite-Vector directly: `embed()` and `loadModel()` are the SDK pieces, the storage layer and the scan are yours.
 
-The pipeline has four steps: initialize SQLite with the vector extension, embed + insert each document, register and quantize the index, then run a top-K scan on the query.
+The process has four steps: initialize SQLite with the vector extension, embed + insert each document, register and quantize the index, then run a top-K scan on the query.
 
 The setup is two parts. `sqlite3InitModule()` registers the vector extension so SQLite knows about the `FLOAT32[1024]` type, and `loadModel()` brings in the embedder. The CREATE TABLE is a vanilla SQLite schema with `id`, `text`, and an `embedding` BLOB:
 

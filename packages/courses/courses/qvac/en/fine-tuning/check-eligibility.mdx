@@ -21,38 +21,38 @@ expectedOutput:
   - "Fine-tunable: yes"
 questions:
   - id: why-check-before-training
-    text: "Why check quantization before calling finetune(), instead of letting the trainer reject an unsupported model?"
+    text: "Why check quantization before calling `finetune()` instead of letting the trainer reject it?"
     answers:
-      - text: "An unsupported quantization only fails once training is already underway, potentially hours into the run."
-        correct: true
-      - text: "getModelInfo is the only way to read a model's name."
+      - text: "`getModelInfo` is the only way to read a model's name."
         correct: false
-        feedback: "Check what getModelInfo is actually used for here, beyond just the name."
-      - text: "finetune() won't accept a modelId until eligibility is confirmed."
+        feedback: "Check what `getModelInfo` is used for, beyond just the name."
+      - text: "`finetune()` won't accept a `modelId` until eligibility is confirmed."
         correct: false
         feedback: "Re-read what goes wrong if you skip the check, not whether the call is blocked outright."
-  - id: why-normalize-quantization
-    text: "Why does the code normalize info.quantization before comparing it to the allowlist?"
-    answers:
-      - text: "The SDK returns the value in lowercase with the _0 suffix dropped, so a raw comparison against 'Q4_0' would never match."
+      - text: "An unsupported quantization only fails once training is already underway, potentially hours into the run."
         correct: true
-      - text: "Normalizing converts an incompatible quantization into a compatible one."
-        correct: false
-        feedback: "Think about whether normalizing changes what the model actually supports, or just how the string is written."
+  - id: why-normalize-quantization
+    text: "What has to be true about `info.quantization` before comparing it to the allowlist?"
+    answers:
       - text: "The allowlist itself is stored in lowercase."
         correct: false
         feedback: "Check the casing used in the allowlist array in the code example."
-  - id: why-q4-k-m-rejected
-    text: "Why does Q4_K_M get rejected for fine-tuning even though the SDK accepts it for inference?"
-    answers:
-      - text: "The trainer's allowlist only covers quantizations it knows how to update, and Q4_K_M isn't one of them."
+      - text: "The SDK returns the value in lowercase with the _0 suffix dropped, so a raw comparison against `Q4_0` would never match."
         correct: true
-      - text: "Q4_K_M models are too large to fit in memory during training."
+      - text: "Normalizing converts an incompatible quantization into a compatible one."
         correct: false
-        feedback: "Check whether size or quantization type is what the allowlist actually filters on."
-      - text: "Q4_K_M is deprecated and no longer supported for any use."
+        feedback: "Think about whether normalizing changes what the model supports, or just how the string is written."
+  - id: why-q4-k-m-rejected
+    text: "Which of the following is NOT accepted by the SDK for fine-tuning?"
+    answers:
+      - text: "`Q4_K_M`"
+        correct: true
+      - text: "`Q4_0`"
         correct: false
-        feedback: "Re-read what the concept paragraph says Q4_K_M is still accepted for."
+        feedback: "Check whether `Q4_0` is on the fine-tuning allowlist."
+      - text: "`F16`"
+        correct: false
+        feedback: "Check whether `F16` is on the fine-tuning allowlist."
 ---
 
 We're starting a new chapter on fine-tuning.

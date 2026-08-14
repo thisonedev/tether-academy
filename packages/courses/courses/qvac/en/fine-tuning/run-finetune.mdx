@@ -20,45 +20,34 @@ hints:
   - "options.trainDatasetDir points at a HuggingFace chat JSONL file (one JSON object per line with messages: [{role, content}, ...])."
   - "options.numberOfEpochs controls how many full passes through the dataset. 1 is a sensible first run; 2+ overfits small datasets fast."
   - "options.lrMin is the floor the learning-rate decay stops at. Without it the last step trains at 0 and the native optimizer aborts the worker; 1e-8 is what the SDK's own example uses."
-  - "The finetune worker can still crash (SIGABRT) after a tick has arrived, so wrap the await in try/catch and read the loss from the last progress tick."
+  - "The finetune worker can still crash (SIGABRT) after a tick has come in, so wrap the await in try/catch and read the loss from the last progress tick."
 expectedOutput:
   - "▸ epoch=1 step=1 batch=1/16 train loss="
   - "▸ epoch=1 step=16 batch=16/16 train loss="
   - "▸ Result status: COMPLETED"
 questions:
   - id: why-set-lrmin
-    text: "Why does this fine-tune set lrMin: 1e-8 instead of leaving the learning rate to decay naturally to 0?"
+    text: "What happens if the learning rate decays naturally to exactly 0 on the last training step?"
     answers:
       - text: "A rate of exactly 0 on the last step trips a native assertion and aborts the whole worker."
         correct: true
-      - text: "lrMin controls how many epochs the training run uses."
+      - text: "Without `lrMin`, the trainer simply runs slower."
         correct: false
-        feedback: "Check what lrMin actually floors: the learning rate, or the epoch count."
-      - text: "Without lrMin, the trainer simply runs slower."
+        feedback: "Re-read what the `GGML_ASSERT` error and `SIGABRT` mean for the run."
+      - text: "`lrMin` controls how many epochs the training run uses."
         correct: false
-        feedback: "Re-read what the GGML_ASSERT error and SIGABRT actually mean for the run."
-  - id: why-wrap-result-in-trycatch
-    text: "Why wrap await handle.result in a try/catch even after lrMin is set?"
-    answers:
-      - text: "The worker can still crash after progress ticks have already arrived, and the last tick's loss is still worth reporting."
-        correct: true
-      - text: "try/catch is required syntax for any await on a Promise."
-        correct: false
-        feedback: "Think about whether every await in the SDK needs a try/catch, or just this particular call."
-      - text: "It suppresses the GGML_ASSERT error so training can keep going."
-        correct: false
-        feedback: "Check whether the crash mode described here is something lrMin already prevents, or a separate one."
+        feedback: "Check what `lrMin` floors: the learning rate, or the epoch count."
   - id: what-progressstream-adds
-    text: "What does progressStream carry, as training runs, that handle.result alone would not tell you?"
+    text: "What does `progressStream` tell you that `handle.result` alone would not?"
     answers:
       - text: "Per-step values like loss, accuracy, and eta, updated as each training step completes."
         correct: true
+      - text: "Nothing extra; `progressStream` and result carry identical information."
+        correct: false
+        feedback: "Think about when result resolves compared to when `progressStream` ticks."
       - text: "The final adapter weights, streamed in chunks."
         correct: false
-        feedback: "Check what fields a single tick actually carries, described in the concept paragraph."
-      - text: "Nothing extra; progressStream and result carry identical information."
-        correct: false
-        feedback: "Think about when result resolves compared to when progressStream ticks."
+        feedback: "Check what fields a single tick carries, described in the concept paragraph."
 ---
 
 Now that we've confirmed the base model is fine-tunable, it's time to run a training job.
@@ -102,7 +91,7 @@ const result = await handle.result;
 console.log("▸ Result status:", result.status);
 ```
 
-The data files at `./examples/qvac/fine-tuning/run-finetune/small_train_HF.jsonl` live next to this lesson's code. The output adapters go to `output/finetune/` (the desktop app is the runtime, generated files live there).
+The data files at `./examples/qvac/fine-tuning/input/small_train_HF.jsonl` live next to this lesson's code. The output adapters go to `output/finetune/` (the desktop app is the runtime, generated files live there).
 
 ## Keep the learning rate above zero
 
@@ -114,6 +103,6 @@ GGML_ASSERT(opt_pars.adamw.alpha > 0.0f) failed
 
 That assert aborts the whole worker with `SIGABRT` in the final batch, minutes into a run. `lrMin: 1e-8` is the floor the decay stops at, so the last step still has a rate to train with. Set it on every fine-tune.
 
-The answer still wraps the `progressStream` loop in `try/catch`: an aborted worker surfaces as `WORKER_CRASHED`, and the loss from the last tick and the adapter on disk are worth reporting even then. If something fails before any tick lands, the error is rethrown.
+The answer still wraps the `progressStream` loop in `try/catch`: an aborted worker surfaces as `WORKER_CRASHED`, and the loss from the last tick and the adapter on disk are worth reporting even then. If something fails before any tick comes in, the error is rethrown.
 
 > Note: `learningRate: 1e-4` is a reasonable starting point for LoRA on a Qwen3 600M. If you're training a larger model or a smaller one, scale by the parameter count or follow the dataset author's recommendation.

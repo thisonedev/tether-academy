@@ -20,27 +20,27 @@ expectedOutput:
   - "Created 12 chunks from 3 documents"
 questions:
   - id: why-long-docs-need-chunking
-    text: "Why can't a 5000-word article be embedded as a single input?"
+    text: "What limits how much text a single `embed()` call can take?"
     answers:
-      - text: "The embedding model has a fixed context, far shorter than the article, so the text has to be split first."
-        correct: true
-      - text: "ragIngest refuses any document longer than 200 words."
+      - text: "`ragIngest` refuses any document longer than 200 words."
         correct: false
-        feedback: "Check what chunkSize actually configures, compared to what limits a single embed call."
+        feedback: "Check what `chunkSize` configures, compared to what limits a single embed call."
       - text: "Long documents produce a longer embedding array than short ones do."
         correct: false
-        feedback: "Recall what stayed fixed regardless of input length, back in the embeddings chapter."
-  - id: what-chunkoverlap-does
-    text: "What does chunkOverlap do, and why does it matter?"
-    answers:
-      - text: "It keeps a few shared tokens between neighboring chunks so a sentence that straddles a boundary isn't lost."
+        feedback: "Recall what stays fixed in an embedding vector regardless of input length."
+      - text: "The embedding model has a fixed context, far shorter than the article, so the text has to be split first."
         correct: true
-      - text: "It controls the total number of chunks created, regardless of document length."
+  - id: what-chunkoverlap-does
+    text: "Which `chunkOpts` field keeps context at a chunk boundary from being lost?"
+    answers:
+      - text: "`chunkSize`"
         correct: false
         feedback: "Check which option targets chunk size versus which one shares context at the boundary."
-      - text: "It merges chunks from different documents into a single entry."
+      - text: "`chunkOverlap`"
+        correct: true
+      - text: "Neither; that behavior isn't configurable and always happens automatically."
         correct: false
-        feedback: "Re-read what stays scoped per document once chunking runs."
+        feedback: "Re-read whether `chunkOpts` exposes a field for this, or whether it's fixed."
   - id: what-chunked-result-represents
     text: "After chunking, what does a search result represent that it didn't before?"
     answers:
@@ -51,7 +51,7 @@ questions:
         feedback: "Check what processed contains after a chunked ingest, compared to a whole-document one."
       - text: "A summary generated from the matching chunk."
         correct: false
-        feedback: "Think about whether anything gets generated here, or whether the chunk is just returned as stored."
+        feedback: "Think about whether `chunk: true` generates anything new, or just returns the chunk as stored."
 ---
 
 Now that we know how to ingest and search, let's handle longer documents.

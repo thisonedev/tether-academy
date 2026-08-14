@@ -17,25 +17,25 @@ expectedOutput:
   - "multimodalId: model-7f2a"
 questions:
   - id: why-two-files
-    text: "Why does loading a multimodal model need two files instead of one?"
+    text: "Which `loadModel` field turns an image into the language model's vector space?"
     answers:
-      - text: "The language model handles text, but a separate projection model is needed to turn an image into the same vector space the language model operates in."
+      - text: "`modelSrc`"
+        correct: false
+        feedback: "Check what `modelSrc` holds: the language model, or the image-to-vector projector."
+      - text: "`modelConfig.projectionModelSrc`"
         correct: true
-      - text: "One file holds the model weights and the other is a config file with hyperparameters."
+      - text: "Neither; image conversion happens automatically inside `completion()` with no dedicated model."
         correct: false
-        feedback: "Check what the concept paragraph says the second file actually does with an image."
-      - text: "The second file is a backup in case the first model fails to load."
-        correct: false
-        feedback: "Re-read what projectionModelSrc actually does, not just that it's present."
+        feedback: "Re-read whether a second file is described as necessary for image support."
   - id: mismatched-projector
-    text: "What happens if SMOLVLM2_500M_MULTIMODAL_Q8_0 is paired with the wrong mmproj projector?"
+    text: "Does the SDK validate that the LLM and mmproj projector come from the same model family?"
     answers:
-      - text: "It produces nonsense output, since the two constants have to come from the same model family."
+      - text: "No: a mismatch produces nonsense output instead of being caught."
         correct: true
-      - text: "loadModel throws immediately and refuses to load the mismatched pair."
+      - text: "Yes: `loadModel` throws immediately and refuses to load the mismatched pair."
         correct: false
-        feedback: "Check what the Note says actually happens with a mismatched pair, not whether it's blocked."
-      - text: "The SDK automatically substitutes the matching projector."
+        feedback: "Check what actually happens with a mismatched pair, not whether it's blocked."
+      - text: "Yes: the SDK automatically substitutes the matching projector."
         correct: false
         feedback: "Think about whether the SDK validates or corrects this pairing at all."
 ---
