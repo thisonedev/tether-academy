@@ -25,6 +25,40 @@ expectedOutput:
   - "▸ epoch=1 step=1 batch=1/16 train loss="
   - "▸ epoch=1 step=16 batch=16/16 train loss="
   - "▸ Result status: COMPLETED"
+questions:
+  - id: why-set-lrmin
+    text: "Why does this fine-tune set lrMin: 1e-8 instead of leaving the learning rate to decay naturally to 0?"
+    answers:
+      - text: "A rate of exactly 0 on the last step trips a native assertion and aborts the whole worker."
+        correct: true
+      - text: "lrMin controls how many epochs the training run uses."
+        correct: false
+        feedback: "Check what lrMin actually floors: the learning rate, or the epoch count."
+      - text: "Without lrMin, the trainer simply runs slower."
+        correct: false
+        feedback: "Re-read what the GGML_ASSERT error and SIGABRT actually mean for the run."
+  - id: why-wrap-result-in-trycatch
+    text: "Why wrap await handle.result in a try/catch even after lrMin is set?"
+    answers:
+      - text: "The worker can still crash after progress ticks have already arrived, and the last tick's loss is still worth reporting."
+        correct: true
+      - text: "try/catch is required syntax for any await on a Promise."
+        correct: false
+        feedback: "Think about whether every await in the SDK needs a try/catch, or just this particular call."
+      - text: "It suppresses the GGML_ASSERT error so training can keep going."
+        correct: false
+        feedback: "Check whether the crash mode described here is something lrMin already prevents, or a separate one."
+  - id: what-progressstream-adds
+    text: "What does progressStream carry, as training runs, that handle.result alone would not tell you?"
+    answers:
+      - text: "Per-step values like loss, accuracy, and eta, updated as each training step completes."
+        correct: true
+      - text: "The final adapter weights, streamed in chunks."
+        correct: false
+        feedback: "Check what fields a single tick actually carries, described in the concept paragraph."
+      - text: "Nothing extra; progressStream and result carry identical information."
+        correct: false
+        feedback: "Think about when result resolves compared to when progressStream ticks."
 ---
 
 Now that we've confirmed the base model is fine-tunable, it's time to run a training job.
@@ -83,9 +117,3 @@ That assert aborts the whole worker with `SIGABRT` in the final batch, minutes i
 The answer still wraps the `progressStream` loop in `try/catch`: an aborted worker surfaces as `WORKER_CRASHED`, and the loss from the last tick and the adapter on disk are worth reporting even then. If something fails before any tick lands, the error is rethrown.
 
 > Note: `learningRate: 1e-4` is a reasonable starting point for LoRA on a Qwen3 600M. If you're training a larger model or a smaller one, scale by the parameter count or follow the dataset author's recommendation.
-
-## Put it to the test
-
-1. Call `finetune({ modelId, options: { trainDatasetDir, numberOfEpochs: 1, learningRate: 1e-4, lrMin: 1e-8, loraModules, assistantLossOnly, outputParametersDir } })` and store the handle.
-2. Loop through `handle.progressStream`, logging the epoch/step/batch/phase/loss/accuracy/eta for each tick.
-3. Await `handle.result` inside a `try/catch` and log `result.status` on success, or the last tick's loss/accuracy if the worker aborts.
