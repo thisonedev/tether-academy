@@ -109,6 +109,12 @@ export async function rewriteHtmlFiles(stagingDir, { shimFileName }) {
 
     html = html.replace(/(href|src)="\/(?!\/)([^"]*)"/g, (_m, attr, rest) => `${attr}="${relPrefix}${rest}"`);
 
+    // Some LMS content servers don't auto-resolve a directory path to its index.html.
+    html = html.replace(/href="([^"]*\/)"/g, (m, hrefVal) => {
+      if (/^([a-z][a-z0-9+.-]*:)?\/\//i.test(hrefVal) || hrefVal.startsWith('#') || hrefVal.startsWith('mailto:')) return m;
+      return `href="${hrefVal}index.html"`;
+    });
+
     const lessonKeyScript = lessonKey ? `window.__SCORM_LESSON_KEY__=${JSON.stringify(lessonKey)};` : '';
     const injected =
       `<style>${HIDE_AI_CHAT_CSS}${HIDE_USER_MENU_CSS}</style>` +
