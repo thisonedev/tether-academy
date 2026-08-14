@@ -12,10 +12,44 @@ tests:
 hints:
   - "downloadAsset takes { assetSrc: <model constant> }. It downloads and caches the model files without loading them into memory."
   - "Run downloadAsset once at install or app startup. Subsequent loadModel calls reuse the cache."
-  - "Use the same onProgress shape as loadModel: it hands you a { percentage, downloaded, total } object on each tick."
+  - "Use the same onProgress signature as loadModel: it hands you a { percentage, downloaded, total } object on each tick."
 expectedOutput:
   - "▸ Downloading 100% (740.0/740.0 MB)"
   - "▸ Done."
+questions:
+  - id: which-method-downloads-without-loading
+    text: "Which SDK method downloads and caches the model file without loading it into memory?"
+    answers:
+      - text: "`downloadAsset()`"
+        correct: true
+      - text: "`loadModel()`"
+        correct: false
+        feedback: "Check whether `loadModel()` also loads the file into memory after downloading it."
+      - text: "`unloadModel()`"
+        correct: false
+        feedback: "Check what `unloadModel()` does with an already-loaded model, versus downloading a new one."
+  - id: repeated-download-asset-call
+    text: "What happens if `downloadAsset()` runs again against a model that's already cached?"
+    answers:
+      - text: "It's a no-op; the SDK checks the local cache before hitting the network."
+        correct: true
+      - text: "It re-downloads the file to verify it hasn't been corrupted."
+        correct: false
+        feedback: "Check what actually happens on a repeated `downloadAsset()` call against a cached model."
+      - text: "It throws an error since the model is already present."
+        correct: false
+        feedback: "Re-read whether a repeated call is described as failing, or as skipping work."
+  - id: onprogress-signature-shared
+    text: "What's the relationship between `downloadAsset()`'s `onProgress` callback and `loadModel()`'s?"
+    answers:
+      - text: "They share the same signature: both hand back a `{ percentage, downloaded, total }` object on each tick."
+        correct: true
+      - text: "They're unrelated; each function has its own separate progress-reporting design."
+        correct: false
+        feedback: "Re-read what the concept paragraph says about `onProgress`'s signature across the two calls."
+      - text: "`downloadAsset()`'s version adds an extra `speed` field that `loadModel()`'s doesn't have."
+        correct: false
+        feedback: "Check what fields the concept paragraph lists on the shared `onProgress` object."
 ---
 
 We're starting a new chapter on peer-to-peer (P2P), and we're going to decouple download from load.
@@ -44,11 +78,6 @@ const modelId = await loadModel({ modelSrc: LLAMA_3_2_1B_INST_Q4_0 });
 await unloadModel({ modelId, clearStorage: false });
 ```
 
-The `onProgress` callback uses the same `{ percentage, downloaded, total }` shape as `loadModel()`.
+The `onProgress` callback uses the same `{ percentage, downloaded, total }` signature as `loadModel()`.
 
 > Note: re-running `downloadAsset` against an already-cached model is a no-op. The SDK checks the local cache before hitting the network.
-
-## Put it to the test
-
-1. Call `downloadAsset({ assetSrc, onProgress })` and `await` it. The model is now cached on disk.
-2. Call `loadModel({ modelSrc: <same constant> })` and `unloadModel({ modelId, clearStorage: false })` to confirm the cached file loads into memory and frees cleanly.
