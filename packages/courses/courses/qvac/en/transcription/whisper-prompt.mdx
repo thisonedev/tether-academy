@@ -16,6 +16,29 @@ hints:
 expectedOutput:
   - "▸ Transcription result:"
   - "The quick brown fox jumps over the clean windowsill."
+questions:
+  - id: what-prompt-steers
+    text: "What does the prompt option steer in a `transcribe()` call?"
+    answers:
+      - text: "A vocabulary bias toward the words and phrases you supply; the decoder doesn't treat it as an instruction to follow."
+        correct: true
+      - text: "How the SDK formats the returned segments."
+        correct: false
+        feedback: "Check whether prompt is a formatting option, or a vocabulary bias."
+      - text: "The transcription language, overriding `modelConfig.language`."
+        correct: false
+        feedback: "Re-read what controls language versus what the prompt steers."
+  - id: why-keep-prompt-short
+    text: "What happens to the prompt's steering strength as it grows from 20 words toward 200?"
+    answers:
+      - text: "A longer prompt dilutes the bias, so it steers the decoder less effectively per word."
+        correct: true
+      - text: "`transcribe()` rejects prompts longer than 20 words."
+        correct: false
+        feedback: "Check whether a length limit throws an error, or just trades off steering strength."
+      - text: "Longer prompts slow down the audio decoding step."
+        correct: false
+        feedback: "Think about what a long prompt does to the bias, not to decoding speed."
 ---
 
 Now that we can transcribe a file, we're going to steer the decoder with a prompt.
@@ -38,7 +61,3 @@ console.log(text);
 `prompt` is a string. Whisper tokenizes it and conditions the first few decoder steps on it. Any word in the prompt gets a head start. Any word that conflicts with the audio gets overridden.
 
 > Note: the prompt doesn't change the model's language. Set `modelConfig.language: "en"` (or whatever target language you need) at load time. The prompt only steers vocabulary.
-
-## Put it to the test
-
-1. Call `transcribe({ modelId, audioChunk: <path>, prompt: "..." })`, await the result, and log `"▸ Transcription result:"` followed by the text.

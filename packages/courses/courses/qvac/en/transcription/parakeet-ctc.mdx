@@ -12,9 +12,32 @@ tests:
 hints:
   - "Parakeet CTC is the English-only sibling of TDT. It's smaller and faster but only handles English."
   - "Use CTC when you know the audio is English and you want the lowest-latency transcribe. Switch to TDT for multilingual."
-  - "The load shape and transcribe call are identical to TDT, except the modelSrc constant changes."
+  - "The load and transcribe steps are identical to TDT, except the modelSrc constant changes."
 expectedOutput:
   - "The quick brown fox jumps over the lazy dog."
+questions:
+  - id: ctc-vs-tdt-tradeoff
+    text: "Which of the following best describes the difference between CTC and TDT?"
+    answers:
+      - text: "CTC is slower but more accurate on non-English audio."
+        correct: false
+        feedback: "Re-read what language coverage the concept paragraph gives for CTC versus TDT."
+      - text: "CTC requires a VAD model and TDT doesn't."
+        correct: false
+        feedback: "Check whether either Parakeet variant needs a separate VAD model."
+      - text: "CTC is faster and smaller, but only handles English, while TDT covers 25+ languages."
+        correct: true
+  - id: ctc-on-non-english
+    text: "Does Parakeet CTC translate non-English audio into English?"
+    answers:
+      - text: "Yes: it transcribes it anyway, translating into English along the way."
+        correct: false
+        feedback: "Check what the concept paragraph says CTC does with non-English audio: translate, or reject."
+      - text: "No: it silently falls back to TDT for that call instead."
+        correct: false
+        feedback: "Think about whether any automatic fallback to a different model happens."
+      - text: "No: it rejects the audio rather than producing an incorrect transcription in another language."
+        correct: true
 ---
 
 When you know the audio is English and latency matters, Parakeet CTC is faster than TDT. The trade is that CTC is English-only; Parakeet CTC rejects non-English audio rather than mistranslating it.
@@ -23,7 +46,7 @@ CTC is the English-only sibling of TDT. The model file is smaller and the infere
 
 The editor prefills the model load (Parakeet CTC with `modelType: "parakeet-transcription"`). The new piece is the transcribe call.
 
-CTC is the English-only TDT variant: same call shape, same options, just a different `modelId`. The transcribe call we'd make would look like:
+CTC is the English-only TDT variant, using the same call signature and options with a different `modelId`. The transcribe call we'd make would look like:
 
 ```ts
 const text = await transcribe({
@@ -33,10 +56,6 @@ const text = await transcribe({
 console.log(text);
 ```
 
-The call shape and the constants are the only differences from TDT.
+The call signature and the constants are the only differences from TDT.
 
 > Note: CTC is also the right Parakeet variant for the `transcribeStream` duplex session when the audio is English. The next lesson covers diarization with Sortformer.
-
-## Put it to the test
-
-1. Call `transcribe({ modelId, audioChunk: "./examples/qvac/transcription/input/sample-16khz.wav" })`, await the result, and `console.log` the returned text.

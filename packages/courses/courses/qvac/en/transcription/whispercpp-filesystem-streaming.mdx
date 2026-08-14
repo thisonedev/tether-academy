@@ -15,16 +15,39 @@ tests:
 hints:
   - "loadModel({ modelSrc: WHISPER_TINY, modelConfig: { vadModelSrc: VAD_SILERO_5_1_2, audio_format: 'f32le', strategy: 'greedy', n_threads: 4, language: 'en', no_timestamps: true, suppress_blank: true, suppress_nst: true, temperature: 0.0, vad_params: { threshold: 0.6, min_speech_duration_ms: 250, min_silence_duration_ms: 500, max_speech_duration_s: 15.0, speech_pad_ms: 200 } } }) pulls Whisper with its VAD pre-wired."
   - "Spawn ffmpeg with `-i <audio> -ar 16000 -ac 1 -sample_fmt flt -f f32le pipe:1`. Hook ffmpeg.stdout.on('data', (chunk) => { for (...) session.write(chunk) }) so 100 ms chunks of PCM go into the session. Listen for ffmpeg's `close` event, then call session.end() to drain the buffer."
-  - "Iterate the session with for await. Each yielded value is a TranscribeSegment with text, startMs, endMs, id, and append. Log `[N] [start → end] (id=…, append=…) text` per segment and join the trimmed texts at the end."
+  - "Iterate the session with for await. Each value it emits is a TranscribeSegment with text, startMs, endMs, id, and append. Log `[N] [start → end] (id=…, append=…) text` per segment and join the trimmed texts at the end."
 expectedOutput:
   - "▸ Audio streamed:"
   - "▸ Segments:"
   - "[0.00s → 2.80s] The quick brown fox jumps over the lazy dog."
+questions:
+  - id: why-chunk-into-100ms
+    text: "What is a key consideration behind splitting ffmpeg's `stdout` output into fixed 100ms windows before writing to the session?"
+    answers:
+      - text: "100ms windows are required to match the WAV file's header format."
+        correct: false
+        feedback: "Re-read what problem the concept paragraph says the chunking solves: buffer spikes, or header format."
+      - text: "ffmpeg's chunks don't share one fixed size, and without normalizing them the session buffer could spike if ffmpeg dumps a large chunk at once."
+        correct: true
+      - text: "The session only accepts writes of exactly 100ms or less."
+        correct: false
+        feedback: "Check whether `session.write` enforces a hard size limit, or whether this is about pacing."
+  - id: why-end-on-ffmpeg-close
+    text: "Where does `session.end()` have to run relative to ffmpeg's `close` event?"
+    answers:
+      - text: "After it: once ffmpeg closes, no more file bytes are coming, so that's the signal that the write side is done."
+        correct: true
+      - text: "Before it: `session.end()` has to run before ffmpeg even starts."
+        correct: false
+        feedback: "Check the order these two events happen in, according to the code example."
+      - text: "Nowhere in particular: ffmpeg's close event is unrelated, and `session.end()` runs on a fixed timer instead."
+        correct: false
+        feedback: "Think about what triggers the `session.end()` call above."
 ---
 
 The mic lesson fed Whisper from `startMicrophone()`. A WAV file already on disk can drive that duplex session too. The only difference is who supplies the PCM bytes. ffmpeg takes the producer role here: its `-ar 16000 -ac 1 -sample_fmt flt -f f32le` conversion matches the mic path's, except it points at a file instead of the OS default input.
 
-The file path keeps the mic lesson's Whisper and Silero checkpoints, so the model config barely changes. `audio_format: "f32le"` matches the mic lesson because the ffmpeg subprocess writes 32-bit float mono 16 kHz PCM to its stdout, and the model expects exactly those bytes on the write side:
+The file path keeps the mic lesson's Whisper and Silero checkpoints, so the model config barely changes. `audio_format: "f32le"` matches the mic lesson because the ffmpeg subprocess writes 32-bit float mono 16 kHz PCM to its stdout, and that's exactly what the write side expects:
 
 ```ts
 const modelId = await loadModel({
@@ -33,7 +56,7 @@ const modelId = await loadModel({
 });
 ```
 
-`WHISPER_TINY_F32LE_LOAD_CONFIG` holds the VAD-and-format defaults in one block: `vadModelSrc` for Silero, `audio_format: "f32le"` so ffmpeg's stdout lines up with the engine, and the `vad_params` block that decides when to commit segments. The dup session emits the segments as the VAD finalizes them.
+`WHISPER_TINY_F32LE_LOAD_CONFIG` holds the VAD-and-format defaults in one block: `vadModelSrc` for Silero, `audio_format: "f32le"` to match ffmpeg's stdout, and the `vad_params` block that decides when to commit segments. The dup session emits the segments as the VAD finalizes them.
 
 With the checkpoints loaded, `transcribeStream()` opens the duplex path with metadata enabled, so every segment carries timing and the append state. The session call is:
 
@@ -89,7 +112,7 @@ ffmpeg.on("close", () => {
 });
 ```
 
-`session.end()` is fire-and-forget; the `for await` loop exits when the engine drains the remaining buffer.
+`session.end()` is fire-and-forget; the `for await` loop exits once the model drains the remaining buffer.
 
 Each emitted `TranscribeSegment` has its text, the timing, and the `append` flag the consumer needs to decide whether to overwrite or extend. Push each one onto an array:
 
@@ -105,7 +128,7 @@ for await (const segment of session) {
 }
 ```
 
-The `id` field increments across committed segments; `append` is `true` for in-progress text the engine will extend on the next emission, and `false` for the final commit. Render captions with `append = true` as the engine delivers them and confirm them once the engine emits `append = false`.
+The `id` field increments across committed segments; `append` is `true` for in-progress text that the next emission extends, and `false` for the final commit. Render captions for each `append = true` segment the session emits, then confirm the line once `append` flips to `false`.
 
 The final transcript waits until the session drains. Once it does, the trimmed segment texts join into one line, then the script releases the model:
 
@@ -120,11 +143,4 @@ if (segments.length > 0) {
 await unloadModel({ modelId });
 ```
 
-> Note: the audio file is read by ffmpeg, not by the SDK. Any format ffmpeg can decode (WAV, MP3, FLAC, OGG, M4A) becomes a 16 kHz f32le PCM stream, so the lesson works for any input as long as ffmpeg is on `PATH`. This lesson assumes the file path is on disk; the mic-streaming lessons assume the system default input device.
-
-## Put it to the test
-
-1. Call `loadModel({ modelSrc: WHISPER_TINY, modelConfig: WHISPER_TINY_F32LE_LOAD_CONFIG })`.
-2. Open `const session = await transcribeStream({ modelId, metadata: true })`.
-3. Spawn ffmpeg with the conversion args and pipe `ffmpeg.stdout.on("data", (raw) => { for (let offset = 0; offset < raw.length; offset += CHUNK_SIZE) session.write(raw.subarray(offset, offset + CHUNK_SIZE)) })` into the session.
-4. On `ffmpeg.on("close", () => session.end())`, iterate the session with `for await`. Push each segment onto an array, log `[N] [start → end] (id=…, append=…) text`, then join the trimmed texts and `unloadModel({ modelId })`.
+> Note: ffmpeg reads the audio file; the SDK never touches the file path directly. Any format ffmpeg can decode (WAV, MP3, FLAC, OGG, M4A) becomes a 16 kHz f32le PCM stream, so the lesson works for any input as long as ffmpeg is on `PATH`. This lesson assumes the file path is on disk; the mic-streaming lessons assume the system default input device.

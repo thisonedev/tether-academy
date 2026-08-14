@@ -19,11 +19,34 @@ hints:
 expectedOutput:
   - "Speaker 1 (0.50s - 3.20s): Hello, how are you today?"
   - "Speaker 2 (3.40s - 6.10s): I'm doing well, thanks for asking."
+questions:
+  - id: what-sortformer-line-represents
+    text: "What does each line of Sortformer's output represent before it's parsed into segments?"
+    answers:
+      - text: "A confidence score for how many speakers are in the file."
+        correct: false
+        feedback: "Re-read the format Sortformer's output lines follow."
+      - text: "One speaker turn as text: 'Speaker N: <start>s - <end>s', with no transcribed words yet."
+        correct: true
+      - text: "A fully transcribed sentence already attributed to a speaker."
+        correct: false
+        feedback: "Check what fields the regex extracts from each Sortformer line: words, or just speaker and timing."
+  - id: why-n-times-tdt-inference
+    text: "What is a key characteristic of TDT's role in the Sortformer-to-TDT pipeline that makes the total inference cost scale as `N × TDT_inference`?"
+    answers:
+      - text: "Sortformer itself runs N times, once per detected speaker."
+        correct: false
+        feedback: "Check which model runs N times according to the concept paragraph: Sortformer, or TDT."
+      - text: "TDT runs once per diarized segment, slicing and transcribing each speaker turn separately instead of the file as a whole."
+        correct: true
+      - text: "`N × TDT_inference` refers to retrying failed segments up to N times."
+        correct: false
+        feedback: "Think about what N counts: retries, or diarized segments."
 ---
 
 When a single audio file has more than one speaker, we want a transcript that says who said what. Sortformer diarizes the audio into speaker-attributed segments, then TDT transcribes each segment into text.
 
-The pipeline runs in two passes:
+The process runs in two passes:
 - Sortformer returns a text block where each line is `Speaker N: <start>s - <end>s`.
 - TDT transcribes each segment and we attach the text to the speaker metadata.
 
@@ -91,9 +114,3 @@ for (const r of results) {
 `readPcm` and `writeWavSlice` (prefilled in the scaffold) handle the WAV byte-level work: skipping the 44-byte header and rebuilding a 16 kHz / 16-bit / mono header in front of each PCM range. The slicing runs once per diarized segment, so the inference cost is `N × TDT_inference` rather than one shot on the full file.
 
 > Note: Sortformer v2.1 supports up to 4 speakers. For more speakers, split the audio or run the diarization in overlapping windows.
-
-## Put it to the test
-
-1. Load `PARAKEET_SORTFORMER_4SPK_V2_1_Q8_0` with `modelType: "parakeet-transcription"`, call `await transcribe({ modelId, audioChunk: audioFilePath })`, then `unloadModel`. Parse the output lines into `{ speaker, start, end }` objects.
-2. Load `PARAKEET_TDT_0_6B_V3_Q8_0`. For each segment, call `writeWavSlice(pcm, seg.start, seg.end, slicePath)` and then `await transcribe({ modelId: tdtModelId, audioChunk: slicePath })`. Push the text onto the segment.
-3. Console.log one line per result: `Speaker N (start - end): text`.

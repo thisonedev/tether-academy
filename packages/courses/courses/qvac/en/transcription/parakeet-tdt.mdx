@@ -18,6 +18,29 @@ hints:
   - "transcribe returns a single string. For timestamped segments, set the metadata flag the same way as the Whisper lesson."
 expectedOutput:
   - "The quick brown fox jumps over the lazy dog."
+questions:
+  - id: why-no-language-code
+    text: "Why doesn't a Parakeet TDT call need a language code?"
+    answers:
+      - text: "The same GGUF handles 25+ languages out of the box, so no per-call language selection is needed."
+        correct: true
+      - text: "Parakeet TDT only supports English, so a language code would be meaningless."
+        correct: false
+        feedback: "Check which Parakeet variant the concept paragraph names as English-only."
+      - text: "The language is inferred from `modelType` instead of being passed separately."
+        correct: false
+        feedback: "Re-read what `modelType` selects: a language, or a model family."
+  - id: what-tdt-returns
+    text: "Which of the following best describes the difference between Parakeet TDT's `transcribe()` result and Whisper's?"
+    answers:
+      - text: "A single string with no per-segment timestamp data, instead of an array of segments."
+        correct: true
+      - text: "A stream of partial text events rather than a single value."
+        correct: false
+        feedback: "Think about whether the code above uses `transcribeStream()` or a plain `transcribe()` call."
+      - text: "An array of segments in the same structure as Whisper's; the one difference is no prompt option."
+        correct: false
+        feedback: "Check what the concept paragraph says TDT returns per file."
 ---
 
 Whisper handles English well and several other languages adequately. For multilingual audio where accuracy matters, we switch to Parakeet TDT.
@@ -46,8 +69,3 @@ console.log(text);
 No `modelConfig.language`. No prompt. No VAD. The only flag you need is `modelType: "parakeet-transcription"` so the SDK routes the call to the right addon.
 
 > Note: Parakeet handles VAD internally, so no separate VAD model is needed. If you need explicit end-of-utterance detection for conversation, load `PARAKEET_EOU_120M_V1_Q8_0` alongside and pass `parakeetStreamingConfig` to `transcribeStream`.
-
-## Put it to the test
-
-1. Call `loadModel({ modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0, modelType: "parakeet-transcription" })` and `transcribe({ modelId, audioChunk: "./examples/qvac/transcription/input/sample-16khz.wav" })`. No `language` or `prompt` field.
-2. `console.log` the returned text.

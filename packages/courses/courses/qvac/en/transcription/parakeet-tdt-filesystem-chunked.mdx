@@ -25,6 +25,29 @@ expectedOutput:
   - "▸ Complete transcript"
   - "This is a test, and this is another test."
   - "▸ Done"
+questions:
+  - id: why-cut-at-silence
+    text: "What is the primary advantage of cutting long audio at silence boundaries instead of fixed time intervals?"
+    answers:
+      - text: "Fixed intervals produce chunks too short for `transcribe()` to process."
+        correct: false
+        feedback: "Check what problem the concept paragraph attributes to fixed-interval cuts: sentence boundaries, or chunk size."
+      - text: "Fixed intervals can fall in the middle of a sentence; silence boundaries keep each chunk a coherent unit of speech."
+        correct: true
+      - text: "Silence boundaries are required because ffmpeg can't seek to arbitrary timestamps."
+        correct: false
+        feedback: "Re-read what reason the concept paragraph gives for preferring silence-based cuts."
+  - id: no-silence-in-window
+    text: "What happens if no detected silence falls inside the window between `minimumCut` and `maximumCut`?"
+    answers:
+      - text: "The code falls back to a fixed cut near the target length, and the next pass covers the remainder."
+        correct: true
+      - text: "The segment is skipped entirely and left untranscribed."
+        correct: false
+        feedback: "Check what `createAudioSegments` does when candidates is empty, versus when it finds a silence midpoint."
+      - text: "The whole file is transcribed as one segment instead of being split."
+        correct: false
+        feedback: "Think about whether the fallback applies to one segment, or abandons splitting altogether."
 ---
 
 The single-file `transcribe()` lesson handles short clips. A 90-minute podcast or a two-hour meeting is too long for one inference pass: the engine's working memory budget is fixed, and the audio path is just bytes. Long audio has to be split.
@@ -166,11 +189,3 @@ await unloadModel({ modelId });
 `unloadModel` runs after the loop, so the model stays loaded across all segment calls. Each segment reuses the same `modelId`, no reload between calls.
 
 > Note: the audio format passed to ffmpeg is whatever the source file is. ffmpeg normalizes anything it understands to the requested `-ar 16000 -ac 1 -sample_fmt s16` output. If the input is a WAV with a 44-byte header, the `-ss` flag seeks into the PCM range correctly; if it is a compressed format like MP3, ffmpeg's seek accuracy drops slightly. For transcript-quality boundaries the 0.3 s rounding from `toFixed(3)` is fine either way.
-
-## Put it to the test
-
-1. Gate on `ffmpeg` and `ffprobe` being on `PATH` using `spawnSync(tool, ['-version'], { stdio: 'ignore' })` and `error.code === 'ENOENT'`. Define `runCommand`, `getAudioDuration`, `detectSilences`, `createAudioSegments`, `decodeSegment`, and `formatTimestamp` above `main`.
-2. Read the WAV path from `process.argv[2]`. Call `loadModel({ modelSrc: PARAKEET_TDT_0_6B_V3_Q8_0, modelType: "parakeet-transcription" })`.
-3. Detect silences with ffmpeg `silencedetect=noise=-35dB:d=0.5`, parse `silence_start`/`silence_end` lines from stderr, then `createAudioSegments(duration, silences)` with `MAX_SEGMENT_S = 60`, `TARGET_SEGMENT_S = 45`, `MIN_SEGMENT_S = 10`.
-4. For each segment, decode with ffmpeg `-ss` / `-t` to s16le 16 kHz mono PCM, call `await transcribe({ modelId, audioChunk })`, push trimmed non-empty results onto `transcript`. Log `▸ Segment N/M: <ts> - <ts>` before each call.
-5. Log the joined transcript and `unloadModel({ modelId })` at the end.
