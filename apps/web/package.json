@@ -27,6 +27,7 @@
     "fumadocs-core": "^15.0.0",
     "fumadocs-mdx": "13.0.0",
     "fumadocs-ui": "^15.0.0",
+    "geist": "^1.7.2",
     "lucide-react": "^0.469.0",
     "monaco-editor": "^0.56.0",
     "next": "^15.1.0",
