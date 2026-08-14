@@ -25,25 +25,25 @@ questions:
   - id: what-determines-clip-length
     text: "What determines how long the generated clip is?"
     answers:
-      - text: "video_frames and fps together; more frames at the same fps means a longer clip."
-        correct: true
-      - text: "Only fps; video_frames only affects image quality, not duration."
+      - text: "Only fps; `video_frames` only affects image quality, and duration is untouched."
         correct: false
-        feedback: "Check what the concept paragraph says video_frames and fps determine together."
+        feedback: "Check what the concept paragraph says `video_frames` and fps determine together."
+      - text: "`video_frames` and fps together; more frames at the same fps means a longer clip."
+        correct: true
       - text: "The width and height of the video."
         correct: false
         feedback: "Think about which options control duration, and which control resolution."
   - id: why-smaller-dimensions
-    text: "Why does this lesson use a smaller width and height than the image-generation chapter used?"
+    text: "What is a key consideration behind `video()` using a smaller `width` and `height` than a typical image-generation call?"
     answers:
-      - text: "Video generates frame by frame across the whole clip, so a smaller frame size keeps the per-frame memory budget reasonable on a 1.3B model."
-        correct: true
       - text: "Smaller dimensions are required by the AVI file format."
         correct: false
-        feedback: "Check what the Note attributes the smaller width and height to: file format, or memory budget."
-      - text: "video() automatically upscales the final output regardless of the requested size."
+        feedback: "Check what the smaller width and height are actually attributed to: file format, or memory budget."
+      - text: "`video()` automatically upscales the final output regardless of the requested size."
         correct: false
-        feedback: "Re-read whether any upscaling step is mentioned in this lesson."
+        feedback: "Re-read whether any upscaling step is mentioned above."
+      - text: "Video generates frame by frame across the whole clip, so a smaller frame size keeps the per-frame memory budget reasonable on a 1.3B model."
+        correct: true
 ---
 
 Now that we have a video model in memory, let's make our first clip.
@@ -66,7 +66,7 @@ const videoId = await loadModel({
 });
 ```
 
-The txt2vid `video({ ... })` matches img2vid's, with `mode: "txt2vid"` and no `init_image`:
+The `txt2vid` `video({ ... })` matches `img2vid`'s, with `mode: "txt2vid"` and no `init_image`:
 
 ```ts
 const result = video({

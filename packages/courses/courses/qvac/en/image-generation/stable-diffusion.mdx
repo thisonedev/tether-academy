@@ -20,32 +20,43 @@ expectedOutput:
   - "Generated 1 image"
 questions:
   - id: single-file-vs-split-tradeoff
-    text: "What's the tradeoff between Stable Diffusion's single-file layout and FLUX.2-klein's split layout?"
+    text: "Which of the following best describes the difference between Stable Diffusion's single-file layout and FLUX.2-klein's split layout?"
     answers:
-      - text: "SD is smaller and loads faster, but produces lower generation quality than FLUX.2-klein at the same step count."
-        correct: true
-      - text: "SD supports img2img and FLUX.2 doesn't."
+      - text: "SD supports `img2img` and FLUX.2 doesn't."
         correct: false
-        feedback: "Check what the Note says about img2img support for each model, not file layout."
+        feedback: "Check `img2img` support for each model separately from the file layout question."
       - text: "SD requires more VRAM despite the smaller file size."
         correct: false
         feedback: "Re-read what the concept paragraph says about VRAM footprint for the single-file layout."
-  - id: why-set-prediction-v
-    text: "Why does this lesson set modelConfig.prediction to 'v' for SD 2.1 instead of leaving the default?"
-    answers:
-      - text: "SD 2.1 was trained for v-prediction, and the epsilon default would produce a noisier result on this model."
+      - text: "SD is smaller and loads faster, but produces lower generation quality than FLUX.2-klein at the same step count."
         correct: true
-      - text: "'v' is required for every Stable Diffusion version, not just 2.1."
-        correct: false
-        feedback: "Check whether prediction: 'v' is tied to a specific SD version, or to all of them."
-      - text: "'v' only affects how fast the model loads, not the output quality."
+  - id: why-set-prediction-v
+    text: "What is a key consideration behind setting `modelConfig.prediction` to `v` for SD 2.1 instead of leaving the default?"
+    answers:
+      - text: "`v` only affects how fast the model loads; output quality is no different either way."
         correct: false
         feedback: "Think about what prediction controls: loading speed, or the sampling path."
+      - text: "`v` is required for every Stable Diffusion version, with no exception for older ones."
+        correct: false
+        feedback: "Check whether `prediction: 'v'` is tied to a specific SD version, or to all of them."
+      - text: "SD 2.1 was trained for v-prediction, and the epsilon default would produce a noisier result on this model."
+        correct: true
+  - id: sd-default-sampling-target
+    text: "What is Stable Diffusion's default sampling target if `modelConfig.prediction` is left unset?"
+    answers:
+      - text: "`epsilon`"
+        correct: true
+      - text: "`v`"
+        correct: false
+        feedback: "Check which target is the default across Stable Diffusion versions, versus the one SD 2.1 specifically needs set explicitly."
+      - text: "There's no default; `prediction` must always be set explicitly."
+        correct: false
+        feedback: "Re-read whether the concept paragraph names a default sampling target."
 ---
 
 FLUX.2 is one model family. Stable Diffusion is another, and the older of the two. SD 1.x and SD 2.x are available as a single all-in-one GGUF. There's no LLM encoder and no VAE to download alongside it.
 
-That single-file layout is the trade. SD 2.1 in this format is much smaller on disk than FLUX.2-klein, so it loads faster on a fresh device and fits in less VRAM. The generation quality is lower than FLUX.2-klein at the same step count, but for short prompts and quick iteration it's the path of least resistance.
+SD 2.1 in this single-file format is much smaller on disk than FLUX.2-klein, so it loads faster on a fresh device and fits in less VRAM. The generation quality is lower than FLUX.2-klein at the same step count, but for short prompts and quick iteration it's the path of least resistance.
 
 Stable Diffusion supports two sampling targets: `epsilon` (default) and `v` (the velocity, the change in noise). At high guidance, `v` is the cleaner choice with fewer artifacts. The `modelConfig` block setting `v` would look like so:
 
@@ -78,4 +89,4 @@ console.log(`Generated ${outputs.length} image`);
 
 SD 2.1 was trained for v-prediction; epsilon would produce a noisier result on this model.
 
-> Note: SD 2.1 doesn't support the in-context `init_image` path that FLUX.2 uses. For img2img with SD, set `strength` instead. The next chapter covers that.
+> Note: SD 2.1 does support `img2img` through the `init_image` option, the same as FLUX.2. Pass `init_image` alongside `strength`; the next chapter covers that path.
