@@ -27,38 +27,38 @@ expectedOutput:
   - "▸ Model response after tool call: The weather in Tokyo is 8°C and rainy."
 questions:
   - id: who-runs-the-function
-    text: "After the model emits a `toolCall` event, what actually runs the function?"
+    text: "After the model emits a `toolCall` event, what runs the function?"
     answers:
+      - text: "Your code does. The SDK hands you the request, you execute it, then push the result back into history."
+        correct: true
       - text: "The SDK executes the function automatically using the parsed arguments."
         correct: false
         feedback: "Check what's described as responsible for running the function."
-      - text: "Your code does. The SDK hands you the request, you execute it, then push the result back into history."
-        correct: true
       - text: "The model executes the function internally before emitting the event."
         correct: false
-        feedback: "Think about what a toolCall event actually contains: instructions, or executed code."
+        feedback: "Think about what a `toolCall` event contains: instructions, or executed code."
   - id: what-parameters-describes
     text: "What does the `parameters` field describe?"
     answers:
+      - text: "A list of example calls the model can copy verbatim."
+        correct: false
+        feedback: "Look at the parameters field in the code example."
       - text: "A JSON Schema describing what arguments it accepts."
         correct: true
       - text: "The return type the function sends back to the model."
         correct: false
         feedback: "Check what a JSON Schema is typically used to describe."
-      - text: "A list of example calls the model can copy verbatim."
-        correct: false
-        feedback: "Look at the parameters field in the code example."
   - id: what-loadmodel-needs-for-tools
     text: "What has to be true at `loadModel()` time for tool calls to work later in `completion()`?"
     answers:
-      - text: "Nothing, it only depends on the `tools` array passed to completion()."
-        correct: false
-        feedback: "Re-read the second Note about what has to happen at loadModel() time."
-      - text: "modelConfig: { tools: true } has to be set when loading the model."
-        correct: true
       - text: "The model has to be reloaded before every `completion()` call that passes the `tools` array."
         correct: false
         feedback: "Think about whether reloading the model is described anywhere."
+      - text: "`modelConfig: { tools: true }` has to be set when loading the model."
+        correct: true
+      - text: "Nothing, it only depends on the `tools` array passed to `completion()`."
+        correct: false
+        feedback: "Re-read what has to happen at `loadModel()` time for tools to work."
 ---
 
 Now that we know how to hold a conversation, let's give the model a tool it can reach for.
@@ -67,7 +67,7 @@ A tool is a function the model is allowed to call. We describe what the function
 
 A tool definition has three fields: `name`, `description`, and `parameters` (a JSON Schema describing the arguments). The model emits `toolCall` events when the sampled output is a tool call. We handle the call ourselves and push the result back into `history` so the next call has the tool result in its input.
 
-The shape declared with the SDK would look like the following:
+A tool defined with the SDK looks like the following:
 
 ```ts
 const tools = [
@@ -83,7 +83,7 @@ const tools = [
 ];
 ```
 
-Passing the `tools` array is what makes them available to the model:
+Passing the `tools` array makes them available to the model:
 
 ```ts
 const result = completion({
@@ -107,6 +107,6 @@ for await (const event of result.events) {
 
 The arguments come back as a parsed object matching our JSON Schema. We execute the function (call an API, query a database), then push `{ role: "tool", content: resultString }` back into history so the model can synthesize the final answer.
 
-> Note: `captureThinking: true` is the option the first lesson in this chapter introduced. Without it, the model's `thinking` would land in the same `contentDelta` stream the tool call comes from and muddle the tool-call detection. The option keeps `thinking` on `thinkingDelta` events, so `contentDelta` only carries the model's prose around the tool call. The lesson's loop ignores `thinkingDelta` so the runner's OUTPUT panel only shows the tool calls.
+> Note: `captureThinking: true` is the option the first lesson in this chapter introduced. Without it, the model's `thinking` would end up in the same `contentDelta` stream the tool call comes from and muddle the tool-call detection. The option keeps `thinking` on `thinkingDelta` events, so `contentDelta` only carries the model's prose around the tool call. The lesson's loop ignores `thinkingDelta` so the runner's OUTPUT panel only shows the tool calls.
 
 > Note: tool support has to be enabled when loading the model. Set `modelConfig: { tools: true }` on the `loadModel()` call, otherwise the model will not understand how to use the tools array.

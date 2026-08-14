@@ -6,7 +6,7 @@ tests:
   - id: has-onprogress
     description: loadModel call includes an onProgress option
     pattern: "loadModel\\s*\\(\\s*\\{[^}]*onProgress\\s*:"
-  - id: callback-shape
+  - id: callback-signature
     description: onProgress callback receives a progress object and reads percentage / downloaded / total
     pattern: "onProgress\\s*:\\s*\\(?\\s*p\\)?\\s*=>\\s*\\{[\\s\\S]*p\\.(percentage|downloaded|total)"
   - id: still-loads
@@ -28,38 +28,38 @@ expectedOutput:
   - "modelId: model-7f2a"
 questions:
   - id: why-stderr-not-stdout
-    text: "Why does the progress callback write to `process.stderr` instead of `process.stdout`?"
+    text: "Which output stream does the progress callback write its lines to?"
     answers:
-      - text: "stderr is faster to flush than stdout, which speeds up a callback that fires often."
+      - text: "`process.stdout`, since progress and the model's response can share one stream."
         correct: false
-        feedback: "Check what stdout is reserved for, not how fast either stream flushes."
-      - text: "stdout is reserved for the model's actual response, while progress output is logging that belongs on stderr."
+        feedback: "Check what stdout is reserved for, according to the concept paragraph."
+      - text: "`process.stderr`, since stdout is reserved for the model's actual response."
         correct: true
-      - text: "stdout is unavailable until the model finishes loading."
+      - text: "Neither; progress goes straight to a log file, with no stream involved."
         correct: false
-        feedback: "Think about whether stdout is actually blocked, or just intentionally left alone."
+        feedback: "Re-read which `process` stream the callback actually calls `.write` on."
   - id: what-onprogress-receives
-    text: "What does `onProgress` receive on each call?"
+    text: "Given the expected output above, what does the second `onProgress` call receive?"
     answers:
-      - text: "A single number representing the percentage complete, called once at the end."
-        correct: false
-        feedback: "Re-read how many times onProgress runs during a single download."
-      - text: "An object with percentage, downloaded, and total. It fires many times during a single download."
+      - text: "The percentage, downloaded, and total shown on the second `Downloading` line, with downloaded less than the final line's total."
         correct: true
-      - text: "The full downloaded file as a Buffer, once per chunk."
+      - text: "Exactly 50%, since progress always reports in round increments."
         correct: false
-        feedback: "Think about whether onProgress carries the file's contents or just status about the download."
+        feedback: "Check the actual percentage on the second line in the expected output, not an assumed rounding."
+      - text: "The full downloaded file's bytes as a `Buffer`."
+        correct: false
+        feedback: "Think about whether `onProgress` carries the file's contents or just status numbers."
   - id: why-check-istty
-    text: "Why does this code check `process.stderr.isTTY` before deciding whether to write `\\r` or `\\n`?"
+    text: "What determines whether progress output uses `\\r` or `\\n` after each tick?"
     answers:
-      - text: "A TTY can overwrite the same line with \\r, while piped output (a file or log) needs \\n so each tick lands on its own row."
-        correct: true
-      - text: "isTTY controls whether the download itself is throttled."
-        correct: false
-        feedback: "Think about what isTTY actually changes: how fast data comes in, or how it's displayed."
-      - text: "\\r is required for JSON-formatted logs, \\n for plain text."
+      - text: "Whether the output is JSON-formatted or plain text."
         correct: false
         feedback: "Check exactly which condition decides between \\r and \\n."
+      - text: "`process.stderr.isTTY`: a TTY can overwrite the same line with `\\r`, while piped output needs `\\n` so each tick ends up on its own row."
+        correct: true
+      - text: "The current download percentage; `\\r` is used below 100% and `\\n` at completion."
+        correct: false
+        feedback: "Think about what `isTTY` changes: how the terminal renders output, or how far along the download is."
 ---
 
 In the very first lesson we called `loadModel({ modelSrc: ... })` and waited. From the user's point of view the script sat there with no output while a multi-hundred-megabyte file downloaded. `onProgress` exists to make that wait readable.

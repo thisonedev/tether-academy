@@ -18,27 +18,27 @@ expectedOutput:
   - "modelId: model-7f2a"
 questions:
   - id: what-loadmodel-does
-    text: "What does `loadModel({ modelSrc })` actually do before it hands back a `modelId`?"
+    text: "Which SDK function downloads and loads a model, handing back a `modelId`?"
     answers:
-      - text: "It only validates that modelSrc is a real model constant, without downloading anything."
-        correct: false
-        feedback: "Check what the concept paragraph says happens to the model files before loadModel returns."
-      - text: "It downloads the model files (if not already cached) and loads them, then returns an id you can pass to other calls."
+      - text: "`loadModel`"
         correct: true
-      - text: "It runs a completion immediately using the default prompt."
+      - text: "`completion`"
         correct: false
-        feedback: "Think about whether running a prompt against the model is the same thing as loading it."
+        feedback: "Check what this lesson says you need in hand before you can call `completion`."
+      - text: "`unloadModel`"
+        correct: false
+        feedback: "Think about what this function's name suggests it does, versus what returns a `modelId`."
   - id: loadmodel-caching
-    text: "What happens if you call `loadModel({ modelSrc })` with a model that's already been downloaded before?"
+    text: "What happens if you call `loadModel` with a model that's already been downloaded before?"
     answers:
-      - text: "The SDK skips the download and loads the already-cached files."
-        correct: true
-      - text: "loadModel downloads it again every time, regardless of whether it's cached."
+      - text: "`loadModel` downloads it again every time, regardless of whether it's cached."
         correct: false
         feedback: "Re-read what the concept paragraph says happens when the model files are already cached."
-      - text: "loadModel throws an error because the model constant was already used once."
+      - text: "`loadModel` throws an error because the model constant was already used once."
         correct: false
         feedback: "Think about what caching is for. Would skipping a redundant download really be an error?"
+      - text: "The SDK skips the download and loads the already-cached files."
+        correct: true
 ---
 
 In this first lesson, we're going to load a model into memory and get back a `modelId` you can reuse. Every other lesson in this chapter builds on top of this one, so let's get it right.

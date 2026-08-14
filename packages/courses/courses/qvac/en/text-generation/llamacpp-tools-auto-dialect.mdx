@@ -14,7 +14,7 @@ tests:
     pattern: "toolCallStream[\\s\\S]{0,200}event\\.type|toolCallStream[\\s\\S]{0,200}evt\\.type"
 hints:
   - "loadModel({ modelSrc, modelType: 'llamacpp-completion', modelConfig: { ctx_size: 4096, tools: true } }) brings in any tool-capable GGUF. The SDK infers the tool-call format from the model name/path. Qwen3.5/3.6, Gemma4, GPT-OSS, DeepSeek V3.2/V4, LFM all work without a toolDialect override."
-  - "completion({ modelId, history, stream: true, tools }) returns { tokenStream, toolCallStream, toolCalls, ... }. Drain tokenStream and toolCallStream in parallel with Promise.all; the token stream yields text, the tool-call stream yields { type: 'toolCall', call: { name, arguments } } events."
+  - "completion({ modelId, history, stream: true, tools }) returns { tokenStream, toolCallStream, toolCalls, ... }. Drain tokenStream and toolCallStream in parallel with Promise.all; the token stream produces text, the tool-call stream emits { type: 'toolCall', call: { name, arguments } } events."
   - "result.toolCalls is a Promise<ToolCall[]> that resolves after both streams drain. Use it to get the final list of calls and dispatch them."
 expectedOutput:
   - "▸ Model loaded:"
@@ -26,34 +26,34 @@ questions:
     answers:
       - text: "The SDK inspects the model's name or path at load time and matches it against a registry of known dialects automatically."
         correct: true
-      - text: "It's hard-coded the same way as before; only the model changed."
-        correct: false
-        feedback: "Check how this approach compares to hard-coding the dialect."
       - text: "The reader has to specify the dialect manually every time, same as before."
         correct: false
         feedback: "Think about whether manual dialect pinning is the default or just a fallback."
+      - text: "It's hard-coded the same way as before; only the model changed."
+        correct: false
+        feedback: "Check how this approach compares to hard-coding the dialect."
   - id: why-promise-all-for-streams
-    text: "Why drain `tokenStream` and `toolCallStream` with `Promise.all` instead of one after the other?"
+    text: "How does draining `tokenStream` and `toolCallStream` in parallel differ from draining them one after the other when it comes to total wait time?"
     answers:
-      - text: "toolCallStream only starts after tokenStream finishes, so reading them one after the other would work the same way."
+      - text: "They're unrelated; `tokenStream` throws if `toolCallStream` isn't drained first."
         correct: false
-        feedback: "Check how the two streams are described as relating to each other."
-      - text: "Both streams represent one response running concurrently; draining them in parallel keeps neither stream waiting on the other."
+        feedback: "Think about whether a dependency like this is described anywhere."
+      - text: "`toolCallStream` only starts after `tokenStream` finishes, so reading them one after the other works the same way."
+        correct: false
+        feedback: "Check how the two streams are described as relating to each other: sequential, or concurrent."
+      - text: "Both streams represent one response running concurrently, so draining them in parallel keeps neither one waiting on the other."
         correct: true
-      - text: "Promise.all is required because tokenStream throws if awaited alone."
-        correct: false
-        feedback: "Think about whether a reason tied to error handling is given at all."
   - id: what-if-dialect-unrecognized
     text: "What happens if the auto-detector can't identify a model's dialect?"
     answers:
-      - text: "loadModel throws an error and refuses to load the model."
-        correct: false
-        feedback: "Re-read the Note about an unrecognized dialect."
-      - text: "The load still succeeds, but toolCallStream stays empty because tool calls fail at inference time."
-        correct: true
       - text: "The SDK automatically falls back to the hard-coded dialect from before."
         correct: false
-        feedback: "Check what fix is actually recommended for this situation."
+        feedback: "Check what fix is recommended for this situation."
+      - text: "`loadModel` throws an error and refuses to load the model."
+        correct: false
+        feedback: "Re-read what happens when the auto-detector can't match a model's tool-call format."
+      - text: "The load still succeeds, but `toolCallStream` stays empty because tool calls fail at inference time."
+        correct: true
 ---
 
 The tool-calls lesson hard-codes one dialect for one model family. The auto-dialect path is simpler: the SDK inspects the model's name or path at load time, matches it against a registry of known tool-call formats, and routes to the right parser automatically.

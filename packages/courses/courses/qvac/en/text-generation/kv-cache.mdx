@@ -21,16 +21,16 @@ expectedOutput:
   - "▸ Second turn (cached): 12 tokens, 0.84s"
 questions:
   - id: what-kvcache-saves
-    text: "What does `kvCache: true` actually save between the first and second `completion()` runs?"
+    text: "What does `kvCache: true` save between the first and second `completion()` runs?"
     answers:
       - text: "The model's internal state after the first turn, so the second one skips reprocessing the prior turns."
         correct: true
       - text: "The full text of the conversation, as a compressed transcript."
         correct: false
-        feedback: "Check what gets saved after the first turn."
+        feedback: "Check what the correct answer says is saved after the first turn."
       - text: "The response time from the first request, to show a progress estimate for the second."
         correct: false
-        feedback: "Think about what kvCache is meant to skip on the second run."
+        feedback: "Think about what `kvCache` is meant to skip on the second run."
   - id: what-happens-on-prefix-change
     text: "What happens if the `history` prefix changes before the second `completion()` call?"
     answers:
@@ -39,20 +39,20 @@ questions:
         feedback: "Re-read what happens when the prefix doesn't match."
       - text: "The cache key no longer matches, so it misses and falls back to a full reprocess."
         correct: true
-      - text: "completion() throws an error because the cache is now invalid."
+      - text: "`completion()` throws an error because the cache is now invalid."
         correct: false
         feedback: "Check whether this is described as a failure or a fallback."
   - id: why-cacheableassistantcontent
-    text: "Why push `final1.cacheableAssistantContent` into history instead of `final1.contentText`?"
+    text: "Which field should you push into `history` to keep the KV-cache prefix intact for the next call?"
     answers:
-      - text: "cacheableAssistantContent is the exact text the cache was saved against, which keeps the prefix intact for the next cache hit."
+      - text: "`cacheableAssistantContent`"
         correct: true
-      - text: "contentText and cacheableAssistantContent are always identical, so either one works."
+      - text: "`contentText`"
         correct: false
-        feedback: "Check when it's safe to fall back to contentText."
-      - text: "contentText isn't available until after the second call finishes."
+        feedback: "Check whether the two fields are described as always identical, or only sometimes."
+      - text: "Either one; the cache key doesn't depend on the exact text pushed into `history`."
         correct: false
-        feedback: "Think about when contentText actually becomes available relative to the second turn."
+        feedback: "Re-read what the cache key is matched against on the next call."
 ---
 
 Generating the first response from a multi-turn history reprocesses every prior turn. The KV cache is the trick that skips that: save the model's internal state after the first turn, then replay it on the second turn with only the new user message.

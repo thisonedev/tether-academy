@@ -45,38 +45,38 @@ expectedOutput:
   - "▸ Listening. Speak a question and pause. Ctrl+C to quit."
 questions:
   - id: why-ban-markdown-in-system-prompt
-    text: "Why does the system prompt tell the model to avoid markdown and lists?"
+    text: "What is a key consideration behind the system prompt telling the model to avoid markdown and lists?"
     answers:
+      - text: "Markdown slows down `completion()` token generation."
+        correct: false
+        feedback: "Check what the markdown ban is actually about: generation speed, or how it sounds spoken aloud."
       - text: "The output is spoken aloud through TTS, and formatting like headings or numbered lists reads as a stuttery mess when read out."
         correct: true
-      - text: "Markdown slows down completion() token generation."
-        correct: false
-        feedback: "Check what the Note attributes the markdown ban to: generation speed, or how it sounds spoken aloud."
       - text: "The TTS engine crashes on asterisks and numbers."
         correct: false
-        feedback: "Re-read what happens to markdown when TTS reads it, described in the Note."
-  - id: what-session-yields-here
-    text: "What does session yield when iterating this transcribeStream() session, compared to the metadata: true sessions from the transcription chapter?"
+        feedback: "Re-read what actually happens to markdown when TTS reads it aloud."
+  - id: why-wrap-tts-in-wav-header
+    text: "What has to be added to `textToSpeech()`'s output before `playAudio()` can play it?"
     answers:
-      - text: "Plain text strings, with no per-segment timestamp or append metadata."
+      - text: "`textToSpeech()` returns raw PCM samples with no container format; `ffplay` needs the header to know how to play them."
         correct: true
-      - text: "The same TranscribeSegment objects with startMs, endMs, and append fields."
+      - text: "The header converts the samples from MP3 to a format `playAudio()` accepts."
         correct: false
-        feedback: "Check whether metadata: true is set on this transcribeStream() call."
-      - text: "An array of all transcribed text, delivered once at the end."
+        feedback: "Check what format `textToSpeech()` returns the samples in, and what `playAudio()` expects."
+      - text: "The header is optional and only controls the playback volume."
         correct: false
-        feedback: "Think about whether this is a one-shot result or values yielded over time."
+        feedback: "Check what the concept paragraph says a WAV header actually encodes."
   - id: why-push-assistant-before-tts
-    text: "Why does the loop write the assistant's reply into history before calling textToSpeech()?"
+    text: "Why does the loop write the assistant's reply into `history` before calling `textToSpeech()`?"
     answers:
-      - text: "So the next turn's completion() call has the full conversation, including what the assistant already said, not just the user's latest question."
+      - text: "`textToSpeech()` reads its input directly from the history array."
+        correct: false
+        feedback: "Check what `textToSpeech()` receives as input in the code example."
+      - text: "So the next turn's `completion()` call has the full conversation, including what the assistant just said."
         correct: true
-      - text: "textToSpeech() reads directly from the history array instead of taking a text option."
+      - text: "Writing to history has to happen before `unloadModel()` runs, and this is just the easiest place to do it."
         correct: false
-        feedback: "Check what textToSpeech() actually receives as input in the code example."
-      - text: "Writing to history is required before unloadModel() can run."
-        correct: false
-        feedback: "Think about what history is used for on the next loop iteration, versus what unloadModel() needs."
+        feedback: "Think about what history is used for on the next loop iteration, versus what `unloadModel()` needs."
 ---
 
 Now that we've seen speech-to-text, text generation, and text-to-speech separately, we're going to put them together.
@@ -119,7 +119,7 @@ const history: Array<{
 }> = [{ role: "system", content: SYSTEM_PROMPT }];
 ```
 
-`transcribeStream({ modelId })` returns a `Promise<TranscribeStreamSession>`. `await` it to get the session, then iterate with `for await (const rawText of session)`. The session yields plain text strings.
+`transcribeStream({ modelId })` returns a `Promise<TranscribeStreamSession>`. `await` it to get the session, then iterate with `for await (const rawText of session)`. The session emits plain text strings.
 
 Audio capture is a child ffmpeg process. The `startMicrophone()` helper spawns the system ffmpeg with the right `-i` args for the current platform (avfoundation on macOS, pulse on Linux, dshow on Windows) and pipes 16 kHz mono f32le PCM to stdout. Each chunk on stdout is a frame we feed into the session:
 
@@ -220,7 +220,7 @@ process.on("uncaughtException", (err) => {
 });
 ```
 
-Each teardown-aware RPC also lands in the body of the loop, so guard each call against the `shuttingDown` flag and catch per-turn errors, otherwise a flush that fires after `unloadModel` raises `Transcription failed: Model X unloaded` for every drained segment:
+Each teardown-aware RPC also sits in the body of the loop, so guard each call against the `shuttingDown` flag and catch per-turn errors, otherwise a flush that fires after `unloadModel` raises `Transcription failed: Model X unloaded` for every drained segment:
 
 ```ts
 for await (const rawText of session) {

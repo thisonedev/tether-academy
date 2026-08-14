@@ -27,25 +27,25 @@ questions:
   - id: mcp-event-loop-differs
     text: "How does the events loop differ when tool calls come from an MCP server instead of being defined natively?"
     answers:
-      - text: "MCP events use a separate mcpToolCall event type that needs its own case."
-        correct: false
-        feedback: "Check what event type MCP-backed tool calls actually fire."
-      - text: "It doesn't. MCP-backed tool calls fire the same toolCall events, so the same loop handles both."
-        correct: true
       - text: "MCP results only come back after the stream ends."
         correct: false
-        feedback: "Think about when toolCall events fire relative to the stream ending."
-  - id: mcp-sdk-install-requirement
-    text: "What has to be true about `@modelcontextprotocol/sdk` for this code to work?"
-    answers:
-      - text: "It's a peer dependency that @qvac/sdk installs automatically."
-        correct: false
-        feedback: "Re-read the Note about @modelcontextprotocol/sdk."
-      - text: "It has to be installed in your project separately. The SDK doesn't bundle it."
+        feedback: "Think about when `toolCall` events fire relative to the stream ending."
+      - text: "It doesn't. MCP-backed tool calls fire the same `toolCall` events, so the same loop handles both."
         correct: true
+      - text: "MCP events use a separate `mcpToolCall` event type that needs its own case."
+        correct: false
+        feedback: "Check what event type MCP-backed tool calls fire."
+  - id: mcp-sdk-install-requirement
+    text: "What has to be true about `@modelcontextprotocol/sdk` for the `mcpClient` setup above to work?"
+    answers:
       - text: "It only needs to be installed on the machine that runs the MCP server."
         correct: false
         feedback: "Check exactly where this package needs to be installed."
+      - text: "It has to be installed in your project separately. The SDK doesn't bundle it."
+        correct: true
+      - text: "It's a peer dependency that @qvac/sdk installs automatically."
+        correct: false
+        feedback: "Re-read whether `@modelcontextprotocol/sdk` is bundled by `@qvac/sdk` or installed separately."
 ---
 
 Now that we know how to wire tools in by hand, let's see how MCP makes it automatic.
@@ -68,7 +68,7 @@ const result = completion({
 });
 ```
 
-The events loop is the same as in the tool-calls lesson, since the SDK fires identical `toolCall` events whether the tool is native or MCP-backed:
+The events loop needs no changes, since the SDK fires identical `toolCall` events whether the tool is native or MCP-backed:
 
 ```ts
 for await (const event of result.events) {
@@ -81,8 +81,8 @@ for await (const event of result.events) {
 }
 ```
 
-When the sampled output is a tool call from the MCP server, the SDK routes the call through `mcpClient`. We see the same `toolCall` events as for native tools.
+When the sampled output is a tool call from the MCP server, the SDK routes the call through `mcpClient`.
 
-> Note: `captureThinking: true` is the option the first lesson in this chapter introduced. The model's `thinking` arrives on `thinkingDelta` events and stays out of the `contentDelta` stream the tool call comes from. The lesson's loop ignores `thinkingDelta` so the runner's OUTPUT panel only shows the tool calls and the final answer.
+> Note: `captureThinking: true` is the option the first lesson in this chapter introduced. The model's `thinking` comes through on `thinkingDelta` events and stays out of the `contentDelta` stream the tool call comes from. The lesson's loop ignores `thinkingDelta` so the runner's OUTPUT panel only shows the tool calls and the final answer.
 
 > Note: MCP needs `@modelcontextprotocol/sdk` installed in your project. The SDK does not bundle it.

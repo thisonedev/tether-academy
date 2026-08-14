@@ -27,28 +27,28 @@ questions:
   - id: json-object-vs-json-schema
     text: "What's the difference between `responseFormat: { type: 'json_object' }` and `type: 'json_schema'`?"
     answers:
-      - text: "They're equivalent; json_schema is just a longer way to write json_object."
+      - text: "They're equivalent; `json_schema` only adds extra syntax on top of `json_object`."
         correct: false
-        feedback: "Check what small models are shown emitting with json_object above."
-      - text: "json_object only guarantees some valid JSON object with unpinned keys, while json_schema forces the exact keys, types, and required fields through the grammar engine."
+        feedback: "Check what small models are shown emitting with `json_object` above."
+      - text: "`json_object` only guarantees some valid JSON object with unpinned keys, while `json_schema` forces the exact keys, types, and required fields through the grammar engine."
         correct: true
-      - text: "json_object is stricter because it validates against a schema automatically."
+      - text: "`json_object` is stricter because it validates against a schema automatically."
         correct: false
-        feedback: "Think about which of the two options actually pins the keys."
-  - id: what-as-const-changes
-    text: "What does `as const` on `PERSON_SCHEMA` actually change?"
+        feedback: "Think about which of the two options pins the keys."
+  - id: schema-type-sync
+    text: "Does the TypeScript type on `parsed` come from `PERSON_SCHEMA` automatically?"
     answers:
-      - text: "Nothing at runtime. It only changes how TypeScript narrows the type. The JSON Schema sent to the grammar engine is the same either way."
+      - text: "No, it's a separate, hand-written type declared right after `JSON.parse`. If `PERSON_SCHEMA` changes, this type has to be updated to match; nothing catches a mismatch."
         correct: true
-      - text: "It makes the schema's properties read-only, so completion() throws if a field gets mutated."
+      - text: "Yes, TypeScript infers it directly from `PERSON_SCHEMA`'s own type."
         correct: false
-        feedback: "Check what the closing Note says the runtime actually does with this."
-      - text: "It marks every field in the schema as required for the grammar engine."
+        feedback: "Check whether the two are one linked type or two separate declarations in the code."
+      - text: "No, but `completion()` throws at runtime if they don't match."
         correct: false
-        feedback: "Look at where `required` is actually set in the schema, separate from `as const`."
+        feedback: "The grammar engine only ever sees `PERSON_SCHEMA` when the request is built. It never sees the type applied to `JSON.parse`'s result afterward."
 ---
 
-Sometimes we want structured data. `responseFormat` is the option: tell the model the shape we need, and the engine enforces it through grammar.
+Sometimes we want structured data. `responseFormat` is the option: tell the model the structure we need, and the engine enforces it through grammar.
 
 The option takes one of three values, each giving a different strength of guarantee over the output:
 
@@ -97,7 +97,7 @@ for await (const event of result.events) {
 }
 ```
 
-Reading the schema-valid output back is the last step of the pipeline. Note that the `JSON.parse` step requires the loop to finish first. Use it as follows:
+The last step is reading the schema-valid output back. Note that the `JSON.parse` step requires the loop to finish first. Use it as follows:
 
 ```ts
 const parsed = JSON.parse(raw.trim()) as {
