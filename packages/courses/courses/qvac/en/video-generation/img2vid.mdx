@@ -17,10 +17,44 @@ tests:
     pattern: "strength\\s*:\\s*0?\\.[0-9]+"
 hints:
   - "Use WAN2_1_I2V_14B_Q4_K_M as the main model, and pass clipVisionModelSrc: CLIP_VISION_H. That's the vision encoder that lets the model read the first frame."
-  - "init_image is a Uint8Array of the still image. strength 0.85 keeps the first frame readable while letting motion happen, go lower and motion dies."
-  - "Same `outputs` shape as txt2vid: a `Promise<Uint8Array[]>` of encoded video bytes. Save with `fs.writeFileSync('out.mp4', outputs[0])`; the container is decided by the file extension."
+  - "`init_image` is a Uint8Array of the still image. `strength` 0.85 keeps the first frame readable while letting motion happen, go lower and motion dies."
+  - "Same `outputs` type as `txt2vid`: a `Promise<Uint8Array[]>` of encoded video bytes. Save with `fs.writeFileSync('out.mp4', outputs[0])`; the container is decided by the file extension."
 expectedOutput:
   - "Generated 1 video"
+questions:
+  - id: strength-near-zero
+    text: "What happens if `strength` is set close to 0 in an `img2vid` call?"
+    answers:
+      - text: "The vision encoder is skipped entirely at low `strength`."
+        correct: false
+        feedback: "Think about whether `strength` controls motion, or which model components run."
+      - text: "The output stays close to a frozen frame, since little motion is allowed to happen."
+        correct: true
+      - text: "The call fails, since `strength` can't go below 0.6 for `img2vid`."
+        correct: false
+        feedback: "Check what range the concept paragraph gives for `strength`."
+  - id: why-dimensions-must-match
+    text: "What has to be true about the still image's pixel dimensions before animating it?"
+    answers:
+      - text: "The I2V model rejects the call with a dimension-mismatch error otherwise; the source has to be sized to the target resolution first."
+        correct: true
+      - text: "Dimensions only need to match for portrait images; landscape images are exempt."
+        correct: false
+        feedback: "Re-read whether the dimension requirement is tied to orientation, or applies to any source image."
+      - text: "The SDK automatically crops the image to fit, so a mismatch is silently resized."
+        correct: false
+        feedback: "Check what error the concept paragraph says a mismatch produces."
+  - id: missing-clip-vision
+    text: "What goes wrong if `clipVisionModelSrc` is omitted or mismatched with the I2V model?"
+    answers:
+      - text: "The first frame isn't properly represented in the input, so the output has nothing to anchor on and drifts frame-to-frame."
+        correct: true
+      - text: "`loadModel` throws immediately if `clipVisionModelSrc` is missing."
+        correct: false
+        feedback: "Check whether this is a thrown error, or a quality problem in the output."
+      - text: "The output falls back to `txt2vid` behavior and ignores `init_image` entirely."
+        correct: false
+        feedback: "Think about whether the image is ignored, or just poorly anchored."
 ---
 
 The previous lesson built a video from text. This one builds one from a still image.
@@ -29,7 +63,7 @@ The previous lesson built a video from text. This one builds one from a still im
 
 The still comes in via `init_image`. `strength` controls how much motion happens, and at `0` we get a frozen frame, and at `1` we lose all resemblance to the source. Most clips sit somewhere around `0.6` to `0.85`.
 
-For img2vid, the model needs a vision encoder alongside the diffusion model. `WAN2_1_I2V_14B_Q4_K_M` is the I2V model, with `CLIP_VISION_H` as the vision encoder:
+For `img2vid`, the model needs a vision encoder alongside the diffusion model. `WAN2_1_I2V_14B_Q4_K_M` is the I2V model, with `CLIP_VISION_H` as the vision encoder:
 
 The I2V model needs a vision tower as a side file (CLIP-style encoder), in the same slot T2V uses for T5-XXL. You would load it like so:
 
@@ -74,9 +108,3 @@ console.log(`Generated ${outputs.length} video`);
 ```
 
 > Note: `clipVisionModelSrc` is the vision encoder that comes alongside the I2V model. Pairing it with the wrong model (or omitting it) means the first frame isn't in the input and the output has nothing to anchor on, so the result drifts frame-to-frame.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelSrc: WAN2_1_I2V_14B_Q4_K_M`, `modelType: "sdcpp-generation"`, and the T5-XXL / VAE / CLIP vision sources in `modelConfig`.
-2. Read a portrait PNG into a `Uint8Array` with `fs.readFileSync`.
-3. Call `video({ modelId, mode: "img2vid", prompt, init_image, strength: 0.85, width, height, video_frames, fps })`, await the outputs, write `outputs[0]` to a `.mp4` file, and console.log the count.

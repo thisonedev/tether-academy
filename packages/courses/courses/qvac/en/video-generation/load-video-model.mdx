@@ -18,6 +18,29 @@ hints:
   - "Once the model loads, every video() call uses the same modelId. No reload between runs."
 expectedOutput:
   - "videoId: model-7f2a"
+questions:
+  - id: why-mode-video-required
+    text: "What has to be set in `modelConfig` for the diffusion engine to emit a sequence of frames instead of a single image?"
+    answers:
+      - text: "`mode: 'video'` is optional and only speeds up loading."
+        correct: false
+        feedback: "Re-read whether `mode` is required, or just a performance tweak."
+      - text: "`mode` only changes the output file format, from PNG to AVI."
+        correct: false
+        feedback: "Check what the engine actually does without `mode: 'video'`, not just what file extension changes."
+      - text: "`mode: 'video'` switches the diffusion engine to emit a sequence of frames instead of a single image."
+        correct: true
+  - id: why-first-call-slower
+    text: "What's the difference between the first `video()` call after loading and the ones that follow it?"
+    answers:
+      - text: "Every `video()` call reloads the three model files from disk."
+        correct: false
+        feedback: "Check what the concept paragraph says happens on later `video()` calls versus the first `loadModel` call."
+      - text: "`loadModel` itself is slow the first time, since the three GGUF files together run hundreds of megabytes; `video()` calls after that reuse the loaded model."
+        correct: true
+      - text: "The first call always renders at a higher resolution to calibrate the model."
+        correct: false
+        feedback: "Think about what's described as slow: model loading, or output resolution."
 ---
 
 We're starting a new chapter on video generation, and we're going to load a model that turns prompts into short clips.
@@ -46,8 +69,3 @@ console.log("videoId:", videoId);
 The next lesson writes a real `video()` call against this `videoId`.
 
 > Note: `mode: "video"` is required. Without it, the engine tries to render a single image instead of a clip.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelType: "sdcpp-generation"`, `modelConfig.mode: "video"`, and the T5-XXL and VAE src fields.
-2. Log the resulting `videoId`.
