@@ -23,6 +23,7 @@ import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
 import { MonacoLessonEditor } from './monaco-lesson-editor.js';
+import { QuestionCheck } from './question-check.js';
 import { ChatInputBar, LessonConsole } from './lesson-console.js';
 import type { ConsoleEntry } from './lesson-console.js';
 
@@ -31,6 +32,19 @@ export interface LessonTest {
   description: string;
   pattern?: string;
   contains?: string;
+}
+
+export interface LessonQuestionAnswer {
+  text: string;
+  correct: boolean;
+  /** Shown when this wrong answer is picked. */
+  feedback?: string;
+}
+
+export interface LessonQuestion {
+  id: string;
+  text: string;
+  answers: LessonQuestionAnswer[];
 }
 
 export interface LessonArgvSlot {
@@ -54,6 +68,7 @@ export interface LessonData {
   tests: LessonTest[];
   hints: string[];
   expectedOutput: string[];
+  questions?: LessonQuestion[];
   platforms: Array<'node' | 'web' | 'mobile' | 'desktop'>;
   sourceExample?: string;
   prevUrl?: string;
@@ -191,6 +206,7 @@ declare global {
 
 export function LessonWorkspace({ data, children }: { data: LessonData; children: ReactNode }) {
   const [userCode, setUserCode] = useState(data.startingCode);
+  const [questionsCorrect, setQuestionsCorrect] = useState(false);
   const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');
   // Deferred to useEffect so the first client render matches the SSR'd HTML.
   const [isDesktop, setIsDesktop] = useState(false);
@@ -325,6 +341,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     setRunMode(isDesktop ? 'this-device' : 'simulated');
     setShowCompleteModal(false);
     setChapterReady(false);
+    setQuestionsCorrect(false);
   }, [data.startingCode, data.readOnly, isDesktop]);
 
   useEffect(() => {
@@ -435,7 +452,10 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       : latestCheck.ai === 'done'
         ? PASSING_MATCH_STATUSES.has(latestCheck.aiVerdict ?? 'wrong')
         : false;
-  const allPassed = structuralPassed && aiGate;
+  const hasTests = data.tests.length > 0;
+  const hasQuestions = (data.questions?.length ?? 0) > 0;
+  const codeCheckPassed = hasTests ? structuralPassed && aiGate : true;
+  const allPassed = codeCheckPassed && (!hasQuestions || questionsCorrect);
 
   // Subscribed for the workspace's lifetime (not just while checking) so a
   // review that's still running when the user navigates away is ignored
@@ -960,7 +980,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   return (
     <div className="workspace-root flex w-full flex-col lg:h-[calc(100vh-3.5rem)]">
       <div className="workspace-row flex min-h-0 flex-col gap-4 overflow-x-auto px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:flex-1 lg:flex-row lg:gap-6 lg:overflow-hidden lg:pb-0 lg:overflow-x-hidden">
-        <section className="workspace-sidebar min-w-0 lg:max-w-[42%] lg:min-w-[360px] lg:flex-shrink-0 lg:h-full lg:overflow-y-auto lg:pr-2">
+        <section className="workspace-sidebar min-w-0 lg:max-w-[42%] lg:min-w-[360px] lg:flex-shrink-0 lg:h-full lg:overflow-y-auto lg:pb-[9px] lg:pr-2">
           <CurriculumStrip chapter={data.currentChapter} currentLesson={data.currentLesson} />
 
           <header className="mb-5">
@@ -987,6 +1007,10 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
           </header>
 
           <div className="prose-md">{children}</div>
+
+          {data.questions && data.questions.length > 0 ? (
+            <QuestionCheck questions={data.questions} onAllCorrectChange={setQuestionsCorrect} />
+          ) : null}
         </section>
 
         <section className="workspace-runner-section flex min-h-[560px] flex-col pb-[9px] lg:h-full lg:min-h-0 lg:flex-1 lg:min-w-[640px]">
@@ -1086,7 +1110,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                   <span className="hidden sm:inline">Finish chapter</span>
                   <ArrowRight className="size-4" />
                 </button>
-              ) : (
+              ) : allPassed ? (
                 <Link
                   href={data.nextUrl}
                   className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-3 py-2 text-sm text-canvas-foreground transition-colors hover:bg-canvas-muted"
@@ -1094,6 +1118,20 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                   <span className="hidden sm:inline">Next</span>
                   <ArrowRight className="size-4" />
                 </Link>
+              ) : (
+                <span
+                  title={
+                    hasQuestions && hasTests
+                      ? 'Pass the code check and answer the questions to continue'
+                      : hasQuestions
+                        ? 'Answer the questions to continue'
+                        : 'Pass the code check to continue'
+                  }
+                  className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-3 py-2 text-sm text-canvas-muted-foreground opacity-50"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ArrowRight className="size-4" />
+                </span>
               )
             ) : chapterReady ? (
               <button

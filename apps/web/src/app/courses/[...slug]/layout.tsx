@@ -9,6 +9,7 @@ import {
 import {
   type LessonArgvSlot,
   type LessonData,
+  type LessonQuestion,
   type LessonTest,
   LessonWorkspace,
 } from '@academy/ui';
@@ -23,6 +24,7 @@ interface FrontMatter {
   expectedOutput?: string[];
   platforms?: LessonData['platforms'];
   argv?: LessonArgvSlot[];
+  questions?: LessonQuestion[];
 }
 
 function lessonReference(title: string, fm: FrontMatter, source: string): string {
@@ -224,6 +226,7 @@ export default async function Layout({
       currentLesson,
       readOnly: !isCodeLesson,
       argv: fm.argv,
+      questions: fm.questions,
     };
 
     return <LessonWorkspace data={data}>{children}</LessonWorkspace>;
