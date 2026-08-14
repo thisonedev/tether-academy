@@ -15,6 +15,29 @@ hints:
   - "translate({ modelId, text, modelType: 'nmtcpp-translation', stream: false }) returns the translated string via result.text."
 expectedOutput:
   - "Translated text EN -> FR: This is a test of the Bergamot translation model. -> \"Ceci est un test du modèle de traduction Bergamot.\""
+questions:
+  - id: why-single-language-pair
+    text: "What is a key characteristic of each Bergamot model that limits `BERGAMOT_EN_FR` to English-French only?"
+    answers:
+      - text: "`BERGAMOT_EN_FR` translates any pair; from and to in `modelConfig` pick the pair at inference time."
+        correct: false
+        feedback: "Check where from and to are set, and whether non-direct pairs translate without extra configuration."
+      - text: "Each Bergamot model is trained for a single language pair; a different pair like EN to DE needs a different model constant."
+        correct: true
+      - text: "The 30 MB size limit is what restricts it to one language pair."
+        correct: false
+        feedback: "Think about why the model is small, versus what determines which languages it covers."
+  - id: what-modeltype-does
+    text: "What does `modelType: 'nmtcpp-translation'` do on the `translate()` call?"
+    answers:
+      - text: "It selects which language pair to translate between."
+        correct: false
+        feedback: "Check what from and to in `modelConfig` already handle, versus what `modelType` is for."
+      - text: "It tells the SDK which addon to route the call through, distinguishing translation from transcription or text generation."
+        correct: true
+      - text: "It enables streaming output instead of a single `result.text` value."
+        correct: false
+        feedback: "Re-read what `stream: false` controls versus what `modelType` controls."
 ---
 
 We're starting a new chapter on translation, and we're going to translate a string between two languages.
@@ -51,8 +74,3 @@ console.log(`EN -> FR: "${translatedText}"`);
 The `modelType: "nmtcpp-translation"` flag tells the SDK which addon to route the call through. Without it, the SDK can't pick the right engine for translation vs transcription vs text generation.
 
 > Note: each translation model is a single language pair. For EN to DE you'd load `BERGAMOT_EN_DE` instead. The SDK doesn't translate between non-direct pairs without explicit pivot configuration.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelSrc: BERGAMOT_EN_FR` and `modelConfig.engine: "Bergamot"` (plus `from: "en"`, `to: "fr"`).
-2. Call `translate({ modelId, text, modelType: "nmtcpp-translation", stream: false })`, `await result.text`, and log the translated string.
