@@ -16,6 +16,11 @@ const HIDE_AI_CHAT_CSS =
 const HIDE_USER_MENU_CSS =
   '.site-header div:has(button span.bg-emerald-500\\/15){display:none!important}';
 
+// Cross-lesson navigation (bottom Previous/Next, top lesson pills) bypasses the LMS's own
+// sequencing, so its own sidebar never learns the current lesson changed. Hidden in favor of
+// the LMS's own toolbar/sidebar, which stays in sync because it drives the navigation itself.
+const HIDE_LESSON_NAV_CSS = 'nav.sticky.bottom-0{display:none!important}.m-0.flex.list-none.flex-wrap{display:none!important}';
+
 const ROOT_FROM_CURRENT_SCRIPT =
   '(function(){try{var s=document.currentScript;var i=s&&s.src?s.src.indexOf("/_next/"):-1;' +
   'return i>=0?s.src.slice(0,i):""}catch(e){return ""}})()';
@@ -117,7 +122,7 @@ export async function rewriteHtmlFiles(stagingDir, { shimFileName }) {
 
     const lessonKeyScript = lessonKey ? `window.__SCORM_LESSON_KEY__=${JSON.stringify(lessonKey)};` : '';
     const injected =
-      `<style>${HIDE_AI_CHAT_CSS}${HIDE_USER_MENU_CSS}</style>` +
+      `<style>${HIDE_AI_CHAT_CSS}${HIDE_USER_MENU_CSS}${HIDE_LESSON_NAV_CSS}</style>` +
       `<script>${lessonKeyScript}</script><script src="${relPrefix}${shimFileName}"></script>`;
     html = html.replace(/<body([^>]*)>/, (_m, attrs) => `<body${attrs}>${injected}`);
 
