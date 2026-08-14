@@ -1,0 +1,16 @@
+{
+  "name": "@academy/scorm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@academy/courses": "workspace:*"
+  },
+  "devDependencies": {
+    "archiver": "^7.0.1",
+    "esbuild": "^0.25.0"
+  }
+}
