@@ -16,6 +16,29 @@ hints:
 expectedOutput:
   - "▸ Created workspace"
   - "▸ Deleted workspace"
+questions:
+  - id: what-flips-close-to-delete
+    text: "What's the one thing that flips ragCloseWorkspace from closing a workspace to deleting it?"
+    answers:
+      - text: "Passing deleteOnClose: true instead of omitting it or passing false."
+        correct: true
+      - text: "Calling a different function, ragDeleteWorkspace, instead of ragCloseWorkspace."
+        correct: false
+        feedback: "Check which function name the code example actually calls."
+      - text: "Calling ragIngest a second time against the same workspace name."
+        correct: false
+        feedback: "Think about which call above is responsible for removal, not for creation."
+  - id: ingest-after-delete
+    text: "After ragCloseWorkspace runs with deleteOnClose: true, what happens if ragIngest targets that same workspace name again?"
+    answers:
+      - text: "It starts fresh, since the workspace and its on-disk data are gone."
+        correct: true
+      - text: "It throws, because the name is now permanently reserved."
+        correct: false
+        feedback: "Check what the concept paragraph says the next ragIngest against that name does."
+      - text: "It restores the deleted documents from a backup."
+        correct: false
+        feedback: "Think about whether ragCloseWorkspace with deleteOnClose keeps any copy of the data around."
 ---
 
 The list-and-close lesson closed the in-memory handle for a workspace without touching the data. This one drops the workspace and its on-disk files in one call.
@@ -47,8 +70,3 @@ await unloadModel({ modelId });
 After the call returns, the workspace is gone. The next `ragIngest` against the same name starts fresh; the next `ragSearch` returns "workspace not found" instead of empty results.
 
 > Note: `deleteOnClose: true` is the destructive flag. Omit it and the same `ragCloseWorkspace` call only releases the in-memory handle, leaving the on-disk data intact for the next `ragOpen` (when one is available).
-
-## Put it to the test
-
-1. Call `ragIngest` to add a few documents to a named workspace, then log the workspace name and document count.
-2. Call `ragCloseWorkspace({ workspace, deleteOnClose: true })` and log the deletion.

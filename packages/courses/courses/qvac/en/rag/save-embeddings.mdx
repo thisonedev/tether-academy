@@ -16,6 +16,29 @@ hints:
 expectedOutput:
   - "▸ Saved"
   - "embeddings to the workspace"
+questions:
+  - id: why-carry-embeddingmodelid
+    text: "Why does each RagEmbeddedDoc need to carry its own embeddingModelId?"
+    answers:
+      - text: "It has to match the modelId passed to ragSearch later, since similarity scores only make sense between vectors from the same model."
+        correct: true
+      - text: "embeddingModelId picks which model ragSaveEmbeddings uses to compute the vector."
+        correct: false
+        feedback: "Check whether ragSaveEmbeddings computes anything, or just stores what it's handed."
+      - text: "It's a display label with no effect on search results."
+        correct: false
+        feedback: "Think about what would go wrong if a search compared vectors from two different models as if they matched."
+  - id: why-no-model-needed
+    text: "Why doesn't ragSaveEmbeddings need a loaded model to run?"
+    answers:
+      - text: "It's a storage-only operation; the embeddings are already computed before this call runs."
+        correct: true
+      - text: "It computes a cheaper approximate embedding without a full model."
+        correct: false
+        feedback: "Re-read what the Note says ragSaveEmbeddings actually needs a model for."
+      - text: "It borrows whatever model ragSearch loaded earlier in the process."
+        correct: false
+        feedback: "Think about the order these calls run in, and whether a search has even happened yet."
 ---
 
 Now that we have the chunk-embed-save pipeline running through `ragIngest`, we're going to break it apart. This lesson covers the third step on its own: saving vectors you've already computed.
@@ -35,7 +58,3 @@ console.log(`▸ Saved ${saved}/${saveResult.length} embeddings to the workspace
 ```
 
 > Note: `ragSaveEmbeddings` is a storage-only operation. The SDK doesn't need the model on hand to save. It only needs the model to search. Re-running with the same `id` is idempotent; the existing entry is overwritten.
-
-## Put it to the test
-
-1. Call `ragSaveEmbeddings({ workspace, documents })` with the prefilled `embeddedDocs` and log the count of fulfilled saves out of `saveResult.length`.

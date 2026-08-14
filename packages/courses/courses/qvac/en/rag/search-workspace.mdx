@@ -20,6 +20,29 @@ expectedOutput:
   - "Query: machine learning"
   - "Score 0.8712: Machine learning is a subset of artificial intelligence..."
   - "Score 0.6234: Deep learning uses neural networks..."
+questions:
+  - id: why-modelid-must-match
+    text: "Why must the modelId passed to ragSearch match the one used at ingest time?"
+    answers:
+      - text: "Different models put vectors in different spaces, so cross-model similarity scores are meaningless."
+        correct: true
+      - text: "ragSearch throws an error whenever the modelId doesn't match exactly."
+        correct: false
+        feedback: "Check what the concept paragraph says happens when the models differ, rather than assuming it throws."
+      - text: "modelId only affects how fast the search runs, not the scores."
+        correct: false
+        feedback: "Re-read what determines whether a similarity score means anything at all."
+  - id: what-topk-controls
+    text: "What does topK actually control on a ragSearch call?"
+    answers:
+      - text: "How many results come back, not a minimum score a result has to clear."
+        correct: true
+      - text: "The minimum similarity score a result must clear to be included."
+        correct: false
+        feedback: "Check the Note about what topK is, and what it explicitly isn't."
+      - text: "How many documents get re-embedded before the search runs."
+        correct: false
+        feedback: "Think about which lesson's call is responsible for embedding, and which one just queries."
 ---
 
 We've got a workspace from the previous lesson. This lesson queries it.
@@ -50,8 +73,3 @@ for (const result of results) {
 Each `result` carries the same `content` we put in, with a `score` field added (higher means more similar).
 
 > Note: `topK` is an integer, not a "score threshold". If you want to filter by confidence, sort by `score` and drop anything below your threshold.
-
-## Put it to the test
-
-1. Call `ragSearch({ modelId, workspace, query, topK })` and store the results.
-2. Add a `for (const result of results)` loop that console.logs `result.score` and the first 80 chars of `result.content`.

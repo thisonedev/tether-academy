@@ -25,6 +25,40 @@ expectedOutput:
   - "▸ Creating vector search index..."
   - "▸ Top 3 most similar documents:"
   - "1. (Score:"
+questions:
+  - id: why-poll-queryable
+    text: "Why does the code above poll collection.listSearchIndexes until queryable is true before running the search?"
+    answers:
+      - text: "Index creation is asynchronous, so an early search could run against an index that isn't ready yet."
+        correct: true
+      - text: "MongoDB requires a fixed delay after every insertMany before any query can run."
+        correct: false
+        feedback: "Check what specifically is being polled for: an index state, or a fixed timer."
+      - text: "Polling retries the embed() call until it succeeds."
+        correct: false
+        feedback: "Think about what listSearchIndexes actually reports on: embeddings, or index status."
+  - id: what-category-filter-changes
+    text: "What does the filter: { category: { $eq: category } } clause change about the search results?"
+    answers:
+      - text: "It restricts candidates to the requested category, instead of ranking across the whole collection."
+        correct: true
+      - text: "It sorts the results by category alphabetically."
+        correct: false
+        feedback: "Check whether this clause changes the ordering, or changes which documents are eligible at all."
+      - text: "It replaces the vector search with an exact text match on category."
+        correct: false
+        feedback: "Re-read whether $vectorSearch still runs when this filter is present."
+  - id: where-scoring-happens
+    text: "Where does the actual similarity scoring for $vectorSearch happen?"
+    answers:
+      - text: "On the MongoDB server; the SDK only produces the query embedding."
+        correct: true
+      - text: "In the SDK, right after embed() returns the query vector."
+        correct: false
+        feedback: "Check what the Note says runs server-side versus what the SDK contributes."
+      - text: "Wherever the aggregate() results get logged, after they're returned."
+        correct: false
+        feedback: "Think about what a single aggregation round-trip implies about where the work happens."
 ---
 
 The QVAC RAG chapter has a built-in workspace model, but production setups usually want their own vector store. MongoDB Atlas Vector Search is one option: the SDK contributes the embedding model, and you write the storage layer and the scan.
@@ -134,9 +168,3 @@ The `filter: { category: { $eq: category } }` clause restricts the search to doc
 `unloadModel({ modelId })` and `client.close()` end the run.
 
 > Note: the `$vectorSearch` stage runs on the MongoDB server, not in the SDK. The candidate enumeration, the cosine similarity scoring, and the limit step are all server-side. The SDK only emits the query embedding; everything past that is a single aggregation round-trip. The desktop runner probes `localhost:27017` before this lesson runs; if a server answers, the lesson exercises it directly, otherwise the runner falls back to an in-process `MongoClient` mock so the lesson still completes.
-
-## Put it to the test
-
-1. Connect to MongoDB at `mongodb://localhost:27017/?directConnection=true`. Load `GTE_LARGE_FP16` with `loadModel`.
-2. Embed each sample document with `embed({ modelId, text })` and `collection.insertMany` the result. `collection.createSearchIndex` with `type: 'vectorSearch'`, `numDimensions: 1024`, and a `category` filter field. Poll `collection.listSearchIndexes` until `queryable === true`.
-3. Embed the query string with `embed({ modelId, text: query })`. Run `collection.aggregate([{ $vectorSearch: { index, path, queryVector, filter, numCandidates: 100, limit: 3 } }, { $project: { ..., score: { $meta: 'vectorSearchScore' } } }]).toArray()`. Log `Score`, `Category`, and `text` per result.

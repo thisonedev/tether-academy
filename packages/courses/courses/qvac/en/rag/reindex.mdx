@@ -20,6 +20,29 @@ hints:
 expectedOutput:
   - "Reindexed: false"
   - "Reason: insufficient documents"
+questions:
+  - id: why-insufficient-documents
+    text: "Why does `ragReindex` return `{ reindexed: false, reason: 'insufficient documents' }` for a small workspace?"
+    answers:
+      - text: "The workspace's embedding model doesn't support reindexing."
+        correct: false
+        feedback: "Think about what NUM_CENTROIDS is counting: documents, or models."
+      - text: "`ragReindex` only runs on workspaces created with `chunk: true`."
+        correct: false
+        feedback: "Check what the hints say determines whether a reindex has enough data to run."
+      - text: "`HyperDB`'s k-means needs at least 4 documents to produce its centroids, and this workspace falls short."
+        correct: true
+  - id: why-safe-to-reindex-twice
+    text: "What happens if you call `ragReindex` twice in a row?"
+    answers:
+      - text: "The second call is blocked automatically and returns immediately with an error."
+        correct: false
+        feedback: "Check whether the concept paragraph describes the second call as blocked, or as a no-op."
+      - text: "The operation is idempotent; the second run finds nothing left to rebuild."
+        correct: true
+      - text: "Each call only reindexes documents added since the previous reindex."
+        correct: false
+        feedback: "Re-read what `ragReindex` regenerates: everything stored, or just new entries."
 ---
 
 After enough `ragDeleteEmbeddings` and re-ingest cycles, scores can drift. The index no longer reflects the source text. `ragReindex({ workspace })` processes the stored text for that workspace and regenerates every embedding from scratch.
@@ -41,7 +64,3 @@ if (!result.reindexed) {
 For this 4-recipe demo the reindex deliberately bails. The point of the lesson is to read the result and know what to do with it: in a real workspace with thousands of documents, this branch never fires, you just log the success and proceed with the updated embeddings.
 
 > Note: a reindex on a large workspace takes roughly the same time as the original ingest. Plan to run it during a quiet window or as a one-shot maintenance task.
-
-## Put it to the test
-
-1. Call `await ragReindex({ workspace })` and console.log `result.reindexed` plus the reason from `result.details?.reason` when it's `false`.

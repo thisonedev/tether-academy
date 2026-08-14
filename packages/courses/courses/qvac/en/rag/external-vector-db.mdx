@@ -23,6 +23,40 @@ expectedOutput:
   - "▸ Query:"
   - "1. [ID:"
   - "distance:"
+questions:
+  - id: sdk-vs-your-code
+    text: "In this pipeline, which pieces come from the QVAC SDK, and which are written directly against SQLite-Vector?"
+    answers:
+      - text: "The SDK provides embed() and loadModel(); the schema, the index calls, and the scan query are all written against SQLite-Vector directly."
+        correct: true
+      - text: "The SDK provides the whole pipeline, including the SQL schema and the scan query."
+        correct: false
+        feedback: "Check which functions in the code blocks come from an SDK import versus a raw db.exec call."
+      - text: "SQLite-Vector supplies the embedding model, and the SDK only stores the vectors."
+        correct: false
+        feedback: "Think about which library actually turns text into a vector here."
+  - id: why-dimension-must-match
+    text: "Why does the dimension passed to vector_init have to match the embedding model exactly?"
+    answers:
+      - text: "A mismatch fails at index time, since the index is built to expect vectors of a fixed width."
+        correct: true
+      - text: "A mismatched vector is silently padded with zeros to fit."
+        correct: false
+        feedback: "Re-read what the concept paragraph says happens on a dimension mismatch."
+      - text: "The dimension only affects query speed, not correctness."
+        correct: false
+        feedback: "Check where the concept paragraph says a mismatch actually shows up."
+  - id: scan-without-init
+    text: "What happens to vector_quantize_scan if vector_init and vector_quantize were never called first?"
+    answers:
+      - text: "The scan falls back to byte-level comparison instead of a real vector search."
+        correct: true
+      - text: "The scan throws immediately and refuses to run."
+        correct: false
+        feedback: "Check what the concept paragraph says a scan falls back to, not whether it errors."
+      - text: "The scan calls vector_init itself automatically before running."
+        correct: false
+        feedback: "Think about whether any step here runs implicitly, or whether each has to be called explicitly."
 ---
 
 Production setups usually want their own vector store. SQLite-Vector is the example here, but the same pattern works with pgvector, LanceDB, or ChromaDB. This lesson builds the RAG flow against SQLite-Vector directly: `embed()` and `loadModel()` are the SDK pieces, the storage layer and the scan are yours.
@@ -92,10 +126,3 @@ for (const [i, r] of results.entries()) {
 The dimension in `vector_init` must match the embedding model. `GTE_LARGE_FP16` produces 1024-dim vectors. A different model would need a different `dimension=N`. Mismatches fail at index time. The error shows up on `vector_init`, not on the first `vector_quantize_scan`.
 
 > Note: SQLite-Vector is one option. The same pattern works with pgvector, LanceDB, ChromaDB, or any store that takes a `number[]` per row and exposes a top-K-by-distance query.
-
-## Put it to the test
-
-1. Initialize SQLite with `sqlite3InitModule()` and `new sqlite3.oo1.DB(":memory:", "c")`. `loadModel({ modelSrc: GTE_LARGE_FP16 })` and `CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT NOT NULL, embedding BLOB NOT NULL)`.
-2. For each `samples[i]`, call `await embed({ modelId, text: samples[i].text })` and `INSERT INTO documents VALUES (?, ?, vector_as_f32(?))` with the JSON-stringified embedding.
-3. Run `SELECT vector_init('documents', 'embedding', 'type=FLOAT32,dimension=1024')` and `SELECT vector_quantize('documents', 'embedding')`.
-4. `await embed({ modelId, text: query })` for the query, then a `vector_quantize_scan` join for top-3, and console.log each result's id, distance, and text.

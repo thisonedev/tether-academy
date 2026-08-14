@@ -18,6 +18,40 @@ hints:
   - "Pass chunk: false for short documents so the SDK does not try to split them."
 expectedOutput:
   - "Ingested 3 documents"
+questions:
+  - id: why-rerun-doesnt-double
+    text: "Why doesn't calling ragIngest a second time against the same workspace double the document count?"
+    answers:
+      - text: "The SDK identifies documents it has already embedded and skips re-ingesting them."
+        correct: true
+      - text: "ragIngest wipes the whole workspace before writing anything new."
+        correct: false
+        feedback: "Re-read what the Note says happens to already-embedded documents on a second run."
+      - text: "ragIngest refuses to run a second time against the same workspace name."
+        correct: false
+        feedback: "Check whether the Note describes the second run as failing, or as just faster."
+  - id: what-chunk-false-does
+    text: "What does chunk: false control on this ragIngest call?"
+    answers:
+      - text: "It tells the SDK not to split each document, so one document becomes one embedded entry."
+        correct: true
+      - text: "It skips the embedding step and stores raw text only."
+        correct: false
+        feedback: "Think about which of the pipeline's three steps, chunk, embed, save, chunk: false actually skips."
+      - text: "It limits the call to a single document per run."
+        correct: false
+        feedback: "Check what chunk controls, compared to how many entries the documents array can hold."
+  - id: workspace-vs-chapter3-search
+    text: "How does a RAG workspace differ from the in-memory search built earlier?"
+    answers:
+      - text: "The workspace persists vectors to disk, so the index survives between runs instead of living only in memory."
+        correct: true
+      - text: "A workspace can only ever hold a single document."
+        correct: false
+        feedback: "Check what ragIngest logs as the document count in the expected output."
+      - text: "A workspace skips embedding and stores raw text directly."
+        correct: false
+        feedback: "Think about what ragIngest still has to run before it can save anything to disk."
 ---
 
 Now that we've built the smallest useful search engine in chapter 3, we're going to scale it up to a workspace that lives on disk.
@@ -42,8 +76,3 @@ console.log("First entry:", result.processed[0]);
 `chunk: false` tells the SDK to skip splitting. The next lesson uses chunking for longer text.
 
 > Note: re-running `ragIngest` against the same workspace doesn't double-ingest. The SDK identifies already-embedded documents and skips them. The first run takes the longest; the second is faster.
-
-## Put it to the test
-
-1. Call `ragIngest({ modelId, workspace, documents: samples, chunk: false })`.
-2. Console.log `result.processed.length` and inspect the first entry to confirm chunking was off.
