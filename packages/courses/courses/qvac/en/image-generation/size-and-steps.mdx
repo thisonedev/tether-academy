@@ -21,6 +21,40 @@ hints:
   - "More steps = slower but more refined. 20-30 is a good range for SD/SDXL; Flux can go lower. The seed defaults to -1 (random); pin it if you want reproducibility."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: why-quadruple-not-double
+    text: "Why does doubling both width and height roughly quadruple the generation work, not double it?"
+    answers:
+      - text: "Resolution is two-dimensional, so doubling both dimensions multiplies the total pixel count by four."
+        correct: true
+      - text: "steps automatically doubles whenever width and height do."
+        correct: false
+        feedback: "Check whether steps changes with resolution, or stays an independent option."
+      - text: "The SDK runs two separate diffusion passes at higher resolutions."
+        correct: false
+        feedback: "Think about what actually scales when width and height increase: pixel count, or pass count."
+  - id: what-more-steps-does
+    text: "What does increasing steps beyond a certain point do to the output?"
+    answers:
+      - text: "The image stops changing much; more steps means diminishing refinement, not unlimited improvement."
+        correct: true
+      - text: "The output resolution increases with every additional step."
+        correct: false
+        feedback: "Check which options control resolution versus which one controls denoising iterations."
+      - text: "Additional steps always improve the image proportionally, with no limit."
+        correct: false
+        feedback: "Re-read what happens once refinement levels off."
+  - id: why-seed-is-per-call
+    text: "Why does the Note specify that seed is per-call, not per-model?"
+    answers:
+      - text: "Two separate diffusion() calls need to pass the same seed and prompt themselves to get identical output; the model doesn't remember a previous seed."
+        correct: true
+      - text: "seed only works if it's set once when the model is loaded."
+        correct: false
+        feedback: "Check whether seed is passed to loadModel or to diffusion() in the code example."
+      - text: "Per-call just means the seed changes automatically on every call."
+        correct: false
+        feedback: "Think about what happens across two calls that both pass the same seed value."
 ---
 
 The previous lesson made our first image. This one tunes the size and the step count.
@@ -59,8 +93,3 @@ console.log(`Generated ${outputs.length} image`);
 Run it twice with the same seed and we get byte-identical output. Change the prompt and we get a different image from the same starting noise.
 
 > Note: the seed is per-call, not per-model. Two `diffusion()` calls with the same `seed` and the same `prompt` produce identical output; changing either breaks the reproducibility.
-
-## Put it to the test
-
-1. Call `diffusion({ modelId, prompt, width: 512, height: 512, steps: 20, seed: 42 })`.
-2. `await result.outputs` and write `outputs[0]` to disk.

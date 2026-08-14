@@ -18,6 +18,29 @@ hints:
   - "The SDK only downloads files that aren't already on disk. The second run with the same constants skips the download and goes straight to inference."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: caller-perspective-split-vs-single
+    text: "From the caller's perspective, what changes about the diffusion() call when the model is split-layout instead of single-file?"
+    answers:
+      - text: "Nothing; outputs is the same Promise<Uint8Array[]> shape either way, since the extra complexity is all at load time."
+        correct: true
+      - text: "The prompt has to be pre-tokenized before diffusion() runs."
+        correct: false
+        feedback: "Check who's responsible for tokenization in the pipeline described in the concept paragraph."
+      - text: "diffusion() needs a separate call for each of the three files."
+        correct: false
+        feedback: "Think about how many loadModel and diffusion() calls this lesson actually makes."
+  - id: repeated-load-same-constants
+    text: "What happens if loadModel runs a second time with the same FLUX.2-klein constants?"
+    answers:
+      - text: "It skips downloading files that are already on disk and goes straight to inference."
+        correct: true
+      - text: "It re-downloads all three files to verify they haven't changed."
+        correct: false
+        feedback: "Check what the Note says the SDK does with files already present on disk."
+      - text: "It fails, since a model can only be loaded once per process."
+        correct: false
+        feedback: "Re-read whether a repeated load fails, or just runs faster."
 ---
 
 We've used a single model file so far. FLUX.2-klein needs three: a diffusion model, a text encoder, and a VAE.
@@ -60,9 +83,3 @@ console.log(`Generated ${outputs.length} image`);
 ```
 
 > Note: the SDK only downloads the files that aren't already on disk. The second run with the same constants skips the download and goes straight to inference.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelType: "sdcpp-generation"`, `modelSrc: FLUX_2_KLEIN_4B_Q4_0`, and a `modelConfig` block holding the LLM encoder and VAE.
-2. Call `diffusion({ modelId, prompt })` and `await result.outputs`.
-3. Write `outputs[0]` to a PNG and log the image count.

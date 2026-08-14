@@ -18,6 +18,29 @@ hints:
   - "Same options shape as before. The two new fields are init_image and strength."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: what-strength-controls
+    text: "What does strength control in an img2img call?"
+    answers:
+      - text: "How much the output is allowed to differ from the source image, from fully preserved at 0 to fully ignored at 1."
+        correct: true
+      - text: "How many denoising steps the model runs."
+        correct: false
+        feedback: "Check which option controls step count versus which one controls how much the source image constrains the result."
+      - text: "The output image's resolution relative to the source."
+        correct: false
+        feedback: "Re-read what governs output resolution according to the Note."
+  - id: init-image-size-vs-output-size
+    text: "If init_image is smaller than the requested width and height, what determines the output resolution?"
+    answers:
+      - text: "width and height; the source image's dimensions are only a lower bound, not the final size."
+        correct: true
+      - text: "The output is capped at the source image's original dimensions."
+        correct: false
+        feedback: "Check what the Note says init_image's dimensions actually are: a lower bound, or a hard cap."
+      - text: "diffusion() rejects the call if the source is smaller than the requested size."
+        correct: false
+        feedback: "Think about whether a size mismatch actually stops the call here."
 ---
 
 Now that we can do txt2img, we're going to learn img2img.
@@ -66,9 +89,3 @@ console.log(`Generated ${outputs.length} image`);
 We tweak `strength` until the balance between "preserves the source" and "rewrites everything" feels right.
 
 > Note: `init_image` dimensions are the lower bound. The output resolution is governed by `width` and `height`, not the source size.
-
-## Put it to the test
-
-1. Read an input image with `fs.readFileSync` into a `Uint8Array`.
-2. Call `diffusion({ modelId, prompt, init_image, strength: 0.6, width, height, steps })` and `await result.outputs`.
-3. Write the first PNG to disk and console.log the count.

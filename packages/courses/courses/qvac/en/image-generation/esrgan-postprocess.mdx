@@ -24,6 +24,40 @@ hints:
   - "Use a small source size when you plan to upscale. Each pass multiplies the dimensions, so a 128x128 input at repeats: 2 ends up at 2048x2048."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: why-repeats-2-is-16x
+    text: "Why does repeats: 2 on an x4 ESRGAN model produce a 16x upscale instead of 8x?"
+    answers:
+      - text: "Each pass compounds the scale factor, so two 4x passes multiply together: 4 times 4 is 16."
+        correct: true
+      - text: "repeats: 2 just runs the same 4x pass twice and keeps the larger result."
+        correct: false
+        feedback: "Check whether the two passes compound, or just repeat the same result."
+      - text: "16x is a fixed constant unrelated to the model's native x4 scale factor."
+        correct: false
+        feedback: "Re-read how the concept paragraph derives 16x from the model's own scale."
+  - id: why-small-source-size
+    text: "Why does this lesson start from a small source size like 128x128 before upscaling?"
+    answers:
+      - text: "Each ESRGAN pass multiplies the dimensions, so a small source keeps the final result from growing too large, while letting the upscaler do the enlargement cheaply."
+        correct: true
+      - text: "ESRGAN only accepts source images below a fixed pixel count."
+        correct: false
+        feedback: "Check whether there's a hard size limit mentioned, or just a practical reason to start small."
+      - text: "A smaller source produces a sharper diffusion result before any upscaling happens."
+        correct: false
+        feedback: "Think about what problem starting small actually solves here: diffusion quality, or output size after repeated passes."
+  - id: why-upscaler-configured-at-load
+    text: "Why does modelConfig.upscaler get configured once at load time instead of on every diffusion() call?"
+    answers:
+      - text: "It's wired into the session once, and each diffusion() call can then opt in by passing the upscale option."
+        correct: true
+      - text: "upscale: true silently reconfigures the upscaler on every call, so the load-time config is just a default."
+        correct: false
+        feedback: "Check whether upscaler settings can change per call, or only at load time."
+      - text: "The upscaler has to be configured before the diffusion model itself is loaded."
+        correct: false
+        feedback: "Re-read whether upscaler is a separate load step, or part of the same loadModel call."
 ---
 
 Diffusion can produce a sharp image at the resolution you ask for, but the absolute ceiling is bounded by VRAM. To go past it, you pair the diffusion model with an ESRGAN upscaler at load time. The diffusion call then runs the model and the upscaler in sequence, returning the upscaled PNG in the same call.
@@ -63,9 +97,3 @@ const x16Buffers = await x16.outputs;
 The source `width` and `height` are intentionally small. Each ESRGAN pass multiplies the dimensions, so a `128x128` input at `repeats: 2` ends up at `2048x2048`. The model doesn't need to do the heavy lifting of a high-resolution diffusion pass; the upscaler does the enlargement in a separate, cheaper pass.
 
 > Note: the upscaler adds time and memory on top of the diffusion call. For a `512x512` source with no upscaling, you only pay the diffusion cost. With `repeats: 2`, you pay diffusion plus two ESRGAN passes. Watch your VRAM on a 24GB card at `repeats: 2` for a `1024x1024` source.
-
-## Put it to the test
-
-1. Add `upscaler: { type: "esrgan", model_src: REALESRGAN_X4PLUS_ANIME_6B, tile_size: 128 }` to `modelConfig`.
-2. Call `diffusion({ ...baseParams, upscale: true })` and `await result.outputs`. The result is written to `fox_x4.png`.
-3. Call `diffusion({ ...baseParams, upscale: { repeats: 2 } })` and `await result.outputs`. The result is written to `fox_x16.png`. The final line logs `"Generated 1 image"`.
