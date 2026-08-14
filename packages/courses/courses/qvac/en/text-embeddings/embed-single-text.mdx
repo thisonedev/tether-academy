@@ -20,6 +20,29 @@ expectedOutput:
   - "Input: 'Hello, world!'"
   - "Embedding dimensions: 1024"
   - "First 10 values: [ 0.0123 ... ]"
+questions:
+  - id: embed-return-type
+    text: "What does `embed` resolve to for a single string?"
+    answers:
+      - text: "An object with an embedding property holding a 1024-number array."
+        correct: true
+      - text: "A single float scoring how positive or negative the text is."
+        correct: false
+        feedback: "Check what type the concept paragraph assigns to embedding, not a single score."
+      - text: "The original string and a computed hash."
+        correct: false
+        feedback: "Look at what the destructure in the code example pulls out of the result."
+  - id: embedding-consistency-across-inputs
+    text: "Given a short sentence and a full paragraph embedded with the same model, what stays the same between the two results?"
+    answers:
+      - text: "Longer input produces a longer array."
+        correct: false
+        feedback: "Re-read what stays fixed regardless of input length."
+      - text: "The exact numeric values, since `embed()` ignores the input text's content."
+        correct: false
+        feedback: "Think about whether two different sentences could really produce identical numbers."
+      - text: "The length: both come back as a 1024-number array, though the values inside differ."
+        correct: true
 ---
 
 Now that we have a model in memory, let's hand it a string and see what comes back.
@@ -42,9 +65,4 @@ console.log("First 10 values:", embedding.slice(0, 10));
 
 `embedding` is a `number[]`. Use `.length` for the dimension and `.slice(0, 10)` to peek at the first few values without spamming the console.
 
-> Note: the SDK always returns the same `number[]` shape regardless of how long the input text is. Short sentences and paragraphs both produce a 1024-number vector for `GTE_LARGE_FP16`. The numbers are different, but the shape is identical.
-
-## Put it to the test
-
-1. Call `embed({ modelId, text: "Hello, world!" })` and destructure `embedding` from the result.
-2. Log the input, the dimensions, and the first 10 values.
+> Note: the SDK always returns the same `number[]` length regardless of how long the input text is. Short sentences and paragraphs both produce a 1024-number vector for `GTE_LARGE_FP16`. The numbers are different, but the length is identical.

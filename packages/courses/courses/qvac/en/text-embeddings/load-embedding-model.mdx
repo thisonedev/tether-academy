@@ -15,6 +15,29 @@ hints:
   - "loadModel returns a modelId. Store it in a variable so the next lessons can reuse the same loaded model."
 expectedOutput:
   - "modelId: model-7f2a"
+questions:
+  - id: what-changes-for-embedding-model
+    text: "What actually changes when you load `GTE_LARGE_FP16` instead of an LLM like in chapter 1?"
+    answers:
+      - text: "Only the constant passed to modelSrc; the function, its options, and the returned modelId all stay the same."
+        correct: true
+      - text: "You invoke a separate loadEmbeddingModel function instead of loadModel."
+        correct: false
+        feedback: "Check which function name the concept paragraph uses for loading an embedding model."
+      - text: "loadModel returns the embedding itself instead of a modelId."
+        correct: false
+        feedback: "Think about what loadModel is responsible for versus what a separate embed invocation would do."
+  - id: why-save-modelid
+    text: "Why does it matter to hold on to modelId after this load, instead of loading a fresh model for each embedding request?"
+    answers:
+      - text: "Reusing the same modelId avoids reloading the model, which would waste time on every request."
+        correct: true
+      - text: "modelId expires after one use and has to be regenerated for the next request."
+        correct: false
+        feedback: "Re-read what the concept paragraph says about reloading between requests."
+      - text: "Every embed invocation loads its own model automatically, so modelId is just for logging."
+        correct: false
+        feedback: "Consider what modelId is actually passed into on a later request."
 ---
 
 Now that we've finished chapter 2, we're going to start a new line of work: embeddings.
@@ -33,8 +56,3 @@ console.log("modelId:", modelId);
 Save the `modelId`. The next lessons vectorize text against the same loaded model, and reloading between calls would be wasteful.
 
 > Note: the import line changes too. We'll have both `loadModel` and `GTE_LARGE_FP16` in the same `import { ... }` statement, since they come from the same `@qvac/sdk` package.
-
-## Put it to the test
-
-1. Inside `main()`, call `loadModel` with `{ modelSrc: GTE_LARGE_FP16 }`.
-2. `await` the result and store it in a variable called `modelId`. Log `modelId` to stdout.

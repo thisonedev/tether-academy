@@ -22,6 +22,40 @@ hints:
 expectedOutput:
   - "Query: How do I make a peanut butter sandwich?"
   - "Best match: How to assemble a peanut butter and jelly sandwich (score 0.8412)"
+questions:
+  - id: why-corpus-and-query-embed-separately
+    text: "Why does this search embed the corpus in one batch request, but embed the query with its own separate invocation?"
+    answers:
+      - text: "The corpus is fixed and can be embedded once up front, while the query is a new value produced by each search."
+        correct: true
+      - text: "A single embed() invocation can't accept a corpus and a query of different lengths."
+        correct: false
+        feedback: "Check whether a length mismatch is really what separates these two requests."
+      - text: "Batch requests only support a fixed number of items at a time."
+        correct: false
+        feedback: "Think about how many documents got embedded in the batch request just above."
+  - id: bestscore-initial-value
+    text: "Why does the loop start `bestScore` at `-Infinity` instead of `0`?"
+    answers:
+      - text: "It guarantees the very first score computed replaces it, even if every real score turned out to be negative."
+        correct: true
+      - text: "0 would cause a division-by-zero error the first time the loop runs."
+        correct: false
+        feedback: "Check whether the loop body does any division at all."
+      - text: "-Infinity is a required return value for cosineSimilarity."
+        correct: false
+        feedback: "Look at what bestScore is used for versus what cosineSimilarity itself returns."
+  - id: brute-force-scaling
+    text: "As the corpus grows from three documents to a few hundred, what does this loop keep doing?"
+    answers:
+      - text: "It still scores every corpus vector against the query one at a time, so the work grows with the corpus size."
+        correct: true
+      - text: "It automatically switches to an on-disk index once the corpus passes some size."
+        correct: false
+        feedback: "Check whether there's any branching logic in the loop tied to corpus size."
+      - text: "It stops working past a fixed number of documents."
+        correct: false
+        feedback: "Consider what, if anything, actually bounds how many times this loop can run."
 ---
 
 Now that we can compare two vectors, we're ready to build the smallest useful search engine.
@@ -59,10 +93,3 @@ console.log(`Best match: ${titles[bestIdx]} (score ${bestScore.toFixed(4)})`);
 After the loop, `bestIdx` holds the position of the highest-scoring corpus vector, and `titles[bestIdx]` is the document title closest in meaning to the query.
 
 > Note: the same pattern scales to thousands of documents. The only thing that changes is where the vectors live. In memory for a few hundred, on disk for the rest. Chapter 4 shows the on-disk version.
-
-## Put it to the test
-
-1. Call `embed({ modelId, text: corpus })` to embed the corpus as a single batch.
-2. Call `embed({ modelId, text: query })` to embed the query as a separate single call.
-3. Loop through the corpus vectors, computing `cosineSimilarity(queryEmbedding, corpusVectors[i])` and tracking `bestIdx` and `bestScore`.
-4. Log the query and the best-matching title with the score formatted to 4 decimals.
