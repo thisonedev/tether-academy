@@ -26,6 +26,40 @@ expectedOutput:
   - "▸ Downloading 100% (740.0/740.0 MB)"
   - "▸ Model loaded: model-7f2a"
   - "modelId: model-7f2a"
+questions:
+  - id: why-stderr-not-stdout
+    text: "Why does the progress callback write to `process.stderr` instead of `process.stdout`?"
+    answers:
+      - text: "stderr is faster to flush than stdout, which speeds up a callback that fires often."
+        correct: false
+        feedback: "Check what stdout is reserved for, not how fast either stream flushes."
+      - text: "stdout is reserved for the model's actual response, while progress output is logging that belongs on stderr."
+        correct: true
+      - text: "stdout is unavailable until the model finishes loading."
+        correct: false
+        feedback: "Think about whether stdout is actually blocked, or just intentionally left alone."
+  - id: what-onprogress-receives
+    text: "What does `onProgress` receive on each call?"
+    answers:
+      - text: "A single number representing the percentage complete, called once at the end."
+        correct: false
+        feedback: "Re-read how many times onProgress runs during a single download."
+      - text: "An object with percentage, downloaded, and total. It fires many times during a single download."
+        correct: true
+      - text: "The full downloaded file as a Buffer, once per chunk."
+        correct: false
+        feedback: "Think about whether onProgress carries the file's contents or just status about the download."
+  - id: why-check-istty
+    text: "Why does this code check `process.stderr.isTTY` before deciding whether to write `\\r` or `\\n`?"
+    answers:
+      - text: "A TTY can overwrite the same line with \\r, while piped output (a file or log) needs \\n so each tick lands on its own row."
+        correct: true
+      - text: "isTTY controls whether the download itself is throttled."
+        correct: false
+        feedback: "Think about what isTTY actually changes: how fast data comes in, or how it's displayed."
+      - text: "\\r is required for JSON-formatted logs, \\n for plain text."
+        correct: false
+        feedback: "Check exactly which condition decides between \\r and \\n."
 ---
 
 In the very first lesson we called `loadModel({ modelSrc: ... })` and waited. From the user's point of view the script sat there with no output while a multi-hundred-megabyte file downloaded. `onProgress` exists to make that wait readable.
@@ -54,7 +88,3 @@ A few details worth pointing at:
 - `process.stderr.write` is the right call here. Stdout is reserved for the model's actual response in the next lesson; progress is logging, and stderr is the standard place for it.
 - The `process.stderr.isTTY` flag picks the rendering mode. When the terminal is a TTY, the script writes `\r` so each tick overwrites the same line. When output is piped to a file, it writes `\n` so each tick ends up on its own row in the log.
 - The final `process.stderr.write("\n")` after `p.percentage >= 100` makes sure the next log starts on a fresh row.
-
-## Put it to the test
-
-1. Add `modelSrc: LLAMA_3_2_1B_INST_Q4_0` and an `onProgress` callback to the `loadModel` call. Inside the callback, write `▸ Downloading X% (Y/Z MB)` to `process.stderr`, choosing between overwriting the line (`isTTY`) and appending a newline (pipe). When `p.percentage >= 100`, write a trailing newline so the next log starts on a fresh row.

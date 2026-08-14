@@ -24,6 +24,40 @@ expectedOutput:
   - "▸ Completion started (predict: 10)"
   - "▸ Stream ended (10 tokens emitted)"
   - "▸ truncated: model hit the token budget"
+questions:
+  - id: what-length-stopreason-means
+    text: "Which of the following is NOT a possible value of `stopReason`?"
+    answers:
+      - text: "`\"timeout\"`"
+        correct: true
+      - text: "`\"cancelled\"`"
+        correct: false
+        feedback: "Compare this to what \"cancelled\" means above; it's one of the three real values."
+      - text: "`undefined`"
+        correct: false
+        feedback: "Check what `undefined` is paired with above: a truncated output, or a natural end of sequence. It's one of the three real values."
+  - id: why-drain-for-final
+    text: "What has to be true about `result.tokenStream` for `result.final` to resolve?"
+    answers:
+      - text: "Nothing; `final` resolves independently of whether the stream was ever drained."
+        correct: false
+        feedback: "Re-read what happens to `result.final` if the stream is never drained."
+      - text: "It has to be fully drained; an undrained stream backs up and `result.final` never resolves."
+        correct: true
+      - text: "A partial drain, just the first few tokens, is enough; the rest never needs draining."
+        correct: false
+        feedback: "Think about how much of the stream has to be read before `final` resolves: some of it, or all of it."
+  - id: why-tight-token-budget
+    text: "What is the primary purpose of setting a tight `generationParams` token budget on a short prompt in this demo?"
+    answers:
+      - text: "To force the truncated path (`stopReason` \"length\") reliably, for demonstration."
+        correct: true
+      - text: "A tight token budget is required for every `completion()` call regardless of purpose."
+        correct: false
+        feedback: "Check what's said above about token budgets in production versus in this demo."
+      - text: "The token budget setting shortens the prompt itself before it's sent."
+        correct: false
+        feedback: "Think about whether this setting controls what's generated, or what's sent in."
 ---
 
 Now that we know how to iterate the event stream, let's look at what we get when the stream ends.
@@ -67,10 +101,3 @@ if (final.stopReason === "length") {
 ```
 
 > Note: a tight `predict` budget on a short prompt is the easiest way to see the truncation path. In production you usually want a generous budget and rely on EOS, but reading `stopReason` is how you tell the two apart after the fact.
-
-## Put it to the test
-
-1. Use `captureThinking: true` and `generationParams: { predict: 10 }` so the response truncates before it finishes and the model's `thinking` stays out of the output.
-2. Iterate `result.tokenStream` to completion.
-3. After the loop, await `result.final` and read `final.stopReason`.
-4. Branch on `final.stopReason`. For `"length"`, log that the token budget cut off the response.

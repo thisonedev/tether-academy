@@ -16,6 +16,29 @@ hints:
 expectedOutput:
   - "▸ Model loaded: model-7f2a"
   - "modelId: model-7f2a"
+questions:
+  - id: what-loadmodel-does
+    text: "What does `loadModel({ modelSrc })` actually do before it hands back a `modelId`?"
+    answers:
+      - text: "It only validates that modelSrc is a real model constant, without downloading anything."
+        correct: false
+        feedback: "Check what the concept paragraph says happens to the model files before loadModel returns."
+      - text: "It downloads the model files (if not already cached) and loads them, then returns an id you can pass to other calls."
+        correct: true
+      - text: "It runs a completion immediately using the default prompt."
+        correct: false
+        feedback: "Think about whether running a prompt against the model is the same thing as loading it."
+  - id: loadmodel-caching
+    text: "What happens if you call `loadModel({ modelSrc })` with a model that's already been downloaded before?"
+    answers:
+      - text: "The SDK skips the download and loads the already-cached files."
+        correct: true
+      - text: "loadModel downloads it again every time, regardless of whether it's cached."
+        correct: false
+        feedback: "Re-read what the concept paragraph says happens when the model files are already cached."
+      - text: "loadModel throws an error because the model constant was already used once."
+        correct: false
+        feedback: "Think about what caching is for. Would skipping a redundant download really be an error?"
 ---
 
 In this first lesson, we're going to load a model into memory and get back a `modelId` you can reuse. Every other lesson in this chapter builds on top of this one, so let's get it right.
@@ -36,8 +59,3 @@ console.log("modelId:", modelId);
 > Note: the `await` is important. `loadModel` returns a Promise, and we have to wait for it to resolve before we can use `modelId`.
 
 In the next lesson, we'll use this `modelId` to run our first completion. For now, let's make sure the load itself works.
-
-## Put it to the test
-
-1. Call `loadModel({ modelSrc: LLAMA_3_2_1B_INST_Q4_0 })` and assign the result to `modelId`.
-2. Log `modelId` to stdout.

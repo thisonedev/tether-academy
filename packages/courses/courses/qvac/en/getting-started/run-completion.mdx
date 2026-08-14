@@ -23,6 +23,40 @@ hints:
 expectedOutput:
   - "▸ Completion started"
   - "Quantum computing uses qubits that can exist in multiple states at once through superposition."
+questions:
+  - id: what-stream-true-returns
+    text: "What does `completion()` return when you pass `stream: true`?"
+    answers:
+      - text: "A result that blocks until the entire response is generated, same as without stream."
+        correct: false
+        feedback: "Think about what changes in how you receive the response when streaming is on."
+      - text: "A result whose tokenStream you can iterate to see tokens come in one at a time, instead of waiting for the whole response."
+        correct: true
+      - text: "A history array that must include a system prompt before streaming works."
+        correct: false
+        feedback: "Check how many messages the history example above actually has."
+  - id: what-is-in-history
+    text: "What's inside each entry of the `history` array?"
+    answers:
+      - text: "A single string containing the entire conversation so far."
+        correct: false
+        feedback: "Look at the shape of the history array in the code example."
+      - text: "{ role, content } pairs, like a chat log."
+        correct: true
+      - text: "The modelId and a timestamp for each turn."
+        correct: false
+        feedback: "Check what fields are actually shown on each history entry in the example."
+  - id: full-text-after-stream
+    text: "How can you get the completion's full text after the stream ends, instead of assembling it token by token?"
+    answers:
+      - text: "await result.text: it's available as a single string once the stream finishes."
+        correct: true
+      - text: "You have to concatenate every token yourself; there's no other way."
+        correct: false
+        feedback: "Re-read the Note about what's available once the stream ends."
+      - text: "Call completion() again without stream: true."
+        correct: false
+        feedback: "Think about whether this needs a new call, or if it's already on the same result object."
 ---
 
 Now that we have a `modelId`, it's time to ask the model to say something.
@@ -54,9 +88,3 @@ for await (const token of result.tokenStream) {
 ```
 
 > Note: when the stream finishes, the result is also available as a single string via `await result.text`. We'll use that in later lessons.
-
-## Put it to the test
-
-1. Build a `history` array with one user message asking the model to explain quantum computing in one sentence.
-2. Call `completion({ modelId, history, stream: true })` and store the result.
-3. Iterate `result.tokenStream` and write each token to stdout.
