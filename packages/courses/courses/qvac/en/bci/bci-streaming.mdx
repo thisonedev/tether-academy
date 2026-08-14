@@ -22,6 +22,29 @@ hints:
 expectedOutput:
   - "▸ Loading BCI model..."
   - "Not too controversial."
+questions:
+  - id: why-consume-task-runs-parallel
+    text: "Why does the consume task run as a separate IIFE in parallel with the write loop, instead of writing all the chunks first and then reading?"
+    answers:
+      - text: "Sequential read-then-write would deadlock; the sliding window needs to be read concurrently with being written to."
+        correct: true
+      - text: "Running them in parallel is only for speed, not correctness; sequential would also work."
+        correct: false
+        feedback: "Re-read what the concept paragraph says happens with a strictly sequential read-then-write."
+      - text: "The consume task has to start before loadModel finishes."
+        correct: false
+        feedback: "Check what the consume task actually waits on: loadModel, or the write loop."
+  - id: what-emit-delta-changes
+    text: "What does emit: 'delta' change about what each iteration of the session yields?"
+    answers:
+      - text: "Each read yields only the new tokens since the last read, instead of the full transcript so far."
+        correct: true
+      - text: "It changes how often the sliding window advances over the input."
+        correct: false
+        feedback: "Check whether emit controls window advancement or output content."
+      - text: "It switches the session from streaming mode to batch mode."
+        correct: false
+        feedback: "Think about whether the session is still streaming with emit: 'delta', or whether it stops streaming."
 ---
 
 The previous lesson decoded a neural file all at once. This one feeds it chunk by chunk to simulate a live stream.
@@ -70,9 +93,3 @@ await unloadModel({ modelId });
 `emit: "delta"` is the mode that streams the running transcript (each iteration is the new text since the last read). The alternative mode emits the full transcript on every read.
 
 > Note: a 64KB chunk is a reasonable starting size for the example, but a real device driver usually has a buffer of its own. If your source is producing frames continuously, the write loop forwards each frame as it comes in.
-
-## Put it to the test
-
-1. Call `loadModel` with `BCI_WINDOWED` and the same `whisperConfig` + `bciConfig` as the previous lesson.
-2. Open `bciTranscribeStream({ modelId, emit: "delta" })` and start the consumer in the background.
-3. Read the file with `readFileSync`, write `CHUNK_SIZE` chunks to `session.write(chunk)` in a loop with a 10ms sleep, call `session.end()`, `await consume`, then `unloadModel`.
