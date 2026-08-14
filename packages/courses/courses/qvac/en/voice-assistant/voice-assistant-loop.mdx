@@ -43,6 +43,40 @@ expectedOutput:
   - "▸ Loading Supertonic TTS..."
   - "▸ All models loaded."
   - "▸ Listening. Speak a question and pause. Ctrl+C to quit."
+questions:
+  - id: why-ban-markdown-in-system-prompt
+    text: "Why does the system prompt tell the model to avoid markdown and lists?"
+    answers:
+      - text: "The output is spoken aloud through TTS, and formatting like headings or numbered lists reads as a stuttery mess when read out."
+        correct: true
+      - text: "Markdown slows down completion() token generation."
+        correct: false
+        feedback: "Check what the Note attributes the markdown ban to: generation speed, or how it sounds spoken aloud."
+      - text: "The TTS engine crashes on asterisks and numbers."
+        correct: false
+        feedback: "Re-read what happens to markdown when TTS reads it, described in the Note."
+  - id: what-session-yields-here
+    text: "What does session yield when iterating this transcribeStream() session, compared to the metadata: true sessions from the transcription chapter?"
+    answers:
+      - text: "Plain text strings, with no per-segment timestamp or append metadata."
+        correct: true
+      - text: "The same TranscribeSegment objects with startMs, endMs, and append fields."
+        correct: false
+        feedback: "Check whether metadata: true is set on this transcribeStream() call."
+      - text: "An array of all transcribed text, delivered once at the end."
+        correct: false
+        feedback: "Think about whether this is a one-shot result or values yielded over time."
+  - id: why-push-assistant-before-tts
+    text: "Why does the loop write the assistant's reply into history before calling textToSpeech()?"
+    answers:
+      - text: "So the next turn's completion() call has the full conversation, including what the assistant already said, not just the user's latest question."
+        correct: true
+      - text: "textToSpeech() reads directly from the history array instead of taking a text option."
+        correct: false
+        feedback: "Check what textToSpeech() actually receives as input in the code example."
+      - text: "Writing to history is required before unloadModel() can run."
+        correct: false
+        feedback: "Think about what history is used for on the next loop iteration, versus what unloadModel() needs."
 ---
 
 Now that we've seen speech-to-text, text generation, and text-to-speech separately, we're going to put them together.
@@ -206,13 +240,3 @@ for await (const rawText of session) {
 ```
 
 > Note: the system prompt bans markdown and lists because the output is spoken aloud. A `### heading` or a `1. ` list reads as a stuttery mess through TTS.
-
-## Put it to the test
-
-1. Make three `loadModel()` calls for the ASR (Whisper + Silero VAD), LLM (Llama 3.2 1B), and TTS (Supertonic English) models.
-2. Declare `history` with the system prompt as the first message.
-3. Gate on `ffmpeg` and `ffplay` being on `PATH` at startup. Define the WAV helpers (`createWavHeader`, `int16ArrayToBuffer`, `playAudio`) and the mic helper (`startMicrophone`) above `main`.
-4. Open a `const session = await transcribeStream({ modelId: asrModelId })` session, then `const ffmpeg = startMicrophone(...)`, then `ffmpeg.stdout.on("data", (chunk) => session.write(chunk))`.
-5. Iterate with `for await (const rawText of session)`. Each iteration: trim the transcript, push it as a user turn into `history`, call `completion()` with `stream: true`, then push the assistant turn into `history`.
-6. After `completion()` returns, call `textToSpeech()` and `await ttsResult.buffer`. Wrap the samples in a WAV header and `playAudio(wavBuffer)`.
-7. After the loop, run the cleanup handler. Wire the `WorkerShutdownError` / `CHANNEL_CLOSED` filter to `uncaughtException` so the SDK's shutdown abort doesn't dump a stack.

@@ -39,9 +39,43 @@ expectedOutput:
   - "▸ Assistant:"
   - "Hi! How can I help?"
   - "▸ Listening..."
+questions:
+  - id: why-drain-instead-of-pause
+    text: "Why drop frames in software with `isSpeaking` instead of pausing the mic while TTS plays?"
+    answers:
+      - text: "Pausing `ffmpeg.stdout` would let ffmpeg's buffer pile up; draining and discarding trades a little wasted VAD work for never stalling on a full buffer."
+        correct: true
+      - text: "`isSpeaking` is only needed to satisfy a test assertion; it doesn't fix a real problem."
+        correct: false
+        feedback: "Re-read what echo problem `isSpeaking` is described as solving."
+      - text: "Pausing ffmpeg is technically impossible once `startMicrophone()` has started it."
+        correct: false
+        feedback: "Check the actual reason given for draining instead of pausing."
+  - id: why-raise-min-silence-duration
+    text: "What is the primary purpose of raising `min_silence_duration_ms` to 700ms for the feedback loop?"
+    answers:
+      - text: "It increases the maximum length of a single user utterance."
+        correct: false
+        feedback: "Think about whether this value controls segment length or the silence gap between segments."
+      - text: "It gives VAD a longer quiet window before committing a segment, keeping the TTS tail ringing through the speaker from getting folded into the next user turn."
+        correct: true
+      - text: "It makes the LLM wait longer before generating a response."
+        correct: false
+        feedback: "Check which component `min_silence_duration_ms` configures: the VAD, or the LLM."
+  - id: what-meaningful-transcript-catches
+    text: "What does `isMeaningfulTranscript` filter out that `isSpeaking` alone wouldn't catch?"
+    answers:
+      - text: "Phantom transcripts from near-silence, like a stray 'you' or 'Thanks.', that VAD commits even when the mic wasn't dropped."
+        correct: true
+      - text: "Transcripts in languages other than the configured one."
+        correct: false
+        feedback: "Check what kind of bad transcript the concept paragraph attributes to near-silence, not to language."
+      - text: "Transcripts that come through while `isSpeaking` is already true."
+        correct: false
+        feedback: "Think about what `isSpeaking` already handles, versus what a separate filter is needed for."
 ---
 
-The voice assistant from the previous lesson works for a turn or two, then the feedback loop takes over: the TTS output gets picked up by the mic, Whisper transcribes it as a new user turn, and the LLM answers it. Each turn triggers the next with no real user input.
+The voice assistant from the previous lesson works for a turn or two, then the feedback loop takes over: the TTS output is picked up by the mic, Whisper transcribes it as a new user turn, and the LLM answers it. Each turn triggers the next with no real user input.
 
 Four things drive that loop:
 
@@ -178,11 +212,3 @@ process.on("uncaughtException", (err) => {
 ```
 
 Inside the turn body, the same teardown error families fire whenever an RPC drains after `unloadModel`. So wrap each per-turn SDK call in a `try { ... } catch (err) { if (!isTeardown(err)) ... }` and skip the rest of the turn, otherwise a single Stop spawns dozens of `Transcription failed: Model X unloaded` lines.
-
-## Put it to the test
-
-1. Add `vad_params` (threshold 0.6, min_speech_duration_ms 300, min_silence_duration_ms 700, max_speech_duration_s 15, speech_pad_ms 200) to the ASR `modelConfig`.
-2. Define `POST_PLAYBACK_COOLDOWN_MS = 300`, `MIN_UTTERANCE_CHARS = 3`, `isMeaningfulTranscript(text)`, `sleep(ms)`, and `let isSpeaking = false`.
-3. Gate on `ffmpeg` and `ffplay` being on `PATH` at startup. Define the WAV helpers (`createWavHeader`, `int16ArrayToBuffer`, `playAudio`) and the mic helper (`startMicrophone`) above `main`.
-4. Open a `const session = await transcribeStream({ modelId: asrModelId })` session, then `const ffmpeg = startMicrophone(...)`, then `ffmpeg.stdout.on("data", (chunk) => { if (isSpeaking) return; session.write(chunk) })`.
-5. Iterate with `for await (const rawText of session)`. Skip transcripts while `isSpeaking`, skip non-meaningful ones, push user turn into `history`, wrap completion + textToSpeech in a `try/finally` that flips `isSpeaking = true` at the start and `false` at the end. After `await ttsResult.buffer`, wrap the samples in a WAV header, `playAudio(wavBuffer)`, then `await sleep(POST_PLAYBACK_COOLDOWN_MS)`. Wire the teardown filter to `uncaughtException` and to each per-turn SDK call so the SDK's shutdown abort doesn't dump a stack trace.
