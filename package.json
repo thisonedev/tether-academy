@@ -31,8 +31,5 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "monaco-editor": "^0.56.0"
-  },
-  "devDependencies": {
-    "playwright": "^1.62.1"
   }
 }
