@@ -18,11 +18,45 @@ tests:
 hints:
   - "loadModel({ modelSrc: TTS_MINI_V1_EN_PARLER_TTS_Q8_0, modelConfig: { ttsEngine: 'parler', voice: 'Laura', seed: 42 } }) loads the Parler-TTS model. The SDK ships it as a registry constant with engine metadata, so no modelType override is needed. voice is required and selects one of the named speakers bundled with the checkpoint."
   - "textToSpeech({ modelId, text: '...', inputType: 'text', stream: false, emotion: 'happy' }) returns a result with buffer (Promise<number[]>) holding 44.1 kHz mono PCM samples as plain numbers. The emotion label is Parler-specific; valid values are happy, sad, angry, neutral, confused, curious, emphatic, sympathetic, calm."
-  - "result.buffer is a plain number array, not a typed array. Wrap it with Int16Array.from() before treating it as Int16Array. Then wrap the 44-byte WAV header (RIFF / WAVE / fmt / data) around it and write with fs.writeFileSync to disk."
+  - "result.buffer is a plain number array. Wrap it with Int16Array.from() before treating it as Int16Array. Then wrap the 44-byte WAV header (RIFF / WAVE / fmt / data) around it and write with fs.writeFileSync to disk."
 expectedOutput:
   - "▸ TTS complete. Total samples:"
   - "▸ Saved parler-output.wav"
   - "▸ Model unloaded"
+questions:
+  - id: what-emotion-adds
+    text: "Which of the following is a valid `emotion` value for Parler?"
+    answers:
+      - text: "`\"curious\"`"
+        correct: true
+      - text: "`\"excited\"`"
+        correct: false
+        feedback: "Check the exact list of valid emotion labels the concept paragraph gives, not a plausible-sounding one."
+      - text: "`\"whispering\"`"
+        correct: false
+        feedback: "Re-read the schema's list of valid emotion labels; this one isn't on it."
+  - id: why-int16array-from
+    text: "What has to be true about `result.buffer` before it can be treated as `Int16Array` audio samples?"
+    answers:
+      - text: "Parler's `buffer` is a plain number array; the other TTS engines already return a typed array."
+        correct: true
+      - text: "`Int16Array.from()` resamples the audio to a different sample rate."
+        correct: false
+        feedback: "Check what `Int16Array.from()` does: converts a type, or changes sample rate."
+      - text: "It's an optional step that only matters for very long audio clips."
+        correct: false
+        feedback: "Re-read whether the concept paragraph treats this conversion as optional, or as required before the WAV header can be built."
+  - id: why-build-wav-header
+    text: "What is a key consideration behind building a 44-byte WAV header before writing `result.buffer` to disk?"
+    answers:
+      - text: "`result.buffer` holds raw PCM samples with no container format; the header makes the file playable."
+        correct: true
+      - text: "`textToSpeech()` already returns a valid WAV file; the header only adds metadata like the title."
+        correct: false
+        feedback: "Check what format `result.buffer` holds before `createWav` runs."
+      - text: "The header is optional and only needed for streaming playback."
+        correct: false
+        feedback: "Check whether a media player can open the raw PCM bytes without the header."
 ---
 
 The other TTS engines in this SDK pick the voice and let the model decide how it sounds. Parler-TTS adds a third input on top of text and voice: an emotion label. The engine renders that affect into the speech.
@@ -59,7 +93,7 @@ console.log(`▸ TTS complete. Total samples: ${audioBuffer.length}`);
 
 Valid emotion labels are `happy`, `sad`, `angry`, `neutral`, `confused`, `curious`, `emphatic`, `sympathetic`, `calm`. The schema rejects anything outside the list.
 
-The returned buffer is raw 44.1 kHz mono PCM, not a playable container. Add the 44-byte WAV header before writing the file. The conversion would look like this:
+The returned buffer is raw 44.1 kHz mono PCM. Add the 44-byte WAV header before writing the file to make it playable. The conversion would look like this:
 
 ```ts
 function createWav(pcm: Int16Array, sampleRate: number): Uint8Array {
@@ -103,10 +137,3 @@ await unloadModel({ modelId });
 ```
 
 > Note: Parler outputs 44.1 kHz mono like Supertonic, not 24 kHz like Chatterbox. If you're building a voice pipeline that switches between engines, normalise the sample rate at the boundary so downstream consumers don't have to handle per-engine quirks.
-
-## Put it to the test
-
-1. Call `loadModel({ modelSrc: TTS_MINI_V1_EN_PARLER_TTS_Q8_0, modelConfig: { ttsEngine: "parler", voice: "Laura", seed: 42 } })`.
-2. Call `textToSpeech({ modelId, text, inputType: "text", stream: false, emotion: "happy" })` and `await result.buffer`.
-3. Convert `result.buffer` to an `Int16Array` with `Int16Array.from(...)`, wrap it in a 44-byte WAV header with `createWav(pcm, 44100)`, then `fs.writeFileSync("parler-output.wav", wav)`.
-4. `unloadModel({ modelId })`.

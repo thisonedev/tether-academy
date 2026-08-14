@@ -18,13 +18,34 @@ hints:
   - "ttsSpeed trades latency against naturalness (1.0 = natural pace, 1.05 is the SDK default). ttsNumInferenceSteps trades quality against time (5 is a good first run, 10 for cleaner output)."
 expectedOutput:
   - "▸ TTS complete. Total samples:"
+questions:
+  - id: why-same-voice-different-language
+    text: "What's the relationship between a Supertonic voice ID like F1 and `modelConfig.language`?"
+    answers:
+      - text: "language only affects the text passed in; the voice model itself is unchanged."
+        correct: false
+        feedback: "Think about what `modelConfig.language` selects, versus what stays fixed."
+      - text: "Voices are language-agnostic; the same voice ID reads text in whichever language `modelConfig.language` selects."
+        correct: true
+      - text: "F1 is automatically remapped to a French-specific voice ID behind the scenes."
+        correct: false
+        feedback: "Check whether the concept paragraph describes any voice remapping between languages."
+  - id: unsupported-language-code
+    text: "What happens if you pass a language code that isn't in Supertonic's vocabulary?"
+    answers:
+      - text: "`loadModel` rejects the unrecognized code and the load fails outright."
+        correct: false
+        feedback: "Check what actually happens with an unsupported language code."
+      - text: "The call silently produces no audio."
+        correct: false
+        feedback: "Re-read what the fallback behavior is: an empty result, or a different language."
+      - text: "It falls back to English."
+        correct: true
 ---
 
 Now that we can synthesize English with Supertonic, we're going to add languages. Supertonic 3 covers 31 languages from a single multilingual GGUF.
 
-The load is the same as the English Supertonic lesson. The only field that changes is `language`.
-
-Loading the multilingual model is the same as the English lesson:
+The load matches the English Supertonic setup. The only field that changes is `language`:
 
 ```ts
 const modelId = await loadModel({
@@ -41,7 +62,7 @@ const modelId = await loadModel({
 
 The voices are language-agnostic. `F1` is a female voice, `F2` a second female voice, `M1` and `M2` male voices. The same voice ID reads out the text in whatever language `modelConfig.language` selects. Switching from `"es"` to `"fr"` gives you the same voice reading French.
 
-Same synth-call shape, with `language: "es"` carried into the options. Consider the following synth call:
+Same synth-call signature, with `language: "es"` carried into the options. Consider the following synth call:
 
 ```ts
 const result = textToSpeech({
@@ -55,9 +76,3 @@ console.log(`▸ TTS complete. Total samples: ${audioBuffer.length}`);
 ```
 
 > Note: language codes that aren't in the Supertonic model's vocabulary fall back to English. If you need a specific dialect or regional accent, check the upstream Supertonic docs for the supported language list.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelConfig.ttsEngine: "supertonic"`, a non-English `language`, and a `voice`.
-2. Call `textToSpeech({ modelId, text, inputType: "text", stream: false })` and `await result.buffer`.
-3. Log the sample count.

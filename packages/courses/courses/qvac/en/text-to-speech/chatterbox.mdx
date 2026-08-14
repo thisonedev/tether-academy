@@ -18,13 +18,36 @@ hints:
   - "Voice cloning is opt-in: pass modelConfig.referenceAudioSrc: '<path-to-wav>' to condition the decoder on a reference recording. Without it, Chatterbox uses its default voice."
 expectedOutput:
   - "▸ TTS complete. Total samples:"
+questions:
+  - id: what-reference-audio-changes
+    text: "What does `referenceAudioSrc` change about the synthesized speech?"
+    answers:
+      - text: "The language the output is spoken in."
+        correct: false
+        feedback: "Check what `referenceAudioSrc` actually conditions: language, or timbre."
+      - text: "The timbre of the voice; the words spoken are still whatever text you pass to `textToSpeech`."
+        correct: true
+      - text: "The words spoken, replacing the text option with the reference clip's transcript."
+        correct: false
+        feedback: "Re-read where the synthesized text actually comes from."
+  - id: why-two-model-files
+    text: "What is a key characteristic of Chatterbox's architecture that requires both `modelSrc` and `modelConfig.s3genModelSrc` at load time?"
+    answers:
+      - text: "Chatterbox is a two-stage pipeline: one GGUF converts language to acoustic tokens, and a separate GGUF converts those tokens to a waveform."
+        correct: true
+      - text: "`s3genModelSrc` selects the language, and `modelSrc` selects the voice."
+        correct: false
+        feedback: "Think about what each of the two files is responsible for in that setup."
+      - text: "`s3genModelSrc` is an optional performance optimization."
+        correct: false
+        feedback: "Check whether `s3genModelSrc` is listed as optional or required in the concept paragraph."
 ---
 
 Now that we can synthesize English speech with Supertonic, we're going to add voice cloning. Chatterbox takes a reference audio file and synthesizes speech in that voice.
 
 Chatterbox is a two-file engine. A T3 GGUF handles the language side; an S3Gen GGUF handles the audio decoder. Both are available as registry constants. Load them together by setting `ttsEngine: "chatterbox"` and passing `s3genModelSrc` alongside the top-level `modelSrc`.
 
-Chatterbox is a two-stage TTS pipeline: T3 (language → acoustic tokens), S3Gen (tokens → waveform). One `loadModel()` brings both, with `modelConfig` wiring the second stage. The split load would look like the following:
+Chatterbox is a two-stage TTS setup: T3 (language → acoustic tokens), S3Gen (tokens → waveform). One `loadModel()` brings both, with `modelConfig` wiring the second stage. The split load would look like the following:
 
 ```ts
 const modelId = await loadModel({
@@ -42,7 +65,7 @@ const modelId = await loadModel({
 
 Voice cloning is opt-in via `referenceAudioSrc`. Pass a path to a 16-bit mono WAV of the target speaker, and Chatterbox conditions the decoder on it. Without `referenceAudioSrc`, Chatterbox uses its bundled default voice. The reference clip should be a clean, single-speaker sample of 5 to 30 seconds.
 
-`textToSpeech()` is fire-and-await. The call returns a 44.1 kHz mono `Int16Array`. Here's a simple example of synthesizing speech in the default voice:
+`textToSpeech()` is fire-and-await. The call returns a 24 kHz mono `Int16Array`. Synthesizing speech in the default voice looks like this:
 
 ```ts
 const result = textToSpeech({
@@ -58,9 +81,3 @@ console.log(`▸ TTS complete. Total samples: ${audioBuffer.length}`);
 The `textToSpeech` call matches Supertonic. The only differences are the loadModel `modelConfig` (Chatterbox needs `s3genModelSrc`) and the sample rate (24 kHz for Chatterbox, 44.1 kHz for Supertonic).
 
 > Note: voice cloning inherits the *timbre* of the reference, not the words. The synthesized text is whatever you pass to `textToSpeech({ text })`. The reference only conditions the voice.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelConfig.ttsEngine: "chatterbox"` and `s3genModelSrc: TTS_S3GEN_EN_CHATTERBOX.src`.
-2. Optionally pass `referenceAudioSrc` to clone a voice from a WAV file on disk.
-3. Call `textToSpeech({ modelId, text, inputType: "text", stream: false })` and `await result.buffer`. Log the sample count.
