@@ -153,6 +153,9 @@ const BUILTIN_NAMES = new Set([
   'globalThis',
   'window',
   'document',
+  // node:child_process, used across upstream examples
+  'spawn',
+  'spawnSync',
 ]);
 
 function extractUserDefined(code) {
