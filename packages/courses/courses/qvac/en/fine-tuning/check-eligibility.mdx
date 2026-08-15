@@ -19,6 +19,40 @@ hints:
 expectedOutput:
   - "Quantization: q4"
   - "Fine-tunable: yes"
+questions:
+  - id: why-check-before-training
+    text: "Why check quantization before calling `finetune()` instead of letting the trainer reject it?"
+    answers:
+      - text: "`getModelInfo` is the only way to read a model's name."
+        correct: false
+        feedback: "Check what `getModelInfo` is used for, beyond just the name."
+      - text: "`finetune()` won't accept a `modelId` until eligibility is confirmed."
+        correct: false
+        feedback: "Re-read what goes wrong if you skip the check, not whether the call is blocked outright."
+      - text: "An unsupported quantization only fails once training is already underway, potentially hours into the run."
+        correct: true
+  - id: why-normalize-quantization
+    text: "What has to be true about `info.quantization` before comparing it to the allowlist?"
+    answers:
+      - text: "The allowlist itself is stored in lowercase."
+        correct: false
+        feedback: "Check the casing used in the allowlist array in the code example."
+      - text: "The SDK returns the value in lowercase with the _0 suffix dropped, so a raw comparison against `Q4_0` would never match."
+        correct: true
+      - text: "Normalizing converts an incompatible quantization into a compatible one."
+        correct: false
+        feedback: "Think about whether normalizing changes what the model supports, or just how the string is written."
+  - id: why-q4-k-m-rejected
+    text: "Which of the following is NOT accepted by the SDK for fine-tuning?"
+    answers:
+      - text: "`Q4_K_M`"
+        correct: true
+      - text: "`Q4_0`"
+        correct: false
+        feedback: "Check whether `Q4_0` is on the fine-tuning allowlist."
+      - text: "`F16`"
+        correct: false
+        feedback: "Check whether `F16` is on the fine-tuning allowlist."
 ---
 
 We're starting a new chapter on fine-tuning.
@@ -47,8 +81,3 @@ console.log("Fine-tunable:", fineTunable ? "yes" : "no");
 Swap `QWEN3_600M_INST_Q4` for a `Q4_K_M` constant and the second line flips to `no`. Pick a fine-tunable model before you start training.
 
 > Note: the allowlist covers the quantizations the trainer knows how to update. Other quantizations might work someday but aren't supported in this version of the SDK.
-
-## Put it to the test
-
-1. Call `getModelInfo({ name: QWEN3_600M_INST_Q4.name })` and read `info.quantization` into a local variable.
-2. Normalize the string (uppercase + restore `_0` suffix) and check it against the allowlist `["F32", "F16", "Q4_0", "Q8_0", "TQ1_0", "TQ2_0"]`. Log the verdict.

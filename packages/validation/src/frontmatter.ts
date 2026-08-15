@@ -8,6 +8,19 @@ const lessonTest = z.object({
   contains: z.string().optional(),
 });
 
+const lessonQuestionAnswer = z.object({
+  text: z.string(),
+  correct: z.boolean(),
+  // Shown when this wrong answer is picked.
+  feedback: z.string().optional(),
+});
+
+const lessonQuestion = z.object({
+  id: z.string(),
+  text: z.string(),
+  answers: z.array(lessonQuestionAnswer),
+});
+
 // argv slot the runner fills before the lesson's snippet runs.
 const lessonArgvSlot = z.object({
   name: z.string(),
@@ -33,6 +46,7 @@ export const lessonFrontmatter = frontmatterSchema.extend({
   hints: z.array(z.string()).optional(),
   expectedOutput: z.array(z.string()).optional(),
   tests: z.array(lessonTest).optional(),
+  questions: z.array(lessonQuestion).optional(),
   platforms: z.array(z.enum(['node', 'web', 'mobile', 'desktop'])).optional(),
   // argv slots the runner resolves before executing the lesson's snippet.
   argv: z.array(lessonArgvSlot).optional(),

@@ -15,20 +15,43 @@ tests:
 hints:
   - "Read your starting image with fs.readFileSync('input.png'). The Uint8Array bytes go straight into init_image."
   - "Strength is how much the output can differ from the input: 0 = keep source, 1 = ignore source. ~0.6 is a sensible starting point."
-  - "Same options shape as before. The two new fields are init_image and strength."
+  - "Same options structure as before. The two new fields are init_image and strength."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: what-strength-controls
+    text: "Which `img2img` option controls how much the output is allowed to differ from the source image?"
+    answers:
+      - text: "`strength`"
+        correct: true
+      - text: "`steps`"
+        correct: false
+        feedback: "Check which option controls step count versus which one controls how much the source image constrains the result."
+      - text: "Output resolution"
+        correct: false
+        feedback: "Re-read what actually governs output resolution, versus what governs how much the source is preserved."
+  - id: init-image-size-vs-output-size
+    text: "What determines the output resolution when `init_image` is smaller than the requested width and height?"
+    answers:
+      - text: "width and height; the source image's dimensions only set a lower bound the output can grow past."
+        correct: true
+      - text: "The output is capped at the source image's original dimensions."
+        correct: false
+        feedback: "Check whether `init_image`'s dimensions act as a lower bound, or a hard cap."
+      - text: "`diffusion()` rejects the call if the source is smaller than the requested size."
+        correct: false
+        feedback: "Think about whether a size mismatch stops the call."
 ---
 
-Now that we can do txt2img, we're going to learn img2img.
+Now that we can do `txt2img`, we're going to learn `img2img`.
 
-With txt2img, the model by default starts from noise. With img2img, the model starts from an image we supply and iteratively refines it until the result matches our prompt.
+With `txt2img`, the model by default starts from noise. With `img2img`, the model starts from an image we supply and iteratively refines it until the result matches our prompt.
 
-`init_image` is a `Uint8Array` of PNG or JPEG bytes. We read it off disk with `fs.readFileSync`. The `strength` number tells the model how much room it has. At `0` it keeps the source image untouched, and at `1` it ignores it and behaves like txt2img.
+`init_image` is a `Uint8Array` of PNG or JPEG bytes. We read it off disk with `fs.readFileSync`. The `strength` number tells the model how much room it has. At `0` it keeps the source image untouched, and at `1` it ignores it and behaves like `txt2img`.
 
 Common uses include rough sketch to colored illustration, screenshot to wireframe turned into a design mock, or an existing photo restyled.
 
-Reading the source image into a `Uint8Array` is what hands the bytes to `diffusion()`. Same single-file loader as Stable Diffusion, since SD supports `init_image` directly:
+Reading the source image into a `Uint8Array` hands the bytes to `diffusion()`. It uses the same single-file loader as Stable Diffusion, since SD supports `init_image` directly:
 
 ```ts
 const modelId = await loadModel({
@@ -39,7 +62,7 @@ const modelId = await loadModel({
 const initImage = fs.readFileSync("./examples/qvac/image-generation/input/sketch.png");
 ```
 
-Calling `diffusion()` with `init_image` set to the source bytes is the img2img path. The four-knob call we'd run looks like:
+Calling `diffusion()` with `init_image` set to the source bytes is the `img2img` path. The four-knob call we'd run looks like:
 
 ```ts
 const result = diffusion({
@@ -66,9 +89,3 @@ console.log(`Generated ${outputs.length} image`);
 We tweak `strength` until the balance between "preserves the source" and "rewrites everything" feels right.
 
 > Note: `init_image` dimensions are the lower bound. The output resolution is governed by `width` and `height`, not the source size.
-
-## Put it to the test
-
-1. Read an input image with `fs.readFileSync` into a `Uint8Array`.
-2. Call `diffusion({ modelId, prompt, init_image, strength: 0.6, width, height, steps })` and `await result.outputs`.
-3. Write the first PNG to disk and console.log the count.

@@ -27,6 +27,40 @@ expectedOutput:
   - "  food: 87.4%"
   - "  report: 11.2%"
   - "  other: 1.4%"
+questions:
+  - id: why-no-modelsrc
+    text: "Why does `loadModel` need no `modelSrc` for the classification model?"
+    answers:
+      - text: "The model is bundled inside the `@qvac/classification-ggml` addon; other models are the ones downloaded from the registry."
+        correct: true
+      - text: "The classification model doesn't need to be loaded at all before use."
+        correct: false
+        feedback: "Re-read whether `loadModel` is still called, just without `modelSrc`."
+      - text: "`modelSrc` is optional for every model; classification isn't a special case."
+        correct: false
+        feedback: "Check whether other lessons' `loadModel` calls also omit `modelSrc`, or whether this is specific to classification."
+  - id: what-startqvacprovider-does
+    text: "What is the primary purpose of `startQVACProvider()`?"
+    answers:
+      - text: "It's optional and only speeds up the first `classify()` call."
+        correct: false
+        feedback: "Re-read whether booting the provider is described as required or optional."
+      - text: "It boots the local inference backend that `loadModel` needs before any model can load."
+        correct: true
+      - text: "It uploads each classification result to a remote server for logging."
+        correct: false
+        feedback: "Check whether `startQVACProvider()` does anything with results, versus setting up the backend."
+  - id: why-model-intentionally-small
+    text: "What lets the bundled MobileNetV3-Small classifier run in tens of milliseconds on a single CPU core?"
+    answers:
+      - text: "It's a small model on purpose, sized for fast inference rather than maximum accuracy."
+        correct: true
+      - text: "Because larger classifiers aren't compatible with the ggml-classification `modelType`."
+        correct: false
+        feedback: "Think about whether `modelType` is described as size-limited, or whether size is a design choice."
+      - text: "Because it only needs to support three output classes."
+        correct: false
+        feedback: "Check whether the model's size is tied to output class count, or to inference speed."
 ---
 
 We're going to add one more image-based capability, separate from generation.
@@ -42,7 +76,7 @@ await startQVACProvider({});
 const modelId = await loadModel({ modelType: "ggml-classification" });
 ```
 
-The result is sorted by score descending, so `predictions[0]` is the top guess. The SDK returns a `confidence` score between 0 and 1, so multiplying by 100 will get you a percentage:
+The result is sorted by score descending, so `results[0]` is the top guess. The SDK returns a `confidence` score between 0 and 1, so multiplying by 100 will get you a percentage:
 
 ```ts
 const image = fs.readFileSync("./examples/image/basic_test.jpg");
@@ -53,19 +87,13 @@ for (const { label, confidence } of results) {
 }
 ```
 
-Freeing the model and shutting the provider back down is the cleanup. Both are explicit so the next caller doesn't see a half-running backend. You would clean up like so:
+Cleanup means freeing the model and shutting the provider back down. Both are explicit so the next caller doesn't see a half-running backend. You would clean up like so:
 
 ```ts
 await unloadModel({ modelId });
 await stopQVACProvider();
 ```
 
-The notable difference from other lessons: `loadModel` takes no `modelSrc`. The classification model is bundled inside the `@qvac/classification-ggml` addon, not downloaded from the registry. The `modelType: "ggml-classification"` flag tells the SDK which addon to route through.
+The notable difference from other lessons: `loadModel` takes no `modelSrc`. The classification model is bundled inside the `@qvac/classification-ggml` addon; the registry download step other lessons use doesn't apply here. The `modelType: "ggml-classification"` flag tells the SDK which addon to route through.
 
 > Note: the bundled MobileNetV3-Small model is small on purpose. It runs in tens of milliseconds on a single CPU core. If you need a bigger or domain-specific classifier, you'd bring your own GGUF and add it to a custom addon.
-
-## Put it to the test
-
-1. Call `startQVACProvider({})` and `loadModel({ modelType: "ggml-classification" })`.
-2. Read the image with `fs.readFileSync`, call `classify({ modelId, image })`, and log each label with confidence.
-3. Call `unloadModel({ modelId })` and `stopQVACProvider()`.

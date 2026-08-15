@@ -26,6 +26,29 @@ expectedOutput:
   - "▸ Listening... speak and pause to see transcriptions."
   - "[0.00s → 2.30s] The first sentence the user said."
   - "[2.30s → 4.80s] A second sentence comes back from Whisper."
+questions:
+  - id: why-vad-required-for-streaming
+    text: "What has to be set in `modelConfig` for `transcribeStream()` to open a session with Whisper?"
+    answers:
+      - text: "The VAD decides when the speaker has paused long enough to commit a segment, so streaming can't work without one."
+        correct: true
+      - text: "VAD is only needed to reduce background noise in the recording."
+        correct: false
+        feedback: "Check what job the concept paragraph assigns to the VAD model."
+      - text: "`transcribeStream()` works fine without VAD, but returns lower-quality text."
+        correct: false
+        feedback: "Re-read whether the session degrades, or the SDK refuses it outright, without VAD."
+  - id: what-append-flag-means
+    text: "What does the `append` field on a streamed segment tell the consumer?"
+    answers:
+      - text: "Whether the segment passed a confidence threshold."
+        correct: false
+        feedback: "Think about what UI behavior `append` is meant to drive."
+      - text: "Whether to overwrite the previous caption or extend it with the new segment."
+        correct: true
+      - text: "Whether the segment came from the microphone or a file."
+        correct: false
+        feedback: "Check what `append` controls: caption behavior, or audio source."
 ---
 
 Now that we can transcribe files, we're going to stream transcription live.
@@ -66,7 +89,7 @@ ffmpeg.stdout.on("data", (chunk: Buffer) => {
 
 A startup check on `ffmpeg -version` makes the failure mode obvious if ffmpeg isn't on `PATH`. The try/catch around `session.write` ignores the abort when the worker is being torn down at shutdown.
 
-The consuming side is a `for await` over the session itself. With `metadata: true`, each iteration yields a `TranscribeSegment` with `text`, `startMs`, `endMs`, `append`, and `id`. The `append` flag tells the UI whether to overwrite the previous caption or extend it. Render captions like so:
+The consuming side is a `for await` over the session itself. With `metadata: true`, each iteration produces a `TranscribeSegment` with `text`, `startMs`, `endMs`, `append`, and `id`. The `append` flag tells the UI whether to overwrite the previous caption or extend it. Render captions like so:
 
 ```ts
 for await (const segment of session) {
@@ -105,11 +128,3 @@ process.on("uncaughtException", (err) => {
 ```
 
 > Note: the running buffer has a maximum length. Long pauses or slow speakers may produce fewer segments than you'd expect. Tune the model's `vad_params.max_speech_duration_s` if you need more granularity.
-
-## Put it to the test
-
-1. Open `const session = await transcribeStream({ modelId, metadata: true })`. The `await` is required; iterating a Promise with `for await` is a syntax error.
-2. Gate on `ffmpeg` being on `PATH` at startup. Define the mic helper (`getAudioInputArgs`, `startMicrophone`) above `main`.
-3. Pipe `startMicrophone({ sampleRate: 16000, format: "f32le" }).stdout` into `session.write(chunk)` in a background task. Wrap the write in try/catch.
-4. Iterate the session with `for await (const segment of session)` and log each segment's `[start → end]` text as it is finalized.
-5. Wire `cleanup()` to `SIGINT` and `SIGTERM`, and add the `WorkerShutdownError` / `CHANNEL_CLOSED` filter to `uncaughtException` so the SDK's shutdown abort doesn't dump a stack.

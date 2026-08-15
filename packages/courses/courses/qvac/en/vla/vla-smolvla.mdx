@@ -26,11 +26,34 @@ expectedOutput:
   - "▸ Running VLA inference..."
   - "▸ Got 5 action steps of dim 7."
   - "▸ Timing: vision=120ms smollm2=850ms ode=240ms total=1230ms"
+questions:
+  - id: why-read-hparams-first
+    text: "What determines the input buffer sizes `vlaHparams` returns?"
+    answers:
+      - text: "Each VLA model has different input sizes, so the buffers need to be sized to whatever this specific model expects."
+        correct: true
+      - text: "hparams applies only to π₀.₅; SmolVLA's code never reads it."
+        correct: false
+        feedback: "Re-read whether the SmolVLA code itself reads and uses hparams."
+      - text: "`vlaHparams` is required to enable the `vla()` call; it has no effect on buffer sizes."
+        correct: false
+        feedback: "Check what the hparams fields drive: buffer sizes, or call permissions."
+  - id: why-smolvla-uses-real-state
+    text: "What's the difference between how SmolVLA and π₀.₅ handle the `state` input?"
+    answers:
+      - text: "SmolVLA doesn't support state at all, so the vector is just padding."
+        correct: false
+        feedback: "Check what the six floats in SmolVLA's state vector actually represent."
+      - text: "SmolVLA takes state as a separate input field, while π₀.₅ tokenizes state into the prompt instead and leaves the state buffer empty."
+        correct: true
+      - text: "The state vector size depends on which camera frames are used."
+        correct: false
+        feedback: "Think about what determines whether state is used: model architecture, or camera count."
 ---
 
 VLA (vision-language-action) models are the model class for robot control.
 
-VLA (vision-language-action) models take a camera frame and a task description and produce an action chunk the robot should take. The training data covers real-world manipulation tasks: grasping, picking, placing. The SDK includes two families: SmolVLA (a small, fast model from Hugging Face) and π₀.₅ (a larger model from Physical Intelligence). They share the same API surface but the input shapes differ.
+VLA (vision-language-action) models take a camera frame and a task description and produce an action chunk the robot should take. The training data covers real-world manipulation tasks: grasping, picking, placing. The SDK includes two families: SmolVLA (a small, fast model from Hugging Face) and π₀.₅ (a larger model from Physical Intelligence). They share the same API surface but the input sizes differ.
 
 The first call loads SmolVLA into memory. SmolVLA is the smaller of the two VLAs in the SDK. The first load would look like the following:
 
@@ -42,13 +65,13 @@ const modelId = await loadModel({
 });
 ```
 
-Each VLA model has different input shapes; reading them up front is the canonical pre-call move:
+Each VLA model has different input sizes; reading them up front is the canonical pre-call move:
 
 ```ts
 const { hparams } = await vlaHparams({ modelId });
 ```
 
-The hparams tell you the input shapes. For SmolVLA, you need two camera frames of `visionImageSize × visionImageSize × 3`, a state vector padded to `maxStateDim`, tokens of length `tokenizerMaxLength`, and a noise buffer of length `chunkSize × maxActionDim`.
+The hparams tell you the input sizes. For SmolVLA, you need two camera frames of `visionImageSize × visionImageSize × 3`, a state vector padded to `maxStateDim`, tokens of length `tokenizerMaxLength`, and a noise buffer of length `chunkSize × maxActionDim`.
 
 SmolVLA wants state as a separate field, unlike π₀.₅ which tokenises it. The synthetic inputs sized to hparams would look like:
 
@@ -90,10 +113,3 @@ The `stats` object has per-stage timings: vision encoder, language model, ODE so
 > Note: `vlaPadState` is the helper that pads a short state vector to the model's `maxStateDim`. For SmolVLA, the state is six floats (end-effector pose). For π₀.₅ the state is tokenised into the prompt instead, the state buffer is ignored.
 
 > Note: `vlaSetEmbodiment` switches a loaded GR00T multi-embodiment model between robot configurations, such as `vlaSetEmbodiment({ modelId, embodiment: "real_droid" })`. SmolVLA and π₀.₅ do not support this call. See the GR00T example when you need to change embodiments.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelSrc: SMOLVLA_LIBERO_VISION_Q8`, `modelType: "ggml-vla"`, and `modelConfig: { backend: "cpu" }`.
-2. Call `vlaHparams({ modelId })` and read `hparams.visionImageSize`, `hparams.tokenizerMaxLength`, `hparams.chunkSize`, and `hparams.maxStateDim`.
-3. Build two `vlaPreprocessImage` frames, a BOS-only `tokens` and `mask` array, a `vlaPadState([0,0,0,0,0,0], hparams.maxStateDim)` state, and a `chunkSize × maxActionDim` zero-filled action buffer.
-4. Call `vla({ modelId, images: [front, wrist], imgWidth, imgHeight, state, tokens, mask, noise })` and log the action chunk and the per-stage timings.

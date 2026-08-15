@@ -18,6 +18,40 @@ hints:
   - "You can attach images alongside text in the same user message, but not in the assistant message."
 expectedOutput:
   - "(streamed completion comparing the two images)"
+questions:
+  - id: what-determines-image-order
+    text: "What determines whether the model refers to an image as 'the first image' or 'the second image'?"
+    answers:
+      - text: "The order the images are mentioned in the prompt text; the array's order has no effect."
+        correct: false
+        feedback: "Re-read what the array's order controls."
+      - text: "Its position, index 0 or 1, in the attachments array."
+        correct: true
+      - text: "Whichever image file has the earlier filename alphabetically."
+        correct: false
+        feedback: "Check what the concept paragraph says the SDK orders images by."
+  - id: why-same-call-signature
+    text: "What changes about the `completion()` call when you attach a second image instead of one?"
+    answers:
+      - text: "Only the attachments array in that history entry grows by one; `completion()` and `tokenStream` are called exactly the same way."
+        correct: true
+      - text: "A second image requires a separate `completion()` call, merged afterward by you."
+        correct: false
+        feedback: "Check whether the code above makes one `completion()` call or two."
+      - text: "Multiple images require switching `stream: true` to `stream: false`."
+        correct: false
+        feedback: "Think about whether stream depends on how many images are attached."
+  - id: projectionmodelsrc-vs-lora
+    text: "What's the relationship between `modelConfig.projectionModelSrc` and `modelConfig.lora`?"
+    answers:
+      - text: "They're unrelated options; `projectionModelSrc` handles multimodal image support."
+        correct: true
+      - text: "`projectionModelSrc` is an older name for the same option as lora."
+        correct: false
+        feedback: "Check whether these are described as the same option or as unrelated ones."
+      - text: "lora is required alongside `projectionModelSrc` for any multimodal completion."
+        correct: false
+        feedback: "Re-read whether these two options depend on each other."
 ---
 
 The previous lesson attached a single image. This one attaches two and asks the model to compare them.
@@ -58,12 +92,6 @@ for await (const token of result.tokenStream) {
 process.stdout.write("\n");
 ```
 
-The history grows by one entry per extra image. `completion()` and `result.tokenStream` work the same as a text-only call; only the history entries carry images.
+The `attachments` array grows by one entry per extra image; the history itself still has one entry for that turn. `completion()` and `result.tokenStream` work the same as a text-only call.
 
 > Note: multimodal assistants use `modelConfig.projectionModelSrc`, not `modelConfig.lora`. The two are unrelated options.
-
-## Put it to the test
-
-1. Build a `history` array with one user message that has two image attachments in the `attachments` array and asks the model to compare them.
-2. Call `completion({ modelId: multimodalId, history, stream: true })`.
-3. Iterate `result.tokenStream` and write each token to stdout. Confirm the model compares the two articles.

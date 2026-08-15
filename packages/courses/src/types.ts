@@ -6,6 +6,8 @@ export interface CurriculumLesson {
   shortTitle?: string;
   slug: string;
   href?: string;
+  /** Reserved for the future per-chapter graded quiz; unset means a regular lesson. */
+  kind?: 'lesson' | 'quiz';
 }
 
 export interface CurriculumChapter {

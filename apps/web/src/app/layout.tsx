@@ -1,6 +1,8 @@
 import './global.css';
 import { NotificationCenter, SiteHeader, UsernamePrompt } from '@academy/ui';
 import { RootProvider } from 'fumadocs-ui/provider/next';
+import { GeistMono } from 'geist/font/mono';
+import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
 
 export const metadata = {
@@ -38,7 +40,11 @@ const contentSecurityPolicy = [
 /** Root layout: site header, page content, and the self-determining sign-in modal. */
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`dark ${GeistSans.variable} ${GeistMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <meta httpEquiv="Content-Security-Policy" content={contentSecurityPolicy} />
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static string, no user input */}

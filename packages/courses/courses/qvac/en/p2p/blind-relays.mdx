@@ -14,6 +14,29 @@ expectedOutput:
   - "▸ Starting model download from Hyperdrive..."
   - "▸ Model loaded with ID: model-7f2a"
   - "▸ Model downloaded successfully using blind relays!"
+questions:
+  - id: why-config-path-before-import
+    text: "When does `QVAC_CONFIG_PATH` have to be set?"
+    answers:
+      - text: "Anywhere before `loadModel()` runs; the SDK re-reads the config on every call, independent of when the import happens."
+        correct: false
+        feedback: "Re-read when the config is read: at import time, or on every call."
+      - text: "Any position works; `QVAC_CONFIG_PATH` only affects logging output, and relay selection isn't part of that."
+        correct: false
+        feedback: "Check what the config file's `swarmRelays` field controls."
+      - text: "Before the import line; module evaluation reads the config at import time, so the env var has to already be set by then."
+        correct: true
+  - id: what-blind-relays-do
+    text: "Which of the following is NOT something blind relays do for a peer-to-peer model download?"
+    answers:
+      - text: "Help two peers behind NATs or firewalls find each other by relaying the connection setup."
+        correct: false
+        feedback: "Re-read what job the concept paragraph assigns to blind relays: connection setup, or something else."
+      - text: "Store or relay a copy of the model data itself."
+        correct: true
+      - text: "Stay blind to the traffic passing through, seeing only the connection setup."
+        correct: false
+        feedback: "Check what the hint says a blind relay does and doesn't see."
 ---
 
 The previous lesson pre-downloaded a model from a regular Hyperdrive seed. This one makes sure peers behind NATs can find each other.
@@ -59,7 +82,3 @@ main().catch(console.error);
 The relays help establish the peer connection through NAT. They don't see the actual model data. The download happens peer-to-peer once the connection is set up.
 
 > Note: blind relays only help with NAT traversal. They do not anonymize traffic or change what's downloaded.
-
-## Put it to the test
-
-1. Set up the relay config (file + env var) and call `loadModel` followed by `downloadAsset`. Both should succeed via the configured relays.

@@ -13,7 +13,7 @@ const __academyBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 loader.config({ paths: { vs: `${__academyBasePath}/monaco/vs` } });
 
 const COMMON_EDITOR_OPTIONS: monacoTypes.editor.IStandaloneEditorConstructionOptions = {
-  fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
+  fontFamily: '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   fontSize: 13,
   minimap: { enabled: false },
   scrollBeyondLastLine: false,

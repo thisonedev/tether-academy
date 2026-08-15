@@ -17,9 +17,32 @@ hints:
   - "Calling completion() synchronously and only then awaiting is what puts a request 'in flight'. Promise.all([completion(...), completion(...)]) fires both at once."
   - "Two completions on different models run in parallel. The queue is keyed per model, so distinct models never block each other."
 expectedOutput:
-  - "▸ req-A (model-A): Bitcoin is a decentralized digital currency."
-  - "▸ req-B (model-B): A hash function maps input data to a fixed-size string."
+  - "▸ req-A: Bitcoin is a decentralized digital currency."
+  - "▸ req-B: Bitcoin is a decentralized digital currency."
   - "▸ Both completed."
+questions:
+  - id: await-first-call
+    text: "Given the first `completion()` request is awaited before the second one fires, what happens to them?"
+    answers:
+      - text: "The SDK throws `RequestRejectedByPolicyError` on the second one."
+        correct: false
+        feedback: "Think about whether the two are running at the same time."
+      - text: "Both still run in parallel, because `completion()` returns immediately regardless of await."
+        correct: false
+        feedback: "Check what has to happen before the second `completion()` request can even fire."
+      - text: "The second request is fired only after the first resolves, so the queue never has two in flight to coordinate."
+        correct: true
+  - id: why-cant-share-model
+    text: "What is a key characteristic of a loaded model that keeps two `completion()` calls from running on it at the same time?"
+    answers:
+      - text: "The SDK licenses each model for a single concurrent request."
+        correct: false
+        feedback: "Re-read what a loaded model is, described near the top of this file."
+      - text: "Node's runtime can only execute one asynchronous call at a time."
+        correct: false
+        feedback: "Think about whether this is a JS runtime limit, or something specific to what a loaded model is."
+      - text: "A loaded model is a single native context, with one KV-cache and one decode loop to run against."
+        correct: true
 ---
 
 In the previous lessons we've been calling `completion()` once at a time. Now let's see what happens when we fire two calls simultaneously.
@@ -47,9 +70,3 @@ console.log(`▸ Both completed.`);
 Both `completion()` calls fire synchronously, so both end up "in flight" against the SDK's queue. `Promise.all` then waits for them. On the same model, the queue runs them in order. On different models, the per-model key means they run in parallel.
 
 > Note: if you `await` the first call before the second `completion()`, the second call never sees contention and the queue is bypassed. Fire both first, await together.
-
-## Put it to the test
-
-1. Call `completion({ modelId, history, stream: false, captureThinking: true })` twice in a row without awaiting either, assigning each to a variable.
-2. Wrap the awaits in `Promise.all([r1.text, r2.text])` and log the result of each with a label like `req-A` and `req-B`.
-3. After both finish, log `▸ Both completed.` so the output has a final line.

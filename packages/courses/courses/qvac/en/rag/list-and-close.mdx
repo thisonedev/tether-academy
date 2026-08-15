@@ -17,6 +17,29 @@ expectedOutput:
   - "▸ recipes (open)"
   - "▸ notes (open)"
   - "▸ Deleted 'recipes' workspace"
+questions:
+  - id: what-open-flag-means
+    text: "What does the `open` field on an entry from `ragListWorkspaces()` tell you?"
+    answers:
+      - text: "Whether the workspace currently has any documents stored in it."
+        correct: false
+        feedback: "Check what `open` is described as tracking: loaded state, or document count."
+      - text: "Whether the workspace is still loaded in memory or has already been torn down."
+        correct: true
+      - text: "Whether the workspace is accepting new writes right now."
+        correct: false
+        feedback: "Think about what closing a workspace changes, covered a bit further down."
+  - id: deleteonclose-true-vs-false
+    text: "What's the difference between `deleteOnClose: true` and `deleteOnClose: false` on `ragCloseWorkspace`?"
+    answers:
+      - text: "true keeps the data but renames the workspace."
+        correct: false
+        feedback: "Re-read what `deleteOnClose` is described as removing."
+      - text: "true also wipes the on-disk folder; false only drops the in-memory handle and leaves the files."
+        correct: true
+      - text: "false closes the workspace faster because it skips a disk write."
+        correct: false
+        feedback: "Check what stays on disk when `deleteOnClose` is false, not how long the call takes."
 ---
 
 Workspaces live on disk under the SDK's data directory. `ragListWorkspaces()` reads them back so we can see what's there. `ragCloseWorkspace({ workspace, deleteOnClose })` tears one down.
@@ -37,9 +60,4 @@ await ragCloseWorkspace({ workspace: "tech", deleteOnClose: true });
 
 If we pass `deleteOnClose: false`, the workspace files stay on disk but the in-memory handle is dropped. A workspace auto-closes when the process exits, so this call is for explicit cleanup during long-running sessions.
 
-> Note: `deleteOnClose` is the right name for "remove from disk." Passing `false` is the right call when you want to keep the data but release the in-memory handle.
-
-## Put it to the test
-
-1. The editor prefills the `ragListWorkspaces()` call. Loop through and log each workspace's name and open status.
-2. Call `ragCloseWorkspace({ workspace, deleteOnClose: true })` to remove the workspace from disk.
+> Note: `deleteOnClose` is the right name for "remove from disk." Pass `false` when you want to keep the data but release the in-memory handle.

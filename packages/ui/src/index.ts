@@ -10,7 +10,13 @@ export type { ConsoleEntry, LessonConsoleLessonContext } from './components/less
 export { CopyButton, InstallCommand } from './components/install-command.js';
 export { LessonCompleteModal } from './components/lesson-complete-modal.js';
 export { LessonWorkspace } from './components/lesson-workspace.js';
-export type { LessonData, LessonTest, LessonArgvSlot } from './components/lesson-workspace.js';
+export type {
+  LessonData,
+  LessonTest,
+  LessonArgvSlot,
+  LessonQuestion,
+  LessonQuestionAnswer,
+} from './components/lesson-workspace.js';
 export { MdxPre } from './components/mdx-pre.js';
 export { SettingsPage } from './components/settings-page.js';
 export { ProfileOnboarding } from './components/profile-onboarding.js';

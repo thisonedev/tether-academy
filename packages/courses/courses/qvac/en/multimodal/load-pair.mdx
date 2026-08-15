@@ -15,6 +15,29 @@ hints:
   - "The pair has to match. SmolVLM2 pairs with mmproj-smolvlm2. You can't mix an LLM constant with a different model's projector."
 expectedOutput:
   - "multimodalId: model-7f2a"
+questions:
+  - id: why-two-files
+    text: "Which `loadModel` field turns an image into the language model's vector space?"
+    answers:
+      - text: "`modelSrc`"
+        correct: false
+        feedback: "Check what `modelSrc` holds: the language model, or the image-to-vector projector."
+      - text: "`modelConfig.projectionModelSrc`"
+        correct: true
+      - text: "Neither; image conversion happens automatically inside `completion()` with no dedicated model."
+        correct: false
+        feedback: "Re-read whether a second file is described as necessary for image support."
+  - id: mismatched-projector
+    text: "Does the SDK validate that the LLM and mmproj projector come from the same model family?"
+    answers:
+      - text: "No: a mismatch produces nonsense output instead of being caught."
+        correct: true
+      - text: "Yes: `loadModel` throws immediately and refuses to load the mismatched pair."
+        correct: false
+        feedback: "Check what actually happens with a mismatched pair, not whether it's blocked."
+      - text: "Yes: the SDK automatically substitutes the matching projector."
+        correct: false
+        feedback: "Think about whether the SDK validates or corrects this pairing at all."
 ---
 
 We're starting a new chapter on multimodal models, and we're going to load a model that takes images alongside text.
@@ -38,8 +61,3 @@ console.log("multimodalId:", multimodalId);
 `multimodalId` looks the same as every other `modelId`. The difference is hidden in how `completion()` will treat `attachments` on history messages, which we'll see in the next two lessons.
 
 > Note: the two constants have to come from the same model family. `SMOLVLM2` pairs with `MMPROJ_SMOLVLM2`. Mixing an LLM constant with the wrong projector (or a non-multimodal LLM with a projector) produces nonsense output.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelSrc` set to the LLM constant and `modelConfig.projectionModelSrc` set to the matching mmproj.
-2. Store the result in a variable called `multimodalId` and log it.

@@ -6,7 +6,7 @@ tests:
   - id: calls-completion
     description: Calls completion() with modelId and history
     pattern: "completion\\s*\\(\\s*\\{[^}]*modelId[^}]*history"
-  - id: history-shape
+  - id: history-structure
     description: 'History is an array of {role, content} messages'
     pattern: "\\{\\s*role\\s*:\\s*\"user\""
   - id: enables-stream
@@ -23,11 +23,45 @@ hints:
 expectedOutput:
   - "▸ Completion started"
   - "Quantum computing uses qubits that can exist in multiple states at once through superposition."
+questions:
+  - id: what-stream-true-returns
+    text: "What does `completion()` return when you pass `stream: true`?"
+    answers:
+      - text: "A result whose `tokenStream` you can iterate to see tokens come in one at a time, instead of waiting for the whole response."
+        correct: true
+      - text: "A result that blocks until the entire response is generated, same as without stream."
+        correct: false
+        feedback: "Think about what changes in how you receive the response when streaming is on."
+      - text: "A history array that must include a system prompt before streaming works."
+        correct: false
+        feedback: "Check how many messages the history example above has."
+  - id: what-is-in-history
+    text: "Which of the following is a valid `role` value in a `history` message?"
+    answers:
+      - text: "`\"user\"`"
+        correct: true
+      - text: "`\"moderator\"`"
+        correct: false
+        feedback: "Check the exact set of role values the concept paragraph names, not a plausible-sounding chat role."
+      - text: "`\"developer\"`"
+        correct: false
+        feedback: "Re-read the three role values `history` messages actually use."
+  - id: full-text-after-stream
+    text: "How can you get the completion's full text after the stream ends, instead of assembling it token by token?"
+    answers:
+      - text: "await `result.text`: it's available as a single string once the stream finishes."
+        correct: true
+      - text: "You have to concatenate every token yourself; there's no other way."
+        correct: false
+        feedback: "Re-read what's available once the stream ends."
+      - text: "Call `completion()` again without `stream: true`."
+        correct: false
+        feedback: "Think about whether this needs a new call, or if it's already on the same result object."
 ---
 
 Now that we have a `modelId`, it's time to ask the model to say something.
 
-`completion()` takes a `modelId` and a `history` (an array of messages), and gives us back a result we can either await fully or stream token by token. We pass `stream: true` so we can watch the tokens arrive.
+`completion()` takes a `modelId` and a `history` (an array of messages), and gives us back a result we can either await fully or stream token by token. We pass `stream: true` so we can watch the tokens stream in.
 
 The `history` array is a list of `{ role, content }` messages, like a chat log. We're starting with one user message, but later lessons will add assistant and system turns.
 
@@ -54,9 +88,3 @@ for await (const token of result.tokenStream) {
 ```
 
 > Note: when the stream finishes, the result is also available as a single string via `await result.text`. We'll use that in later lessons.
-
-## Put it to the test
-
-1. Build a `history` array with one user message asking the model to explain quantum computing in one sentence.
-2. Call `completion({ modelId, history, stream: true })` and store the result.
-3. Iterate `result.tokenStream` and write each token to stdout.

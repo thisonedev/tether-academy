@@ -20,6 +20,40 @@ expectedOutput:
   - "Input: 3 texts"
   - "Output: 3 embeddings"
   - "Each embedding dimensions: 1024"
+questions:
+  - id: batch-embed-return-type
+    text: "What changes about `embed()`'s return value when text is a string array instead of a single string?"
+    answers:
+      - text: "The request returns one vector per unique word across all the inputs."
+        correct: false
+        feedback: "Think about what unit of text each entry in the returned array corresponds to."
+      - text: "embedding becomes an array of arrays, one 1024-number vector per input string, in the same order."
+        correct: true
+      - text: "embedding becomes one averaged vector representing every input string."
+        correct: false
+        feedback: "Check what each element of `batchEmbeddings` represents in the code example."
+  - id: why-batch-is-faster
+    text: "What has to be true for batching strings together to run faster than embedding them one at a time?"
+    answers:
+      - text: "The model stays loaded in memory, so batching only pays for the embedding step, skipping a reload."
+        correct: true
+      - text: "The SDK caches results for any string it has embedded before."
+        correct: false
+        feedback: "Re-read what specifically stays loaded between the two runs."
+      - text: "Batching skips computing the full 1024 dimensions per string."
+        correct: false
+        feedback: "Check whether the expected output shows a different dimension count for a batch request."
+  - id: batch-length-output
+    text: "Given `texts` has 3 strings, what does `batchEmbeddings.length` equal?"
+    answers:
+      - text: "3"
+        correct: true
+      - text: "1024"
+        correct: false
+        feedback: "Check what `batchEmbeddings.length` counts: input strings, or the numbers inside one vector."
+      - text: "1"
+        correct: false
+        feedback: "Re-read whether `embed()` collapses an array of strings into one averaged vector, or returns one per input."
 ---
 
 In the previous lesson we embedded one string at a time. That works for learning, but if we've got a thousand documents we don't want a thousand round-trips.
@@ -41,8 +75,3 @@ console.log(`Each embedding dimensions: ${batchEmbeddings[0]!.length}`);
 Each inner array is one 1024-number vector, in the same order as the input. The model stays loaded, so the second call is much faster than the first (only the embedding step runs).
 
 > Note: `batchEmbeddings[0]` is the first vector, `batchEmbeddings[0][0]` is the very first number of that vector. Mind your brackets if you start indexing.
-
-## Put it to the test
-
-1. Call `await embed({ modelId, text: texts })` and destructure `{ embedding: batchEmbeddings }`.
-2. `console.log` the input count (`texts.length`), the output count (`batchEmbeddings.length`), and the dimension of the first vector (`batchEmbeddings[0]!.length`).

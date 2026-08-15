@@ -16,18 +16,41 @@ tests:
     description: 'Branches on event.type === "text" while iterating the session'
     pattern: "event\\.type\\s*===?\\s*['\"]text['\"]"
 hints:
-  - "loadModel({ modelSrc: PARAKEET_SORTFORMER_4SPK_V2_1_Q8_0, modelType: 'parakeet-transcription', modelConfig: { streaming: true, streamingChunkMs: 2000, streamingChunkRightContextMs: 560, streamingSpkCacheEnable: true, streamingSpkCacheLen: 188, streamingFifoLen: 188, streamingChunkLeftContextMs: 80, streamingSpkCacheUpdatePeriod: 144 } }) loads the v2.1 Sortformer with its AOSC streaming defaults. The streaming fields are load-time config, not transcribe-time, so they belong in modelConfig."
-  - "transcribeStream({ modelId, parakeetStreamingConfig: { chunkMs: 2000 } }) opens the duplex session. The session yields { type: 'text', text } events as speakers commit turns."
+  - "loadModel({ modelSrc: PARAKEET_SORTFORMER_4SPK_V2_1_Q8_0, modelType: 'parakeet-transcription', modelConfig: { streaming: true, streamingChunkMs: 2000, streamingChunkRightContextMs: 560, streamingSpkCacheEnable: true, streamingSpkCacheLen: 188, streamingFifoLen: 188, streamingChunkLeftContextMs: 80, streamingSpkCacheUpdatePeriod: 144 } }) loads the v2.1 Sortformer with its AOSC streaming defaults. The streaming fields are load-time config that belongs in modelConfig."
+  - "transcribeStream({ modelId, parakeetStreamingConfig: { chunkMs: 2000 } }) opens the duplex session. The session produces { type: 'text', text } events as speakers commit turns."
   - "Pipe WAV bytes into the session in wall-clock-paced 2 s chunks. Without the pacing, the model consumes the entire audio in milliseconds and the streaming state machine never gets to step. Read the WAV with ffmpeg into s16le 16 kHz mono PCM, then for (let offset = 0; offset < pcm.length; offset += chunkBytes) { session.write(pcm.subarray(offset, end)); await sleep(STREAM_CHUNK_MS); }."
 expectedOutput:
   - "▸ Streaming diarization transcript"
   - "Speaker 0: 00:00:00.640 - 00:00:01.280"
   - "Speaker 0: 00:00:01.360 - 00:00:02.000"
+questions:
+  - id: why-aosc-fields-at-load-time
+    text: "What is a key characteristic of the speaker cache that requires the eight AOSC streaming fields to be set in `modelConfig` at load time?"
+    answers:
+      - text: "`modelConfig` fields can be changed per session without reloading the model."
+        correct: false
+        feedback: "Check whether load-time and session-time configuration are interchangeable."
+      - text: "The speaker cache needs to exist before any audio comes in, so those fields must be set at load time."
+        correct: true
+      - text: "`transcribeStream()` doesn't accept a config object for Sortformer."
+        correct: false
+        feedback: "Re-read what `transcribeStream()` does accept for this model: `chunkMs`, at minimum."
+  - id: why-trailing-silence-pad
+    text: "Why append 1.5 seconds of trailing silence before calling `session.end()`?"
+    answers:
+      - text: "The pad resets the speaker cache for the next file."
+        correct: false
+        feedback: "Check what the concept paragraph says the trailing silence is for: resetting state, or flushing a turn."
+      - text: "Sortformer holds a partial speaker assignment open until it sees enough silence to commit, so the pad flushes the final turn."
+        correct: true
+      - text: "It's optional padding; `session.end()` works the same with or without it."
+        correct: false
+        feedback: "Think about what specifically the trailing silence unblocks: the write side, or the pending turn."
 ---
 
 The Sortformer batch lesson chains Sortformer and TDT: diarize first, then slice and transcribe. For a live feed where the speakers are still talking, that two-pass approach is too slow. The streaming version keeps Sortformer running and pushes `text` events out the session as turns commit.
 
-Now port the batch lesson's Sortformer checkpoint into a live session. The same `modelType: "parakeet-transcription"` selector, but the streaming knobs move into `modelConfig` so the speaker cache exists before any audio arrives:
+Now port the batch lesson's Sortformer checkpoint into a live session. The same `modelType: "parakeet-transcription"` selector, but the streaming knobs move into `modelConfig` so the speaker cache exists before any audio comes through:
 
 ```ts
 const SORTFORMER_V21_AOSC_LOAD_CONFIG = {
@@ -110,10 +133,3 @@ await unloadModel({ modelId });
 `unloadModel` runs after the `for await` exits, which only happens once `session.end()` lets the stream drain. The trailing silence pad before `session.end()` is what unblocks the loop.
 
 > Note: the v2.1 Sortformer caps at four simultaneous speakers. For more speakers, run the diarization in overlapping windows and stitch the labels back together. The streaming path inherits the same cap.
-
-## Put it to the test
-
-1. Define the `SORTFORMER_V21_AOSC_LOAD_CONFIG` block (eight streaming fields). Call `loadModel({ modelSrc: PARAKEET_SORTFORMER_4SPK_V2_1_Q8_0, modelType: "parakeet-transcription", modelConfig: { ...SORTFORMER_V21_AOSC_LOAD_CONFIG } })`.
-2. Open `const session = await transcribeStream({ modelId, parakeetStreamingConfig: { chunkMs: 2000 } })`.
-3. Read the WAV file into s16le 16 kHz mono PCM with ffmpeg. Pipe the PCM into the session in 2 s chunks, sleeping `STREAM_CHUNK_MS` between writes. Append 1.5 s of trailing silence, then call `session.end()`.
-4. Iterate the session with `for await (const event of session)`, push trimmed `event.text` lines onto an array, log them after the loop, then `unloadModel`.

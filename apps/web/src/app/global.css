@@ -22,6 +22,12 @@
   --color-canvas-muted: oklch(0.22 0.012 162);
   --color-canvas-muted-foreground: oklch(0.72 0.012 162);
   --color-canvas-border: oklch(0.27 0.012 162);
+
+  /* Geist, self-hosted via the `geist` package (layout.tsx sets the CSS vars). One family across prose, questions, code, and output. */
+  --font-sans:
+    var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 html {

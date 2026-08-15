@@ -26,9 +26,32 @@ expectedOutput:
   - "▸ Running VLA inference..."
   - "▸ Got 50 action steps of dim 32."
   - "▸ Timing: vision=180ms prefill=1240ms ode=410ms total=1860ms"
+questions:
+  - id: why-numcameras-varies
+    text: "What's the relationship between `numCameras` and the specific VLA model that's loaded?"
+    answers:
+      - text: "`numCameras` comes from this model's hparams, and π₀.₅'s value differs from SmolVLA's, so the frame count has to be read per model rather than assumed."
+        correct: true
+      - text: "Camera count is fixed by `imgWidth` and `imgHeight`; the model itself doesn't set it."
+        correct: false
+        feedback: "Think about what `hparams.numCameras` depends on."
+      - text: "π₀.₅ always requires exactly 3 cameras, hardcoded in the SDK."
+        correct: false
+        feedback: "Check where the camera count comes from: a hardcoded constant, or `hparams.numCameras`."
+  - id: how-to-run-pi05-inference
+    text: "How do you run a π₀.₅ action inference once the model is loaded?"
+    answers:
+      - text: "Call `vla()` with the model id and the four prebuilt input buffers: images, state, tokens/mask, and noise."
+        correct: true
+      - text: "Call `vla()` with just the model id; the SDK builds the inputs internally."
+        correct: false
+        feedback: "Check what arguments the `vla()` call actually passes besides `modelId`."
+      - text: "Call `loadModel()` a second time with the input buffers attached."
+        correct: false
+        feedback: "Check which function takes the input buffers: `loadModel()`, or `vla()`."
 ---
 
-SmolVLA was the previous lesson's model. This lesson runs π₀.₅ from Physical Intelligence. The API surface is the same `vla()` call, but two hparams drive a different input shape.
+SmolVLA was the previous lesson's model. This lesson runs π₀.₅ from Physical Intelligence. The API surface is the same `vla()` call, but two hparams drive different input sizes.
 
 `loadModel` pulls π₀.₅ into memory, and `vlaHparams` reads the input dimensions (`visionImageSize`, `numCameras`, `tokenizerMaxLength`, `chunkSize`, `maxActionDim`) for the next step:
 
@@ -61,7 +84,7 @@ const state = new Float32Array(0);
 const noise = new Float32Array(hparams.chunkSize * hparams.maxActionDim);
 ```
 
-`vla()` takes the model id and prebuilt inputs and returns the same four fields the SmolVLA lesson destructured. `stats` uses the same snake_case `*_ms` shape on both models, so the per-stage timings are interchangeable between lessons.
+`vla()` takes the model id and prebuilt inputs and returns the same four fields the SmolVLA lesson destructured. `stats` uses the same snake_case `*_ms` fields on both models, so the per-stage timings are interchangeable between lessons.
 
 ```ts
 const { actions, actionDim, chunkSize, stats } = await vla({
@@ -87,12 +110,6 @@ if (stats) {
 }
 ```
 
-The four `stats` fields are reported in pipeline order: vision encoder, language-model prefill, ODE solver, then wall-clock total. The optional chaining handles a stage that wasn't run. If a model short-circuits a phase, the field is `undefined` rather than missing from the object.
+The four `stats` fields are reported in processing order: vision encoder, language-model prefill, ODE solver, then wall-clock total. The optional chaining handles a stage that wasn't run. If a model short-circuits a phase, the field is `undefined` rather than missing from the object.
 
 > Note: π₀.₅ is a larger model (~3.9 GB) than SmolVLA (~1.9 GB) and the inference time reflects that. On a desktop CPU, expect several seconds per call. The `backend: "cpu"` flag is the default and the only supported target in this SDK release.
-
-## Put it to the test
-
-1. Call `loadModel({ modelSrc: PI05_BASE_Q_AGGRESSIVE, modelType: "ggml-vla", modelConfig: { backend: "cpu" } })` and `vlaHparams({ modelId })`. Read `hparams.visionImageSize`, `hparams.numCameras`, `hparams.tokenizerMaxLength`, `hparams.chunkSize`, and `hparams.maxActionDim`.
-2. Build `numCameras` `vlaPreprocessImage` frames, a BOS-only `tokens` and `mask`, an empty `new Float32Array(0)` state, and a zero-filled noise buffer of size `chunkSize * maxActionDim`.
-3. Call `await vla({ modelId, images, imgWidth, imgHeight, state, tokens, mask, noise })` and console.log the action chunk and per-stage `stats`.

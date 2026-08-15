@@ -20,6 +20,40 @@ expectedOutput:
   - "▸ Pausing..."
   - "▸ Resumed status: COMPLETED"
   - "▸ Cancelled status: CANCELLED"
+questions:
+  - id: why-resume-waits
+    text: "What has to be true about the worker for resume to succeed after a pause?"
+    answers:
+      - text: "pause and resume can't share the same `modelId`."
+        correct: false
+        feedback: "Re-read what `finetuneParams` keeps together, and what resume adds to it."
+      - text: "resume always takes longer than pause, so the wait is purely about timing."
+        correct: false
+        feedback: "Check what specifically the worker needs to be free of before resume can succeed."
+      - text: "The worker can only run one fine-tune at a time, so the slot isn't free until the paused run has fully ended."
+        correct: true
+  - id: cancel-vs-pause
+    text: "What's the practical difference between cancel and pause for a run that's going badly?"
+    answers:
+      - text: "pause is synchronous and cancel is not."
+        correct: false
+        feedback: "Re-read which operation is described as fire-and-forget versus checkpoint-based."
+      - text: "cancel and pause both free GPU memory the same way; cancel just logs a different status."
+        correct: false
+        feedback: "Check what happens to a checkpoint under pause versus under cancel."
+      - text: "cancel frees GPU memory immediately with no way back; pause saves a checkpoint you can resume from later."
+        correct: true
+  - id: why-periodic-checkpoints-cost-more
+    text: "What is a key tradeoff of turning on `checkpointSaveSteps` for periodic checkpoints?"
+    answers:
+      - text: "Every periodic checkpoint holds optimizer state and the adapter weights, and nothing ever deletes the old ones, so disk use grows with every save."
+        correct: true
+      - text: "`checkpointSaveSteps` only affects how often `progressStream` ticks fire, with no disk cost."
+        correct: false
+        feedback: "Think about what `checkpointSaveSteps` writes to disk, versus what controls tick frequency."
+      - text: "Periodic checkpoints replace the pause checkpoint, so only one checkpoint ever exists at a time."
+        correct: false
+        feedback: "Check whether periodic checkpoints are described as replacing anything, or piling up."
 ---
 
 Now that we've started a fine-tune, we're going to see how to control it.
@@ -27,10 +61,10 @@ Now that we've started a fine-tune, we're going to see how to control it.
 A fine-tune takes minutes to hours. We don't want to wait around to find out the loss is exploding. The QVAC SDK exposes a small operation surface on `finetune()` itself:
 
 - `pause` saves the current state, stops the trainer, and resolves a promise we can await
-- `resume` picks up from the latest checkpoint, the same call shape as the original `finetune()`, just with `operation: "resume"`
+- `resume` picks up from the latest checkpoint, the same call signature as the original `finetune()`, just with `operation: "resume"`
 - `cancel` is the hard kill: it frees GPU memory immediately and resolves with `{ status: "CANCELLED" }`.
 
-The worker can only run one fine-tune at a time, so each control call has to arrive while the prior run is alive (the pause) and can only fire after it has fully ended (the resume). `finetune()` returns a `handle` with a `progressStream` we iterate, and a `result` promise that resolves when the run ends. We need both.
+The worker can only run one fine-tune at a time, so each control call has to reach the worker while the prior run is alive (the pause) and can only fire after it has fully ended (the resume). `finetune()` returns a `handle` with a `progressStream` we iterate, and a `result` promise that resolves when the run ends. We need both.
 
 The setup mirrors the SDK's `llamacpp-finetune` example. The `finetuneParams` wrapper keeps the model + options together, so the resume spreads it and adds `operation: "resume"`:
 
@@ -85,9 +119,3 @@ Pause writes a checkpoint under `checkpointSaveDir` and resume consumes it, so t
 There is also `checkpointSaveSteps: N`, which writes a checkpoint every N steps as a safety net for a long run. We leave it off here. Each periodic checkpoint holds optimizer state on top of the adapter weights, every run writes to the same directory, and neither the SDK nor the app ever deletes one. Turn it on for real training and budget the disk for it.
 
 > Note: pause and cancel are both fire-and-forget at the SDK level. We `await` them to confirm the operation completed, but the returned promise resolves as soon as the trainer acknowledges the request.
-
-## Put it to the test
-
-1. Inside the for-await loop, call `finetune({ operation: "pause", modelId })` from a callback after a few training steps. Set `pauseRequested = true` first so it only fires once.
-2. After `await handle.result` and `await progressTask` confirm the worker slot is free, call `finetune({ ...finetuneParams, operation: "resume" })` and await the new handle. Gate it on `initialResult.status === "PAUSED"` so we only resume a run that paused.
-3. After the resume, call `finetune({ operation: "cancel", modelId })` and log `result.status`.

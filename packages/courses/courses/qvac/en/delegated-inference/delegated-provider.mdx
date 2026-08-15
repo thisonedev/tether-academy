@@ -21,6 +21,29 @@ expectedOutput:
   - "▸ Provider service started successfully."
   - "▸ Provider Public Key: 7f3a2b1c..."
   - "▸ Consumer command: node consumer.ts 7f3a2b1c..."
+questions:
+  - id: why-seed-enables-reconnect
+    text: "What has to be true about a seed for a consumer to reconnect to the same provider across restarts?"
+    answers:
+      - text: "A seed makes the provider's Hyperswarm identity deterministic, so the same seed always produces the same public key."
+        correct: true
+      - text: "The seed is cached by the consumer, so it remembers the provider regardless of the public key."
+        correct: false
+        feedback: "Check what the seed pins: the provider's identity, or the consumer's memory."
+      - text: "Seeds are required for `startQVACProvider()` to work at all."
+        correct: false
+        feedback: "Re-read whether the seed argument is optional or required."
+  - id: what-consumer-key-arg-changes
+    text: "What does a consumer public key argument do to the provider's `firewall`?"
+    answers:
+      - text: "It encrypts the completion responses sent back to that consumer."
+        correct: false
+        feedback: "Check what the concept paragraph says the `firewall` does: filters connections, or encrypts data."
+      - text: "It locks the `firewall` to allowlist-only, rejecting any consumer not on the list at the network layer."
+        correct: true
+      - text: "It's required before any consumer can connect at all."
+        correct: false
+        feedback: "Re-read whether the `firewall` block is optional or mandatory for a consumer to connect."
 ---
 
 Now that we've seen how models download over P2P, we're going to look at the other side of the same network.
@@ -64,9 +87,3 @@ A consumer public key passed as the second argument locks the provider down. The
 The runner watches the `▸ Provider Public Key: ...` line and captures the value into the state store. The next lesson reads it back as `process.argv[2]`, so you don't have to copy the key. Stop the provider with Ctrl+C when you're done, then head to the next lesson.
 
 > Note: `startQVACProvider()` doesn't return until the provider is listening on the DHT. Once it returns, consumers can connect. The provider process stays alive until you Ctrl+C.
-
-## Put it to the test
-
-1. Read the optional seed and consumer public key from `process.argv`. If a seed is present, set `process.env["QVAC_HYPERSWARM_SEED"]` to it before the provider call.
-2. Call `startQVACProvider({ firewall: { mode: "allow", publicKeys: [consumerKey] } })` if a consumer key was given, or `startQVACProvider({})` otherwise.
-3. Log `response.publicKey` and a copy-pasteable `node consumer.ts <publicKey>` command line.

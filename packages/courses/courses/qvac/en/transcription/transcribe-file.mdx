@@ -16,6 +16,29 @@ hints:
 expectedOutput:
   - "[0.00s → 2.80s] The quick brown fox jumps over the lazy dog."
   - "[2.80s → 5.20s] A fast auburn fox leaps over a sleepy canine."
+questions:
+  - id: what-metadata-true-does
+    text: "How does `transcribe()`'s return value change with `metadata: true`?"
+    answers:
+      - text: "It changes the audio format the SDK expects, from WAV to another container."
+        correct: false
+        feedback: "Check the audio format requirement separately from what the metadata flag controls."
+      - text: "It keeps the per-segment timestamp fields; without it you'd only get the joined text."
+        correct: true
+      - text: "It slows the call down but doesn't change the structure of the result."
+        correct: false
+        feedback: "Re-read what `metadata: true` brings back."
+  - id: expected-input-format
+    text: "What does the SDK expect the input audio to be?"
+    answers:
+      - text: "Any audio format; the SDK converts internally before transcribing."
+        correct: false
+        feedback: "Check what happens with formats other than the expected one."
+      - text: "A WAV file at 16 `kHz` mono PCM."
+        correct: true
+      - text: "An MP3 file, since WAV isn't supported for transcription."
+        correct: false
+        feedback: "Re-read which format the SDK takes directly, without conversion."
 ---
 
 We're starting a new chapter on transcription, and we're going to turn a WAV file into text.
@@ -42,8 +65,4 @@ for (const segment of segments) {
 
 The `metadata: true` flag keeps the per-segment timing fields. We set it to `false` if we only need the joined text.
 
-> Note: the audio must be a WAV file at 16 kHz mono PCM. Other formats work with extra conversion, but the SDK takes the most common shape directly.
-
-## Put it to the test
-
-1. Call `transcribe({ modelId, audioChunk: <path>, metadata: true })`, await the segments, and loop through them logging each with its `[start → end]` timestamp.
+> Note: the audio must be a WAV file at 16 kHz mono PCM. Other formats work with extra conversion, but the SDK takes the most common format directly.

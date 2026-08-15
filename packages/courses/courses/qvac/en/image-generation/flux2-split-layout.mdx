@@ -18,6 +18,29 @@ hints:
   - "The SDK only downloads files that aren't already on disk. The second run with the same constants skips the download and goes straight to inference."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: caller-perspective-split-vs-single
+    text: "From the caller's perspective, what changes about the `diffusion()` call when the model is split-layout instead of single-file?"
+    answers:
+      - text: "The prompt has to be pre-tokenized before `diffusion()` runs."
+        correct: false
+        feedback: "Check who's responsible for tokenization in the setup described in the concept paragraph."
+      - text: "Nothing; outputs is the same `Promise<Uint8Array[]>` type either way, since the extra complexity is all at load time."
+        correct: true
+      - text: "`diffusion()` needs a separate call for each of the three files."
+        correct: false
+        feedback: "Think about how many `loadModel` and `diffusion()` calls appear above."
+  - id: repeated-load-same-constants
+    text: "What happens if `loadModel` runs a second time with the same FLUX.2-klein constants?"
+    answers:
+      - text: "It re-downloads all three files to verify they haven't changed."
+        correct: false
+        feedback: "Check what the SDK does with files already present on disk."
+      - text: "It skips downloading files that are already on disk and goes straight to inference."
+        correct: true
+      - text: "It fails, since a model can only be loaded once per process."
+        correct: false
+        feedback: "Re-read whether a repeated load fails, or just runs faster."
 ---
 
 We've used a single model file so far. FLUX.2-klein needs three: a diffusion model, a text encoder, and a VAE.
@@ -26,7 +49,7 @@ The diffusion model is the inference engine. It iteratively refines a noise fiel
 
 The three files are independent. The SDK downloads each one on its own schedule, then wires them together at load time.
 
-FLUX.2-klein split-layout is three files in one `loadModel` call: diffusion model, LLM encoder, VAE. The pipeline: LLM → tokens → diffusion → latent → VAE → pixels. The combined load would look like the following:
+FLUX.2-klein split-layout is three files in one `loadModel` call: diffusion model, LLM encoder, VAE. The chain: LLM → tokens → diffusion → latent → VAE → pixels. The combined load would look like the following:
 
 ```ts
 const modelId = await loadModel({
@@ -39,7 +62,7 @@ const modelId = await loadModel({
 });
 ```
 
-From the caller's perspective, split-layout vs single-file is invisible. The `outputs` array is the same shape as for a single-file model: a `Promise<Uint8Array[]>` of PNG bytes. Drain `progressStream` while waiting for outputs so inference isn't blocked:
+From the caller's perspective, split-layout vs single-file is invisible. The `outputs` array is the same type as for a single-file model: a `Promise<Uint8Array[]>` of PNG bytes. Drain `progressStream` while waiting for outputs so inference isn't blocked:
 
 ```ts
 const result = diffusion({ modelId, prompt: "a quiet harbor at dawn" });
@@ -60,9 +83,3 @@ console.log(`Generated ${outputs.length} image`);
 ```
 
 > Note: the SDK only downloads the files that aren't already on disk. The second run with the same constants skips the download and goes straight to inference.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelType: "sdcpp-generation"`, `modelSrc: FLUX_2_KLEIN_4B_Q4_0`, and a `modelConfig` block holding the LLM encoder and VAE.
-2. Call `diffusion({ modelId, prompt })` and `await result.outputs`.
-3. Write `outputs[0]` to a PNG and log the image count.

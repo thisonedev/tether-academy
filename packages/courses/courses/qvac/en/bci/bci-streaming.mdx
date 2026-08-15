@@ -22,13 +22,36 @@ hints:
 expectedOutput:
   - "▸ Loading BCI model..."
   - "Not too controversial."
+questions:
+  - id: why-consume-task-runs-parallel
+    text: "What happens if the consume task reads the sliding window only after the write loop finishes?"
+    answers:
+      - text: "Nothing changes; the sliding window buffers everything until the consume task is ready to read it."
+        correct: false
+        feedback: "Check whether the sliding window holds unlimited buffered data, or has a fixed size."
+      - text: "It only runs a little slower; a sequential version would still work correctly."
+        correct: false
+        feedback: "Re-read what the concept paragraph says happens with a strictly sequential read-then-write."
+      - text: "It deadlocks: the write loop can't keep filling a fixed-size window while the consume task waits to read it."
+        correct: true
+  - id: what-emit-delta-changes
+    text: "How does `emit: 'delta'` change each iteration's output?"
+    answers:
+      - text: "It changes how often the sliding window advances over the input."
+        correct: false
+        feedback: "Check whether `emit` controls window advancement or output content."
+      - text: "Each read returns only the new tokens since the last read, instead of the full transcript so far."
+        correct: true
+      - text: "It switches the session from streaming mode to batch mode."
+        correct: false
+        feedback: "Think about whether the session is still streaming with `emit: 'delta'`, or whether it stops streaming."
 ---
 
 The previous lesson decoded a neural file all at once. This one feeds it chunk by chunk to simulate a live stream.
 
 `bciTranscribeStream` opens a duplex session. Writing bytes into `session.write(chunk)` feeds the sliding window, and iterating the session reads the decoded text as the window advances. The session is fully streaming on both sides: writes don't have to wait for the previous decode to finish, and the reader doesn't have to wait for a full file.
 
-Loading the BCI model is the first step. `whisperConfig` and `bciConfig` tell the engine which day of neural data we're transcribing:
+The first step is loading the BCI model. `whisperConfig` and `bciConfig` tell the engine which day of neural data we're transcribing:
 
 ```ts
 const modelId = await loadModel({
@@ -70,9 +93,3 @@ await unloadModel({ modelId });
 `emit: "delta"` is the mode that streams the running transcript (each iteration is the new text since the last read). The alternative mode emits the full transcript on every read.
 
 > Note: a 64KB chunk is a reasonable starting size for the example, but a real device driver usually has a buffer of its own. If your source is producing frames continuously, the write loop forwards each frame as it comes in.
-
-## Put it to the test
-
-1. Call `loadModel` with `BCI_WINDOWED` and the same `whisperConfig` + `bciConfig` as the previous lesson.
-2. Open `bciTranscribeStream({ modelId, emit: "delta" })` and start the consumer in the background.
-3. Read the file with `readFileSync`, write `CHUNK_SIZE` chunks to `session.write(chunk)` in a loop with a 10ms sleep, call `session.end()`, `await consume`, then `unloadModel`.

@@ -17,6 +17,29 @@ expectedOutput:
   - "Hello, world!"
   - "BBox: [12, 34, 250, 56]"
   - "Confidence: 0.9623"
+questions:
+  - id: what-paragraph-true-changes
+    text: "How does `ocr()` decide which lines to merge into a paragraph when `paragraph: true` is set?"
+    answers:
+      - text: "Based on the spacing between lines; lines close together merge into one paragraph block."
+        correct: true
+      - text: "Based on each line's confidence score; only high-confidence lines merge together."
+        correct: false
+        feedback: "Think about what `paragraph` controls: line grouping, or confidence filtering."
+      - text: "Based on punctuation like periods ending a sentence."
+        correct: false
+        feedback: "Check what signal the concept paragraph says paragraph merging actually uses: spacing, or punctuation."
+  - id: what-coordinate-space-bbox-uses
+    text: "What coordinate space is `bbox` expressed in?"
+    answers:
+      - text: "A normalized 0 to 1 range relative to the image dimensions."
+        correct: false
+        feedback: "Check what units bbox is actually expressed in."
+      - text: "Character offsets into the recognized text string."
+        correct: false
+        feedback: "Think about whether bbox describes a position in the image, or a position in the string."
+      - text: "Pixel coordinates relative to the input image."
+        correct: true
 ---
 
 We're starting a new chapter on OCR, and we're going to extract text from an image.
@@ -49,8 +72,3 @@ for (const block of result) {
 `paragraph: false` returns one block per visual line. Set it to `true` and the SDK groups lines into paragraphs based on spacing.
 
 > Note: the `bbox` field is in pixel coordinates relative to the input image. We use it to draw highlight overlays or to extract individual words for downstream processing.
-
-## Put it to the test
-
-1. Call `ocr({ modelId, image: <path>, options: { paragraph: false } })` and `await blocks`.
-2. Loop through the blocks and log the text, bbox, and confidence.

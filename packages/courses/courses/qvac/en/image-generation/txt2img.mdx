@@ -18,6 +18,40 @@ hints:
   - "Each Uint8Array in the array is one PNG. Write it to disk with fs.writeFileSync if you want a real file."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: why-sdcpp-generation-required
+    text: "Why does `diffusion()` require `modelType: 'sdcpp-generation'`?"
+    answers:
+      - text: "`modelType` only affects logging output; the backend that runs the model is identical either way."
+        correct: false
+        feedback: "Check what the concept paragraph says happens when `modelType` doesn't match."
+      - text: "`diffusion()` only works against that model type; the SDK rejects anything else, or runs it against the wrong backend."
+        correct: true
+      - text: "sdcpp-generation is just the default and can be omitted safely."
+        correct: false
+        feedback: "Re-read whether `modelType` is optional or required for `diffusion()` to work."
+  - id: what-outputs-resolves-to
+    text: "After a `diffusion()` call, what does `result.outputs` contain?"
+    answers:
+      - text: "A file path pointing to where the SDK already saved the image."
+        correct: false
+        feedback: "Think about whether `diffusion()` writes to disk itself, or hands back raw bytes."
+      - text: "A `Promise<Uint8Array[]>` where each entry is the raw bytes of one generated PNG."
+        correct: true
+      - text: "A single `Uint8Array` with every generated image concatenated together."
+        correct: false
+        feedback: "Check what type the concept paragraph gives for outputs: an array, or a single buffer."
+  - id: why-flux2-three-models
+    text: "What are the three stages wired together into one loaded model when you load FLUX.2?"
+    answers:
+      - text: "Prompt encoder, diffusion, and VAE."
+        correct: true
+      - text: "Prompt encoder, diffusion, and upscaler."
+        correct: false
+        feedback: "Re-read what job the concept paragraph gives the VAE in this setup, and whether an upscaler is part of it."
+      - text: "Tokenizer, diffusion, and VAE."
+        correct: false
+        feedback: "Check what each of the three stages does: prompt encoding, denoising, or pixel decoding."
 ---
 
 We're starting a new chapter on image generation, and we're going to make our first PNG.
@@ -79,9 +113,3 @@ console.log(`Generated ${outputs.length} image`);
 Open `cat.png` after running. That's the model's answer to your prompt. The next lesson tunes the size and the step count.
 
 > Note: diffusion models are memory-heavy. A 4B-parameter Flux model in FP16 needs roughly 8 GB of VRAM. Make sure your machine has headroom before loading.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelType: "sdcpp-generation"` and the split-layout `modelConfig`.
-2. Call `diffusion({ modelId, prompt })` and `await result.outputs`.
-3. Write `outputs[0]` to `cat.png` and console.log the count.

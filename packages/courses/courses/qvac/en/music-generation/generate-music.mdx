@@ -26,6 +26,40 @@ expectedOutput:
   - "▸ Generating:"
   - "▸ Saved output/music-gen/audiogen-output.wav"
   - "▸ Model unloaded"
+questions:
+  - id: why-four-files-one-modeltype
+    text: "Which of the following is NOT one of ACE-Step's four pipeline stages?"
+    answers:
+      - text: "A tokenizer stage"
+        correct: true
+      - text: "The `DiT` denoising stage"
+        correct: false
+        feedback: "Re-read the concept paragraph's list of ACE-Step's four stages; this one is on it."
+      - text: "The VAE decoding stage"
+        correct: false
+        feedback: "Check what job each of the four `modelConfig` fields plays in the process; this one is also on the list."
+  - id: why-usegpu-speeds-up-audiogen
+    text: "How does running the `DiT` stage's denoising passes on GPU differ from CPU when it comes to speed?"
+    answers:
+      - text: "`useGPU` changes the audio's sample rate and channel count."
+        correct: false
+        feedback: "Think about whether `useGPU` affects inference speed, or output format."
+      - text: "The `DiT` stage runs eight denoising passes through a transformer on every call, and that's the slow stage; `useGPU` controls whether those passes run on GPU or CPU."
+        correct: true
+      - text: "`useGPU` only affects the text encoder stage, which is the fastest part of the process."
+        correct: false
+        feedback: "Check which stage is described as the slow one, and what `useGPU` controls there."
+  - id: why-promise-all-for-audio-stats
+    text: "Why does `Promise.all([run.audio, run.stats])` save time over two sequential awaits?"
+    answers:
+      - text: "The two awaits overlap instead of one waiting on the other, since both resolve around the same time the diffusion finishes anyway."
+        correct: true
+      - text: "`Promise.all` is required because `progressStream` would otherwise never terminate."
+        correct: false
+        feedback: "Think about what `Promise.all` is resolving: the progress stream, or the audio and stats promises."
+      - text: "`run.stats` can only be read after `run.audio` has already been written to disk."
+        correct: false
+        feedback: "Check whether an ordering dependency between audio and stats is described anywhere."
 ---
 
 Welcome to the music chapter. In this first lesson, we're going to call ACE-Step and write a `.wav`. The text chapters took prompts and returned tokens; this one takes a description of a sound and returns audio.
@@ -46,7 +80,7 @@ const modelId = await loadModel({
 });
 ```
 
-The V15 Turbo DiT is the slow stage. It does eight denoising passes through a transformer every time you call `audioGen`. `useGPU: true` runs those passes on the GPU; without it the SDK runs them on the CPU instead.
+The slow stage is the V15 Turbo DiT. It does eight denoising passes through a transformer every time you call `audioGen`. `useGPU: true` runs those passes on the GPU; without it the SDK runs them on the CPU instead.
 
 The turbo default is eight inference steps: lower is faster and noisier, higher is slower and cleaner. With the four checkpoints loaded under one `modelId`, `audioGen` hands the caption to ACE-Step and gets back a run with progress, audio, and stats:
 
@@ -97,10 +131,3 @@ await unloadModel({ modelId });
 ```
 
 `createWav` is prefilled in `starting.ts`; it builds the 44-byte header from the exact `audio.sampleRate` / `audio.channels` / `audio.bitsPerSample` fields the run returns. After that it's a normal `writeFileSync` and a final `unloadModel({ modelId })`.
-
-## Put it to the test
-
-1. Call `loadModel({ modelType: "audiogen", modelConfig: { textEncModelSrc: AUDIOGEN_QWEN3_EMBEDDING_0_6B_Q8_0, lmModelSrc: AUDIOGEN_ACESTEP_5HZ_LM_0_6B_Q8_0, ditModelSrc: AUDIOGEN_ACESTEP_V15_TURBO_Q4_K_M, vaeModelSrc: AUDIOGEN_VAE_BF16, useGPU: true, inferenceSteps: 8 } })`.
-2. Call `audioGen({ modelId, caption: "...", lyrics: "[Instrumental]", seed: 42, duration: 10 })`.
-3. Drain `run.progressStream` with `for await` logging `▸ <stage>: <step>/<total>`, then `await Promise.all([run.audio, run.stats])`.
-4. Wrap `audio.pcm` in a WAV header with `createWav(audio.pcm, audio.sampleRate, audio.channels, audio.bitsPerSample)` and `writeFileSync` the result. Log the sample count, channel count, sample rate, and stats JSON, then `unloadModel({ modelId })`.

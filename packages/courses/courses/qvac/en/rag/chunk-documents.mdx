@@ -18,6 +18,40 @@ hints:
   - "result.processed.length is the chunk count, not the document count. One long doc becomes many chunks."
 expectedOutput:
   - "Created 12 chunks from 3 documents"
+questions:
+  - id: why-long-docs-need-chunking
+    text: "What limits how much text a single `embed()` call can take?"
+    answers:
+      - text: "`ragIngest` refuses any document longer than 200 words."
+        correct: false
+        feedback: "Check what `chunkSize` configures, compared to what limits a single embed call."
+      - text: "Long documents produce a longer embedding array than short ones do."
+        correct: false
+        feedback: "Recall what stays fixed in an embedding vector regardless of input length."
+      - text: "The embedding model has a fixed context, far shorter than the article, so the text has to be split first."
+        correct: true
+  - id: what-chunkoverlap-does
+    text: "Which `chunkOpts` field keeps context at a chunk boundary from being lost?"
+    answers:
+      - text: "`chunkSize`"
+        correct: false
+        feedback: "Check which option targets chunk size versus which one shares context at the boundary."
+      - text: "`chunkOverlap`"
+        correct: true
+      - text: "Neither; that behavior isn't configurable and always happens automatically."
+        correct: false
+        feedback: "Re-read whether `chunkOpts` exposes a field for this, or whether it's fixed."
+  - id: what-chunked-result-represents
+    text: "After chunking, what does a search result represent that it didn't before?"
+    answers:
+      - text: "The specific passage that matched, rather than the whole document."
+        correct: true
+      - text: "The full original document, exactly as it did before chunking was enabled."
+        correct: false
+        feedback: "Check what processed contains after a chunked ingest, compared to a whole-document one."
+      - text: "A summary generated from the matching chunk."
+        correct: false
+        feedback: "Think about whether `chunk: true` generates anything new, or just returns the chunk as stored."
 ---
 
 Now that we know how to ingest and search, let's handle longer documents.
@@ -45,8 +79,3 @@ console.log(`Created ${result.processed.length} chunks from ${samples.length} do
 `processed` is now a list of chunks, not documents. Search against this workspace returns the specific passage that matched, not the whole document.
 
 > Note: `chunkSize` is in tokens, not characters. A typical English word is roughly 1.3 tokens, so `chunkSize: 200` gives you chunks of about 150 words.
-
-## Put it to the test
-
-1. Call `ragIngest()` with `chunk: true` and `chunkOpts: { chunkSize: 200, chunkOverlap: 20 }`.
-2. Log both `result.processed.length` (chunk count) and `samples.length` (document count).

@@ -18,6 +18,29 @@ expectedOutput:
   - "..."
   - "20/20"
   - "Generated 1 image"
+questions:
+  - id: why-progress-and-outputs-dont-block
+    text: "What's the relationship between `result.progressStream` and `result.outputs` during one `diffusion()` call?"
+    answers:
+      - text: "outputs only resolves after `progressStream` is fully drained, so the two run one after the other with no overlap."
+        correct: false
+        feedback: "Re-read what the concept paragraph says about whether these two block each other."
+      - text: "The progress stream and the output promise don't block each other; draining one doesn't stop the underlying inference."
+        correct: true
+      - text: "`progressStream` and outputs come from two completely separate `diffusion()` calls."
+        correct: false
+        feedback: "Check whether the code above calls `diffusion()` once or twice."
+  - id: why-guard-progressstream
+    text: "What has to be true about `result.progressStream` before the code can safely iterate it?"
+    answers:
+      - text: "The check prevents `diffusion()` from running twice."
+        correct: false
+        feedback: "Check what this specific guard is defensive against."
+      - text: "`progressStream` is undefined until the first denoising step completes."
+        correct: false
+        feedback: "Think about whether the check is about timing within a single call, or about which models expose the field at all."
+      - text: "`progressStream` is optional in the type system, since older model versions didn't expose it."
+        correct: true
 ---
 
 Now that we're running diffusion calls that take real time, let's see how to show progress.
@@ -28,7 +51,7 @@ Now that we're running diffusion calls that take real time, let's see how to sho
 
 We loop the stream in parallel with the final `await result.outputs`, since they don't block each other.
 
-The per-step progress stream carries `{ step, totalSteps }` once per denoising tick, same `for await` shape as the `tokenStream` drain in the text lessons like so:
+The per-step progress stream carries `{ step, totalSteps }` once per denoising tick, same `for await` pattern as the `tokenStream` drain in the text lessons like so:
 
 ```ts
 if (result.progressStream) {
@@ -50,8 +73,3 @@ console.log(`Generated ${outputs.length} image`);
 We wire this stream into our app's progress bar and the user sees "5/20, 6/20, ..." tick up while the model works.
 
 > Note: `progressStream` is optional in the type system. The check `if (result.progressStream)` is defensive; older model versions didn't expose it. New models all do.
-
-## Put it to the test
-
-1. After calling `diffusion`, iterate `result.progressStream` with `for await`.
-2. Log each tick as `${progress.step}/${progress.totalSteps}`, then `await result.outputs` and write the PNG.

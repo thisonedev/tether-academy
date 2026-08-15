@@ -21,6 +21,40 @@ hints:
   - "More steps = slower but more refined. 20-30 is a good range for SD/SDXL; Flux can go lower. The seed defaults to -1 (random); pin it if you want reproducibility."
 expectedOutput:
   - "Generated 1 image"
+questions:
+  - id: why-quadruple-not-double
+    text: "Given width and height both double, by what factor does the generation work grow?"
+    answers:
+      - text: "By 4x: resolution is two-dimensional, so doubling both dimensions multiplies the total pixel count by four."
+        correct: true
+      - text: "By 2x, matching the increase in each individual dimension."
+        correct: false
+        feedback: "Think about what scales when width and height increase: pixel count, or a single dimension."
+      - text: "It stays the same; `steps` determines generation work, and resolution has no effect on it."
+        correct: false
+        feedback: "Check whether `steps` changes with resolution, or stays an independent option."
+  - id: what-more-steps-does
+    text: "What is `seed`'s default value if you leave it unset?"
+    answers:
+      - text: "`-1`, meaning random."
+        correct: true
+      - text: "`0`, meaning deterministic."
+        correct: false
+        feedback: "Check the exact default value the hint gives for `seed`, not an assumed neutral value."
+      - text: "There's no default; `seed` is a required field."
+        correct: false
+        feedback: "Re-read whether `seed` has a stated default, or must always be passed explicitly."
+  - id: why-seed-is-per-call
+    text: "What is a key characteristic of `diffusion()` that requires `seed` to be passed on every call instead of set once at `loadModel`?"
+    answers:
+      - text: "seed only works if it's set once when the model is loaded."
+        correct: false
+        feedback: "Check whether seed is passed to `loadModel` or to `diffusion()` in the code example."
+      - text: "`diffusion()` is stateless between calls; nothing about a prior run persists, so any run-specific option has to be supplied fresh each time."
+        correct: true
+      - text: "Per-call just means the seed changes automatically on every call."
+        correct: false
+        feedback: "Think about what happens across two calls that both pass the same seed value."
 ---
 
 The previous lesson made our first image. This one tunes the size and the step count.
@@ -42,7 +76,7 @@ const result = diffusion({
 });
 ```
 
-Same seed and same prompt, two calls produce byte-identical output like so. Split-layout inference streams step progress; drain it before awaiting `outputs` so inference isn't blocked:
+Two calls with matching seed and prompt produce byte-identical output. Split-layout inference streams step progress; drain it before awaiting `outputs` so inference isn't blocked:
 
 ```ts
 if (result.progressStream) {
@@ -56,11 +90,6 @@ if (first) fs.writeFileSync("output/image-gen/cat-watercolor.png", first);
 console.log(`Generated ${outputs.length} image`);
 ```
 
-Run it twice with the same seed and we get byte-identical output. Change the prompt and we get a different image from the same starting noise.
+Run it twice with an unchanged seed and we get byte-identical output. Change the prompt and we get a different image from that same starting noise.
 
-> Note: the seed is per-call, not per-model. Two `diffusion()` calls with the same `seed` and the same `prompt` produce identical output; changing either breaks the reproducibility.
-
-## Put it to the test
-
-1. Call `diffusion({ modelId, prompt, width: 512, height: 512, steps: 20, seed: 42 })`.
-2. `await result.outputs` and write `outputs[0]` to disk.
+> Note: the seed is per-call, not per-model. Two `diffusion()` calls with a matching `seed` and `prompt` produce identical output; changing either breaks the reproducibility.

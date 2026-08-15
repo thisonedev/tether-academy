@@ -17,11 +17,34 @@ expectedOutput:
   - "▸ Listening..."
   - "▸ [vad] speaking=true probability=0.87"
   - "▸ [endOfTurn] silence 800ms"
+questions:
+  - id: vad-vs-endofturn
+    text: "What's the difference between the `vad` and `endOfTurn` events on a `transcribeStream` session?"
+    answers:
+      - text: "`vad` and `endOfTurn` are two names for the same event, chosen based on `modelConfig`."
+        correct: false
+        feedback: "Check whether these are the same event or two distinct members of the union."
+      - text: "`vad` only fires for Parakeet models, and `endOfTurn` only fires for Whisper."
+        correct: false
+        feedback: "Re-read which model this session is using, and which events it emits."
+      - text: "`vad` fires while the speaker is talking; `endOfTurn` fires once the speaker has paused for `endOfTurnSilenceMs`."
+        correct: true
+  - id: what-endofturnsilencems-configures
+    text: "What are the three event categories this `transcribeStream` session's discriminated union produces?"
+    answers:
+      - text: "Text chunks, voice-activity state, and turn boundaries."
+        correct: true
+      - text: "Text chunks, connection-status events, and error events."
+        correct: false
+        feedback: "Re-read what three event categories the concept paragraph names, not general stream-handling events."
+      - text: "Only `vad` and `endOfTurn`; the transcribed text isn't a separate event."
+        correct: false
+        feedback: "Check whether text chunks are also emitted as their own event category."
 ---
 
 Now that we can stream transcripts from a microphone, we're going to surface the VAD and end-of-turn events the engine already tracks.
 
-`transcribeStream` returns a duplex session. Audio goes in via `session.write(chunk)`, and the session yields a discriminated union of events: text chunks, voice-activity state, and turn boundaries. A real-time voice assistant builds on top of those three event types.
+`transcribeStream` returns a duplex session. Audio goes in via `session.write(chunk)`, and the session produces a discriminated union of events: text chunks, voice-activity state, and turn boundaries. A real-time voice assistant builds on top of those three event types.
 
 Setting `emitVadEvents: true` and an `endOfTurnSilenceMs` of 800 surfaces VAD and end-of-turn events. The session open looks like this:
 
@@ -59,9 +82,4 @@ for await (const event of session) {
 
 The `vad` event fires while the speaker is talking. The `endOfTurn` event fires after the speaker pauses for `endOfTurnSilenceMs` milliseconds. That silence window is the conversation-equivalent of "they're done; now I can answer."
 
-> Note: `endOfTurn` measures silence from the VAD, not from a parakeet EOU token. Pair the Whisper model with `VAD_SILERO_5_1_2` in `modelConfig.vadModelSrc` so the silence window is measured accurately.
-
-## Put it to the test
-
-1. Open `transcribeStream({ modelId, emitVadEvents: true, endOfTurnSilenceMs: 800 })`, pipe the mic stream's Float32Array frames into `session.write(chunk)` in a background task, then iterate `for await (const event of session)`.
-2. Switch on `event.type`. Console.log `text` events as transcript lines, `vad` events as VAD ticks, and `endOfTurn` events as turn boundaries.
+> Note: `endOfTurn` measures silence from the VAD; Parakeet's EOU token is a separate mechanism this lesson doesn't use. Pair the Whisper model with `VAD_SILERO_5_1_2` in `modelConfig.vadModelSrc` so the silence window is measured accurately.

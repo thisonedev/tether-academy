@@ -20,6 +20,29 @@ hints:
 expectedOutput:
   - "▸ Completion started"
   - "▸ model unloaded"
+questions:
+  - id: autoclose-true-vs-false
+    text: "Which of the following best describes the difference between `autoClose: true` and `autoClose: false`?"
+    answers:
+      - text: "false closes the worker but keeps the weights cached for a fast reload."
+        correct: false
+        feedback: "Check which value is paired with tearing down the worker process."
+      - text: "true tears down the whole worker process, while false only frees the model weights from memory."
+        correct: true
+      - text: "`autoClose` only changes how fast the call resolves."
+        correct: false
+        feedback: "There's a real distinction between the two values above. Check what each one frees."
+  - id: why-not-mid-stream
+    text: "What happens if you call `unloadModel` in the middle of a completion stream?"
+    answers:
+      - text: "It throws an unrecoverable error and crashes the process."
+        correct: false
+        feedback: "Re-read what actually happens when you call `unloadModel` mid-stream."
+      - text: "It silently queues until the stream ends, so calling it early or late has the same effect."
+        correct: false
+        feedback: "Check whether `unloadModel` waits for you, or if you have to wait yourself."
+      - text: "It cuts tokens off before the completion finishes generating."
+        correct: true
 ---
 
 Now that we've run our completion, let's free the model and tear down the worker.
@@ -36,8 +59,3 @@ console.log("▸ model unloaded");
 If you skip this call, the model stays in memory until the process exits. For long-running workloads (servers, desktop apps, mobile sessions) unload the moment the work is done. The model takes hundreds of megabytes, and the GPU or CPU stays warm as long as the worker is alive.
 
 > Note: calling `unloadModel()` mid-stream would cut tokens off. Always wait for the events loop to finish before unloading.
-
-## Put it to the test
-
-1. After the completion loop ends, call `unloadModel({ modelId, autoClose: true })`.
-2. Log a confirmation line, e.g., `"▸ model unloaded"`.

@@ -18,6 +18,29 @@ expectedOutput:
   - "matches"
   - "▸ Deleted embedding"
   - "▸ After delete:"
+questions:
+  - id: why-index-size-unchanged
+    text: "After `ragDeleteEmbeddings` removes a document, why might the on-disk index file stay the same size?"
+    answers:
+      - text: "Deletion only hides documents from `ragSearch` results and never touches storage at all."
+        correct: false
+        feedback: "Check what a later `ragReindex` eventually does to the index size."
+      - text: "`ragDeleteEmbeddings` silently fails and doesn't remove anything."
+        correct: false
+        feedback: "Think about what the before and after search counts show in the expected output."
+      - text: "Deletion skips the removed ids on search but doesn't shrink the index file until `ragReindex` runs."
+        correct: true
+  - id: delete-already-deleted-id
+    text: "What happens if `ragDeleteEmbeddings` is called with an id that's already been removed?"
+    answers:
+      - text: "The call throws because the id can no longer be found."
+        correct: false
+        feedback: "Re-read what idempotent means for this call, described in the concept paragraph."
+      - text: "Nothing breaks; the call is idempotent and treats a missing id as a no-op."
+        correct: true
+      - text: "The call deletes the next document in the workspace instead."
+        correct: false
+        feedback: "Think about whether `ragDeleteEmbeddings` substitutes anything for a missing id, or just ignores it."
 ---
 
 The previous lessons added documents to a workspace. This one removes them.
@@ -44,8 +67,3 @@ console.log(`▸ After delete: ${after.length} matches`);
 In the call, `ids` is `string[]`. Pass one entry to delete a single document, or several to delete them in one call. After the delete, the workspace's index is updated. `ragSearch` returns one fewer result on the next call. If you're running repeated delete + ingest cycles, follow up with `ragReindex` after a few hundred writes to keep scores tight.
 
 > Note: `ragDeleteEmbeddings` removes the documents but doesn't shrink the on-disk index until you reindex. The next `ragSearch` skips the deleted ids, but the index file still occupies the original size until `ragReindex` is called.
-
-## Put it to the test
-
-1. The editor prefills the `ragIngest` + ids collection. Add a search before the delete and log the count.
-2. Call `ragDeleteEmbeddings({ workspace, ids: [firstId] })`, search again, and log the new count.

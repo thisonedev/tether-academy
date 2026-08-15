@@ -15,17 +15,40 @@ tests:
 hints:
   - "loadModel takes { modelSrc: BCI_WINDOWED, modelConfig: { whisperConfig: {...}, bciConfig: { day_idx } } }."
   - "bciTranscribe({ modelId, neuralData: <path>, metadata: true }) returns an array of segments, each with startMs, endMs, id, append, and text."
-  - "day_idx selects the day-specific projection matrices. Set it to match the recording session your neural file came from. Day 1 is the example default."
+  - "day_idx selects the day-specific projection matrices. Set it to match the recording session your neural file came from. The example default is day 1."
 expectedOutput:
   - "▸ Loading BCI model..."
   - "▸ BCI model loaded with ID: model-7f2a"
   - "▸ Transcribing neural signal..."
   - "  [0.00s → 30.00s] (id=0, append=false) Not too controversial."
+questions:
+  - id: what-projection-layer-does
+    text: "What does the `BCI_WINDOWED` model's projection layer do to the raw neural signal?"
+    answers:
+      - text: "It filters out noisy channels before the decoder runs."
+        correct: false
+        feedback: "Re-read what job the concept paragraph assigns to the projection layer."
+      - text: "It converts the neural signal into an audio waveform you can play back."
+        correct: false
+        feedback: "Check what space the projection layer maps into: an audio-token space, or a playable waveform."
+      - text: "It turns the raw neural-signal bytes into the same audio-token space Whisper expects, so the bundled Whisper-style decoder can produce a transcript."
+        correct: true
+  - id: why-day-idx-must-match
+    text: "What has to be true about `bciConfig.day_idx` for `loadModel` to work correctly with a given neural file?"
+    answers:
+      - text: "`day_idx` picks the day-specific projection matrices, and it has to match the recording session the neural file came from."
+        correct: true
+      - text: "`day_idx` controls how many segments `bciTranscribe` returns."
+        correct: false
+        feedback: "Think about what determines segment count versus what `day_idx` configures."
+      - text: "`day_idx` only affects logging timestamps in the output."
+        correct: false
+        feedback: "Check what `day_idx` selects: projection matrices, or log formatting."
 ---
 
 This lesson looks at a much more unusual capability, the brain-computer interface.
 
-BCI models interpret neural signals into something the rest of the SDK can consume. The shape is the same as every other capability: load a model, hand it input, read back the structured result. The inputs and outputs are unusual, but the workflow isn't.
+BCI models interpret neural signals into something the rest of the SDK can consume. The pattern is the same as every other capability: load a model, hand it input, read back the structured result. The inputs and outputs are unusual, but the workflow isn't.
 
 The model that drives this chapter is `BCI_WINDOWED`. It bundles a Whisper-style decoder with a brain-computer-interface projection layer that turns a raw neural-signal `.bin` file into the same audio-token space Whisper expects. The output is the same kind of timed transcript you'd get from a microphone recording.
 
@@ -57,7 +80,7 @@ const segments = await bciTranscribe({
 });
 ```
 
-Each segment carries a timestamp and a metadata block. We iterate and log the text, the start/end in seconds, and the confidence:
+Each segment carries a timestamp and a metadata block. We iterate and log the text, the start/end in seconds, the id, and the append flag:
 
 ```ts
 for (const segment of segments) {
@@ -69,14 +92,8 @@ for (const segment of segments) {
 }
 ```
 
-The `bciConfig.day_idx` field picks which day-specific projection matrices the model uses. Set it to match the recording session your neural file came from. Day 1 is the example default.
+The `bciConfig.day_idx` field picks which day-specific projection matrices the model uses. Set it to match the recording session your neural file came from. The example default is day 1.
 
 The `append` field on each segment tells you whether the new text continues the previous segment or starts a new one. A live UI uses it to decide between overwriting the last caption and appending.
 
 > Note: the Whisper half of the BCI pipeline takes the same `whisperConfig` knobs the standalone Whisper model does (language, n_threads, temperature). For batch decode, `n_threads: 4` and `temperature: 0.0` are sensible defaults.
-
-## Put it to the test
-
-1. Call `loadModel` with `modelSrc: BCI_WINDOWED`, a `whisperConfig` block (`language: "en"`, `n_threads: 4`, `temperature: 0.0`), and `bciConfig: { day_idx: 1 }`.
-2. Call `await bciTranscribe({ modelId, neuralData: neuralFilePath, metadata: true })`.
-3. Iterate the segments with a `for` loop and console.log each with its `[start → end]` timestamp and `id` and `append` fields.

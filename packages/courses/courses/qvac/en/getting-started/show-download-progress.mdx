@@ -6,7 +6,7 @@ tests:
   - id: has-onprogress
     description: loadModel call includes an onProgress option
     pattern: "loadModel\\s*\\(\\s*\\{[^}]*onProgress\\s*:"
-  - id: callback-shape
+  - id: callback-signature
     description: onProgress callback receives a progress object and reads percentage / downloaded / total
     pattern: "onProgress\\s*:\\s*\\(?\\s*p\\)?\\s*=>\\s*\\{[\\s\\S]*p\\.(percentage|downloaded|total)"
   - id: still-loads
@@ -26,6 +26,40 @@ expectedOutput:
   - "▸ Downloading 100% (740.0/740.0 MB)"
   - "▸ Model loaded: model-7f2a"
   - "modelId: model-7f2a"
+questions:
+  - id: why-stderr-not-stdout
+    text: "Which output stream does the progress callback write its lines to?"
+    answers:
+      - text: "`process.stdout`, since progress and the model's response can share one stream."
+        correct: false
+        feedback: "Check what stdout is reserved for, according to the concept paragraph."
+      - text: "`process.stderr`, since stdout is reserved for the model's actual response."
+        correct: true
+      - text: "Neither; progress goes straight to a log file, with no stream involved."
+        correct: false
+        feedback: "Re-read which `process` stream the callback actually calls `.write` on."
+  - id: what-onprogress-receives
+    text: "Given the expected output above, what does the second `onProgress` call receive?"
+    answers:
+      - text: "The percentage, downloaded, and total shown on the second `Downloading` line, with downloaded less than the final line's total."
+        correct: true
+      - text: "Exactly 50%, since progress always reports in round increments."
+        correct: false
+        feedback: "Check the actual percentage on the second line in the expected output, not an assumed rounding."
+      - text: "The full downloaded file's bytes as a `Buffer`."
+        correct: false
+        feedback: "Think about whether `onProgress` carries the file's contents or just status numbers."
+  - id: why-check-istty
+    text: "What determines whether progress output uses `\\r` or `\\n` after each tick?"
+    answers:
+      - text: "Whether the output is JSON-formatted or plain text."
+        correct: false
+        feedback: "Check exactly which condition decides between \\r and \\n."
+      - text: "`process.stderr.isTTY`: a TTY can overwrite the same line with `\\r`, while piped output needs `\\n` so each tick ends up on its own row."
+        correct: true
+      - text: "The current download percentage; `\\r` is used below 100% and `\\n` at completion."
+        correct: false
+        feedback: "Think about what `isTTY` changes: how the terminal renders output, or how far along the download is."
 ---
 
 In the very first lesson we called `loadModel({ modelSrc: ... })` and waited. From the user's point of view the script sat there with no output while a multi-hundred-megabyte file downloaded. `onProgress` exists to make that wait readable.
@@ -54,7 +88,3 @@ A few details worth pointing at:
 - `process.stderr.write` is the right call here. Stdout is reserved for the model's actual response in the next lesson; progress is logging, and stderr is the standard place for it.
 - The `process.stderr.isTTY` flag picks the rendering mode. When the terminal is a TTY, the script writes `\r` so each tick overwrites the same line. When output is piped to a file, it writes `\n` so each tick ends up on its own row in the log.
 - The final `process.stderr.write("\n")` after `p.percentage >= 100` makes sure the next log starts on a fresh row.
-
-## Put it to the test
-
-1. Add `modelSrc: LLAMA_3_2_1B_INST_Q4_0` and an `onProgress` callback to the `loadModel` call. Inside the callback, write `▸ Downloading X% (Y/Z MB)` to `process.stderr`, choosing between overwriting the line (`isTTY`) and appending a newline (pipe). When `p.percentage >= 100`, write a trailing newline so the next log starts on a fresh row.
