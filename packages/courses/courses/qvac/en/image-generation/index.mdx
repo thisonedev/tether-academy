@@ -5,7 +5,7 @@ description: Seven lessons on text-to-image, image-to-image, and upscaling with 
 
 Now that a model can take images as input, we're going to add the reverse direction: a model that produces images from text.
 
-Diffusion is a different kind of model: instead of running a language model to predict tokens, it starts from noise and iteratively refines the image until the result matches the prompt. The shape is the same as `completion()`, but the result is a `Uint8Array` of PNG bytes instead of a token stream.
+Diffusion is a different kind of model: instead of running a language model to predict tokens, it starts from noise and iteratively refines the image until the result matches the prompt. The call pattern is the same as `completion()`, but the result is a `Uint8Array` of PNG bytes instead of a token stream.
 
 [Start Lesson 1 →](/courses/qvac/en/image-generation/txt2img)
 
