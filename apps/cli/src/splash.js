@@ -14,17 +14,6 @@ const HEXAGON = [
   '     ▀▀▀▀     ',
 ];
 
-function printSplash(subtitle) {
-  if (!process.stdout.isTTY) return;
-  console.log();
-  for (const line of HEXAGON) {
-    console.log(GREEN + line + RESET);
-  }
-  console.log();
-  console.log(`${BOLD}tether-academy${RESET}${subtitle ? ` — ${subtitle}` : ''}`);
-  console.log();
-}
-
 function printBanner(text) {
   if (!process.stdout.isTTY) return;
   console.log();
@@ -36,4 +25,4 @@ function printBanner(text) {
   console.log();
 }
 
-module.exports = { printSplash, printBanner };
+module.exports = { printBanner };

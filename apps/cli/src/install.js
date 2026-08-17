@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { run } = require('./proc');
 const { home, versionsDir, currentLink, repoUrl, branch } = require('./home');
-const { printSplash } = require('./splash');
+const { printBanner } = require('./splash');
 
 function writeShim(targetEntry) {
   const binDir = path.join(os.homedir(), '.local', 'bin');
@@ -17,7 +17,7 @@ function writeShim(targetEntry) {
 }
 
 async function install() {
-  printSplash('installing');
+  printBanner('Installing Tether Academy...');
   fs.mkdirSync(versionsDir(), { recursive: true });
   const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);
 
