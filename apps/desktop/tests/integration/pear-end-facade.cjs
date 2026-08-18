@@ -59,3 +59,33 @@ test('pear-end - shutdown is idempotent', async (t) => {
   await t.execution(pearEnd.shutdown(), 'first shutdown');
   await t.execution(pearEnd.shutdown(), 'second shutdown does not throw');
 });
+
+// Proving a device key is what earns an entry; claiming one earns nothing.
+test('pear-end - a verified peer is recorded, an unverified one is not', async (t) => {
+  const { pearEnd } = await createFacade(t, 'trusted');
+  await pearEnd.identity().createNew();
+  pearEnd.identity().confirmBackup();
+
+  const DEVICE = 'a'.repeat(64);
+  const IDENTITY = 'b'.repeat(64);
+
+  await pearEnd._rememberVerifiedPeer({
+    discoveryKey: 'f'.repeat(64),
+    identityVerified: false,
+    verifiedDevicePublicKey: DEVICE,
+  });
+  t.alike(pearEnd.identity().listTrustedPeers(), [], 'a peer that proved nothing is not recorded');
+
+  await pearEnd._rememberVerifiedPeer({
+    discoveryKey: 'f'.repeat(64),
+    identityVerified: true,
+    verifiedDevicePublicKey: DEVICE,
+    verifiedIdentityPublicKey: IDENTITY,
+  });
+
+  const trusted = pearEnd.identity().listTrustedPeers();
+  t.is(trusted.length, 1, 'a verified peer is remembered');
+  t.is(trusted[0].devicePublicKey, DEVICE, 'keyed by the key it proved');
+  t.is(trusted[0].identityPublicKey, IDENTITY);
+  t.is(trusted[0].revoked, false);
+});

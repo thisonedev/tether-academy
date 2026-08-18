@@ -104,3 +104,34 @@ test('pairing - both sides list exactly one peer, and dropPeer removes it', asyn
   await host.dropPeer(hostEvent.discoveryKey);
   t.is(host.listPeers().length, 0, 'dropPeer removes the pair');
 });
+
+// Each side has to publish its own key, not echo the one it received, or a
+// reconnect would knock on its own door.
+test('pairing - the profile frame carries a swarm key to reconnect on', async (t) => {
+  const { peers: [host, guest] } = await createPeers(t, 2, { label: 'swarm-key' });
+
+  const invite = await host.createInvite({ autoApprove: true, userData: { name: 'host-from-test' } });
+  await guest.acceptInvite(invite.invite, {
+    userData: { name: 'guest-from-test' },
+    code: invite.pairingCode,
+  });
+
+  const seen = await waitFor(
+    guest,
+    'peer:paired',
+    (payload) => typeof payload.userData?.swarmPublicKey === 'string',
+    10_000,
+  );
+  t.ok(/^[0-9a-f]{64}$/.test(seen.userData.swarmPublicKey), 'the host published a usable swarm key');
+
+  const hostSideView = host.listPeers()[0];
+  t.ok(
+    /^[0-9a-f]{64}$/.test(hostSideView?.userData?.swarmPublicKey ?? ''),
+    'and the guest published one back',
+  );
+  t.not(
+    seen.userData.swarmPublicKey,
+    hostSideView.userData.swarmPublicKey,
+    'each side reports its own, not a reflection of the other',
+  );
+});

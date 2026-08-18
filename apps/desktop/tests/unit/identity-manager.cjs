@@ -174,3 +174,60 @@ test('identity-manager - ready() invalidates after reset and re-runs init', asyn
   await m.ready();
   t.is(m.status(), 'none', 'reset leaves no identity');
 });
+
+// Keyed by the proven device key, so the self-reported name can change or be
+// wrong without splitting one peer into two entries.
+test('identity-manager - trusted peers survive and are keyed by device key', async (t) => {
+  const m = manager(t, 'trusted');
+  await m.createNew();
+  m.confirmBackup();
+
+  const KEY_A = 'a'.repeat(64);
+  const KEY_B = 'b'.repeat(64);
+  t.alike(m.listTrustedPeers(), [], 'nothing trusted to start');
+
+  const first = m.trustPeer({ devicePublicKey: KEY_A, name: 'joe', swarmPublicKey: 'c'.repeat(64) });
+  t.is(first.name, 'joe');
+  t.is(first.revoked, false);
+  t.is(m.listTrustedPeers().length, 1);
+
+  // Pairing again with the same device updates rather than duplicating.
+  m.trustPeer({ devicePublicKey: KEY_A, name: 'joe-renamed' });
+  const afterRepair = m.listTrustedPeers();
+  t.is(afterRepair.length, 1, 'the same device key is one entry');
+  t.is(afterRepair[0].name, 'joe-renamed');
+  t.is(afterRepair[0].swarmPublicKey, 'c'.repeat(64), 'the way back is kept when the name changes');
+  t.is(afterRepair[0].trustedAt, first.trustedAt, 'first trusted time is not reset');
+
+  m.trustPeer({ devicePublicKey: KEY_B, name: 'other' });
+  t.is(m.listTrustedPeers().length, 2);
+
+  // Revoking keeps the entry, so the peer stays refusable rather than unknown.
+  t.ok(m.setTrustedPeerRevoked(KEY_B, true));
+  t.is(m.listTrustedPeers().find((p) => p.devicePublicKey === KEY_B).revoked, true);
+
+  t.ok(m.untrustPeer(KEY_B));
+  t.is(m.listTrustedPeers().length, 1);
+  t.absent(m.untrustPeer(KEY_B), 'removing an unknown peer reports nothing removed');
+
+  t.exception(() => m.trustPeer({ devicePublicKey: 'not-hex' }), /32 bytes of hex/);
+});
+
+// Whether the blob actually round-trips, which is the whole reason it exists.
+test('identity-manager - trusted peers reload in a new manager over the same profile', async (t) => {
+  const dir = tmpDir(t, 'idm-trusted-reload');
+  const KEY = 'd'.repeat(64);
+
+  const first = createManager(dir, { safeStorage: null });
+  await first.createNew();
+  first.confirmBackup();
+  first.trustPeer({ devicePublicKey: KEY, name: 'joe', swarmPublicKey: 'e'.repeat(64) });
+
+  const reopened = createManager(dir, { safeStorage: null });
+  await reopened.ready();
+
+  const peers = reopened.listTrustedPeers();
+  t.is(peers.length, 1, 'the peer is still there after reopening the profile');
+  t.is(peers[0].devicePublicKey, KEY);
+  t.is(peers[0].swarmPublicKey, 'e'.repeat(64), 'and still knows how to reach it');
+});

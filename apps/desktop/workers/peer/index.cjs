@@ -62,6 +62,12 @@ function sanitizeProfileUserData(userData) {
     devicePublicKey: typeof userData.devicePublicKey === 'string' && HEX_64.test(userData.devicePublicKey)
       ? userData.devicePublicKey
       : null,
+    // Where to find this peer again without an invite. Derived from their
+    // identity, so it is the same on their next run. Self-reported like the
+    // rest of this frame: it only says where to knock, never who answers.
+    swarmPublicKey: typeof userData.swarmPublicKey === 'string' && HEX_64.test(userData.swarmPublicKey)
+      ? userData.swarmPublicKey
+      : null,
   };
 }
 
@@ -100,6 +106,7 @@ function buildLocalUserData(userDataOpt) {
     ...(userDataOpt ?? {}),
     buildId: BUILD_ID,
     devicePublicKey: localClaim?.devicePublicKey ?? null,
+    swarmPublicKey: swarm ? toHex(swarm.keyPair.publicKey) : null,
   };
   return myProfileUserData;
 }
@@ -678,6 +685,24 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
         return;
       }
 
+      // An invite pasted back into the device that issued it otherwise pairs a
+      // device to itself, listing its own name as the peer and sending runs
+      // nowhere. Compares the device key, so the same account on a second
+      // device still pairs normally.
+      if (
+        typeof claimedDeviceKey === 'string'
+        && localClaim?.devicePublicKey
+        && claimedDeviceKey === localClaim.devicePublicKey
+      ) {
+        candidate._denied = true;
+        appendAudit('peer:rejected', {
+          discoveryKey: discoveryKeyHex,
+          reason: 'self-pairing',
+          devicePublicKey: claimedDeviceKey,
+        });
+        return;
+      }
+
       if (autoApprove) {
         candidate.confirm({ key: autobaseKey });
         finalizePair(discoveryKeyHex, 'host', remoteUserData, autobaseKey, inviteIdHex);
@@ -729,8 +754,11 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
       });
     },
   });
-  await member.flushed();
+  // Before the flush, not after: addMember announces the topic immediately, and
+  // a guest connecting during the flush found itself absent from `members`, so
+  // neither side ever opened the exec channel.
   members.set(discoveryKeyHex, member);
+  await member.flushed();
   attachExecToAllConnections(discoveryKey);
 
   return {
@@ -876,10 +904,15 @@ async function acceptInvite(inviteB64, { userData = null, code = null, hostIdent
     userData: Buffer.from(JSON.stringify(localUserData), 'utf8'),
     async onadd(result) {
       const keyBuf = result?.key;
+      // Null, not this device's own userData: blind-pairing tells the guest
+      // nothing about the host, so the real name only lands with the profile
+      // frame. Passing localUserData here labelled the host with the guest's
+      // own name, so a pairing that never got that frame read as paired to
+      // yourself instead of as unknown.
       finalizePair(
         discoveryKeyHex,
         'guest',
-        localUserData,
+        null,
         Buffer.isBuffer(keyBuf) ? keyBuf : null,
         null,
         hostIdentity,
