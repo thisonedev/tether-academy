@@ -248,7 +248,11 @@ function extractImportedNames(src) {
   if (!m) return [];
   return m[1]
     .split(',')
-    .map((s) => s.trim().split(/\s+as\s+/)[0].trim())
+    .map((s) => s.trim())
+    // A type has no runtime binding, so keeping it emitted
+    // `const { type RagEmbeddedDoc } = ...` and the lesson died on a SyntaxError.
+    .filter((s) => s && !/^type\s/.test(s))
+    .map((s) => s.split(/\s+as\s+/)[0].trim())
     .filter(Boolean);
 }
 

@@ -118,3 +118,18 @@ test('buildLesson - a slow SDK call names itself while it runs', async (t) => {
   t.absent(/embed/.test(err), 'a call that returns at once is not worth a line');
   t.absent(/loadModel/.test(err), 'and the call every lesson makes is never worth one');
 });
+
+// Carrying `type X` into the injected import and the trace binding emitted
+// `const { type X } = ...`, which is a SyntaxError.
+test('buildLesson - a type-only specifier stays out of the runtime binding', (t) => {
+  const built = buildLesson({
+    source:
+      'import { loadModel, type RagEmbeddedDoc } from "@qvac/sdk";\n'
+      + 'const docs = [] as RagEmbeddedDoc[];\n'
+      + 'main();\n',
+    cwd: COURSES,
+    runtime: 'bare',
+  });
+  t.absent(/type RagEmbeddedDoc/.test(built), 'the type name is gone from the generated code');
+  t.ok(built.includes('loadModel as __academySdk_loadModel'), 'the value import survives');
+});
