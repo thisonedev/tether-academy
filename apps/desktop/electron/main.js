@@ -1,12 +1,35 @@
-const { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell } = require('electron');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const PearRuntime = require('pear-runtime');
 const FramedStream = require('framed-stream');
 const { isMac, isLinux, isWindows } = require('which-runtime');
 const { command, flag } = require('paparam');
 const { promises: fs } = require('node:fs');
+const { diagnoseNativeAddonError, checkRequiredLinuxLibs } = require('../shared/linux-lib-hint.cjs');
+
+// A missing library (e.g. no Vulkan loader) can crash several unrelated native
+// addons the moment their require chain gets touched, each with a different,
+// unhelpful error, so this checks once before any of them load.
+const missingLibHint = checkRequiredLinuxLibs();
+if (missingLibHint) {
+  // dialog.showErrorBox is explicitly documented as safe pre-ready, for
+  // exactly this: reporting a fatal error before the rest of startup runs.
+  dialog.showErrorBox('Tether Academy: missing system library', missingLibHint);
+  app.exit(1);
+  return; // Stop this module's own requires from ever reaching the fragile ones below.
+}
+
+// Same lazy-require guard as state-store.cjs's loadCorestore().
+function loadPearRuntime() {
+  try {
+    return require('pear-runtime');
+  } catch (err) {
+    const hint = diagnoseNativeAddonError(err);
+    if (hint) err.message = `${err.message}\n${hint}`;
+    throw err;
+  }
+}
 
 // Has to run before whenReady; registration after that is silently ignored.
 protocol.registerSchemesAsPrivileged([
@@ -21,6 +44,13 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// Chromium only auto-picks a keyring backend via XDG_CURRENT_DESKTOP, unset
+// on headless/minimal Linux even with a real keyring running, which silently
+// drops identity sealing to a file key and blocks peer-exec.
+if (isLinux && !process.env.XDG_CURRENT_DESKTOP) {
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
 
 const { runExample } = require('../runner.cjs');
 const { createThinkingFilter } = require('./chat-thinking-filter.cjs');
@@ -156,6 +186,7 @@ function getWorker(specifier) {
         : path.join(os.homedir(), 'AppData', 'Roaming', appName);
   }
   const extension = isLinux ? '.AppImage' : isMac ? '.app' : '.msix';
+  const PearRuntime = loadPearRuntime();
   const worker = PearRuntime.run(WORKER_PATH, [
     updates,
     version,
@@ -218,13 +249,15 @@ async function runAcademy(parsed, evt) {
     // Uses detectNodeOnly, not nodeOnlyImports: buildLesson resolves specifiers
     // to absolute paths, which nodeOnlyImports skips as local files.
     // forceMock: true — a probe of this host says nothing about the peer's.
+    // portable: true, since the peer runs this on its own filesystem, not
+    // this one; see shared/portable-lesson-imports.cjs.
     const { buildLesson, decideMockImports } = require('./runner-process.cjs');
     const { detectNodeOnly } = require('../workers/peer/exec-validate.cjs');
     const { mockImports, note } = await decideMockImports(parsed.source, { forceMock: true });
     let runtime;
     let wrapped;
     for (const candidate of ['bare', 'node']) {
-      wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime: candidate, mockImports, mockNote: note });
+      wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime: candidate, mockImports, mockNote: note, portable: true });
       if (detectNodeOnly(wrapped) === null) {
         runtime = candidate;
         break;

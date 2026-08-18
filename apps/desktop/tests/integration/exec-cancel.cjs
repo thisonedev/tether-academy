@@ -6,7 +6,7 @@
 const test = require('brittle');
 
 const { bareRequires, pairForExec, runExec } = require('../helpers/index.cjs');
-const { SIGKILL_GRACE_MS } = require('../../workers/peer/exec-host.cjs');
+const { SIGKILL_GRACE_MS, _setTestStaleRunMs } = require('../../workers/peer/exec-host.cjs');
 
 // run-tests.mjs only keeps lines matching /^\s*not ok/ in its CI summary;
 // a raw newline in a failure message would drop everything after it.
@@ -107,4 +107,48 @@ test('exec-cancel - the peer accepts a fresh exec afterwards', async (t) => {
   );
   t.ok(fresh.result.stdout.includes('fresh run ok'), `the new exec actually ran; ${detail}`);
   t.is(fresh.result.code, 0, `exec state was not left stuck; ${detail}`);
+});
+
+// No cancel this time: a run that never replies at all (not even 'started')
+// used to wedge the guest's own exec lock forever, with no recovery short
+// of an app restart. _testHooks shortens the real multi-minute wait to
+// something a test can actually run.
+test('exec-cancel - a run that never replies frees the peer on its own', async (t) => {
+  const { guest, discoveryKey } = await pairForExec(t, 'stale-no-reply');
+  guest._testHooks.setGuestExecStaleMs(800);
+  // Module-level in exec-host.cjs, shared by every peer in this process; reset
+  // so it doesn't leak into tests that run after this one. Well under the
+  // guest's own 800ms so it has always elapsed by the time the retry lands.
+  t.teardown(() => _setTestStaleRunMs(null));
+  _setTestStaleRunMs(50);
+
+  const stuck = await settled(
+    runExec(guest, { peerId: discoveryKey, code: 'for (;;) {}' }, 5_000),
+  );
+  t.ok(stuck.err, 'the stale timeout rejects the stuck run');
+  t.ok(/no reply from peer/.test(stuck.err?.message ?? ''), `got: ${stuck.err?.message}`);
+
+  // A fresh request right after landed exactly as the host was recovering the
+  // stale slot; give the full recovery + spawn pipeline (identity wait,
+  // security scan, sandbox setup) room to finish rather than the stuck run's
+  // own tight stale budget.
+  guest._testHooks.setGuestExecStaleMs(10_000);
+  const fresh = await settled(
+    runExec(guest, {
+      peerId: discoveryKey,
+      code: bareRequires('process') + 'process.stdout.write("fresh run ok\\n"); process.exit(0);',
+    }),
+  );
+  t.absent(fresh.err, `a fresh exec must be accepted afterwards; got: ${fresh.err?.message ?? 'no error'}`);
+  if (!fresh.err) {
+    const detail = oneLine(
+      `code=${fresh.result.code} signal=${fresh.result.signal} ` +
+        `stdout=${fresh.result.stdout} stderr=${fresh.result.stderr}`,
+    );
+    t.ok(fresh.result.stdout.includes('fresh run ok'), `the new exec actually ran; ${detail}`);
+  }
+
+  try {
+    guest.cancelExec(discoveryKey);
+  } catch {}
 });

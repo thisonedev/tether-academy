@@ -95,3 +95,16 @@ test('node-only - a new third-party import is caught without naming it', (t) => 
   t.alike(nodeOnlyImports('import Redis from "ioredis";'), ['ioredis']);
   t.alike(nodeOnlyImports('import { z } from "@scope/pkg/sub/path.js";'), ['@scope/pkg']);
 });
+
+// A portable-token specifier isn't an absolute path, so the regex that reads
+// a package name out of /node_modules/pkg/... used to silently miss it.
+test('node-only - a node-only package is still caught behind a portable token', (t) => {
+  const built = buildLesson({
+    source: 'import { Client } from "@modelcontextprotocol/sdk/client/index.js";\nClient;\n',
+    cwd: COURSES,
+    runtime: 'bare',
+    portable: true,
+  });
+  t.ok(built.includes('academy-portable:npm-package:'), 'the fixture actually built a token');
+  t.ok(nodeOnlyPackages(built).includes('@modelcontextprotocol/sdk'));
+});

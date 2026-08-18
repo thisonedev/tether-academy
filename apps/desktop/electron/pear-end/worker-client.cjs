@@ -3,14 +3,25 @@
 // shutdownWorker() is new: killing the worker process is distinct from
 // close()/CMD.CLOSE, which only tears down the mesh.
 const path = require('path');
-const PearRuntime = require('pear-runtime');
 const RPC = require('bare-rpc');
 const { EventEmitter } = require('events');
 const CMD = require('../../shared/rpc-commands.cjs');
 const { resolveBareBin } = require('../../shared/bare-bin.cjs');
+const { diagnoseNativeAddonError } = require('../../shared/linux-lib-hint.cjs');
 
 const WORKER_ENTRY = require.resolve('../../workers/entry.cjs');
 const SHUTDOWN_TIMEOUT_MS = 5000;
+
+// Same lazy-require guard as state-store.cjs's loadCorestore().
+function loadPearRuntime() {
+  try {
+    return require('pear-runtime');
+  } catch (err) {
+    const hint = diagnoseNativeAddonError(err);
+    if (hint) err.message = `${err.message}\n${hint}`;
+    throw err;
+  }
+}
 
 let worker = null;
 let rpc = null;
@@ -100,6 +111,7 @@ async function init({
   auditPath = null,
 }) {
   if (!rpc) {
+    const PearRuntime = loadPearRuntime();
     worker = PearRuntime.run(WORKER_ENTRY, []);
     worker.stderr.on('data', (d) => console.warn('[pear-end worker]', d.toString('utf8')));
     // Unread otherwise: an unconsumed pipe can fill and block the worker's

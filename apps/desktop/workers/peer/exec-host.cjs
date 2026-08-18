@@ -33,8 +33,18 @@ const {
   describeNewOutputs,
 } = require('../../shared/lesson-output.cjs');
 const { syncFast, scan, removeAddedSince, verifyModelsAsync } = require('../../shared/model-integrity.cjs');
+const { substitutePortableImports } = require('../../shared/portable-lesson-imports.cjs');
 // Runs under Bare (workers/entry.cjs), so it can't require electron/chat.cjs
 // directly; ctx.runSecurityScan bridges to it over RPC instead.
+
+// The sender's require.resolve() path for @qvac/sdk and bare builtins is
+// wrong here; resolve fresh with this worker's own require.resolve instead.
+function resolvePortableSdk() {
+  return require.resolve('@qvac/sdk');
+}
+function resolvePortableBuiltin(pkg) {
+  return require.resolve(pkg);
+}
 
 // --require'd into a node-runtime child so it does not claim a Dock icon.
 const DOCK_HIDE_SHIM = path.resolve(__dirname, '..', '..', 'electron', 'dock-hide-shim.cjs');
@@ -43,10 +53,17 @@ const DOCK_HIDE_SHIM = path.resolve(__dirname, '..', '..', 'electron', 'dock-hid
 const DEVICE_CONSENT_TIMEOUT_MS = 2 * 60_000;
 // One round trip on an already-open channel; a wait this long means no answer is coming.
 const IDENTITY_WAIT_MS = 10_000;
+// The scan loads its own model before it can look at the code; a run has no
+// child yet at this point, so a hung load would otherwise wedge it forever.
+const SECURITY_SCAN_TIMEOUT_MS = 30_000;
 // Native inference ignores SIGTERM, hence the grace before SIGKILL.
 const SIGKILL_GRACE_MS = 3_000;
+// SIGKILL can't reap a child stuck in an uninterruptible kernel wait (e.g. a
+// GPU driver call). Past this, stop waiting for a real exit and free the slot anyway.
+const FORCE_REAP_MS = 5_000;
 // A run alive this long has outlived any cancel sent to it; force-kill so the slot frees.
 const STALE_RUN_MS = 5 * 60_000;
+let _testStaleRunMs = null;
 // No new output for this long after the first chunk closes the run. SDK model
 // workers can keep the child alive past the lesson's main flow (BCI lessons
 // hit this), so waiting on child.on('exit') alone would stay stuck in Running.
@@ -88,6 +105,8 @@ const PEER_ERROR_TEXT = {
   'filename-escape': 'exec: fileName escaped temp directory',
   'runtime-missing': (meta) =>
     `Peer exec refused: the ${meta.runtime ?? 'requested'} runtime is not available on this device.`,
+  'portable-import-unresolved': (meta) =>
+    `Peer exec refused: this device is missing ${(meta.unresolved ?? []).join(', ') || 'a required package'}.`,
   'sandbox-unavailable': 'Peer exec refused: the OS sandbox is not available on this device.',
   'spawn-failed': 'Peer exec failed: the run could not be started on this device.',
   sigtrap: 'Peer exec aborted: process trapped under the OS sandbox (SIGTRAP). '
@@ -219,6 +238,32 @@ function createExecHost(ctx) {
   const runs = new Map();
   // Runs parked at the sandbox boundary awaiting a human answer.
   const deviceRequests = new Map();
+  // discoveryKey -> resolvers waiting on that peer's slot freeing up, so a
+  // request racing a stale-run kill can wait for it instead of being refused.
+  const slotWaiters = new Map();
+
+  function waitForSlotFree(discoveryKeyHex, timeoutMs) {
+    if (!runs.has(discoveryKeyHex)) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const waiters = slotWaiters.get(discoveryKeyHex) ?? [];
+      const onFree = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        const list = slotWaiters.get(discoveryKeyHex);
+        if (list) {
+          const idx = list.indexOf(onFree);
+          if (idx !== -1) list.splice(idx, 1);
+          if (list.length === 0) slotWaiters.delete(discoveryKeyHex);
+        }
+        resolve(false);
+      }, timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      waiters.push(onFree);
+      slotWaiters.set(discoveryKeyHex, waiters);
+    });
+  }
 
   /**
    * Refuse a run. The peer gets a stable `code` and fixed text for it; the
@@ -233,6 +278,9 @@ function createExecHost(ctx) {
     sendReply(discoveryKeyHex, {
       kind: 'error',
       code,
+      // Echoes the request's own id, so a reply to a since-superseded request
+      // (e.g. a stale run's late refusal) can't be mistaken for a fresh one's.
+      runId: meta.runId,
       message: peerErrorText(code, meta),
       ...wireSafeMeta(meta),
     });
@@ -245,10 +293,11 @@ function createExecHost(ctx) {
   }
 
   /** Refuse and report when this peer's proven device key has been revoked. */
-  function refusedAsRevoked(discoveryKeyHex) {
+  function refusedAsRevoked(discoveryKeyHex, runId) {
     const revokedDeviceKey = getRevokedDeviceKey(discoveryKeyHex);
     if (!revokedDeviceKey) return false;
     fail(discoveryKeyHex, 'revoked', 'device is on the revocation list', {
+      runId,
       devicePublicKey: revokedDeviceKey,
     });
     return true;
@@ -323,6 +372,11 @@ function createExecHost(ctx) {
     killGroup(run.child, 'SIGKILL');
     removeDir(run.fileDir);
     runs.delete(discoveryKeyHex);
+    const waiters = slotWaiters.get(discoveryKeyHex);
+    if (waiters) {
+      slotWaiters.delete(discoveryKeyHex);
+      for (const resolve of waiters) resolve();
+    }
   }
 
   /**
@@ -336,6 +390,7 @@ function createExecHost(ctx) {
     if (!isCurrent(discoveryKeyHex, run)) return;
     sendReply(discoveryKeyHex, {
       kind: 'exit',
+      runId: run.runId,
       code,
       signal,
       // Lets the renderer distinguish a user-initiated Stop from an actual
@@ -431,14 +486,26 @@ function createExecHost(ctx) {
     return Array.from(deviceRequests.values()).map(({ settle, ...rest }) => rest);
   }
 
-  /** SIGTERM now, SIGKILL after the grace window. Returns whether a signal was
-   * sent, not whether the run ended. */
-  function terminate(run) {
+  /**
+   * A child still alive after SIGKILL is stuck in an uninterruptible kernel
+   * wait; no signal will end it. Stop waiting and report the run over anyway,
+   * so a Stop click can't hang forever on a process nothing can actually kill.
+   */
+  function forceReap(discoveryKeyHex, run) {
+    if (!isCurrent(discoveryKeyHex, run) || !isAlive(run.child)) return;
+    reportExit(discoveryKeyHex, run, { code: null, signal: 'SIGKILL', source: 'force-reap' });
+  }
+
+  /** SIGTERM now, SIGKILL after the grace window, then give up on it. Returns
+   * whether a signal was sent, not whether the run ended. */
+  function terminate(discoveryKeyHex, run) {
     if (!isAlive(run.child)) return false;
     killGroup(run.child, 'SIGTERM');
     if (run.killTimer) clearTimeout(run.killTimer);
     run.killTimer = setTimeout(() => {
       if (isAlive(run.child)) killGroup(run.child, 'SIGKILL');
+      run.killTimer = setTimeout(() => forceReap(discoveryKeyHex, run), FORCE_REAP_MS);
+      if (typeof run.killTimer.unref === 'function') run.killTimer.unref();
     }, SIGKILL_GRACE_MS);
     if (typeof run.killTimer.unref === 'function') run.killTimer.unref();
     return true;
@@ -467,12 +534,19 @@ function createExecHost(ctx) {
       run.denyIdentityWait?.();
       return true;
     }
-    return terminate(run);
+    // Same reasoning, for the security scan's own model load: it has no
+    // dedicated phase name, so check the resolver directly instead.
+    if (run.denyScanWait) {
+      run.denyScanWait();
+      return true;
+    }
+    return terminate(discoveryKeyHex, run);
   }
 
   function handleRequest(discoveryKeyHex, msg) {
     if (!rateAllow('exec:request', discoveryKeyHex)) {
       fail(discoveryKeyHex, 'rate-limited', 'exec:request over budget for this peer', {
+        runId: msg?.runId,
         mode: msg?.mode ?? null,
         fileName: msg?.fileName ?? null,
       });
@@ -481,22 +555,40 @@ function createExecHost(ctx) {
 
     if (getSecretScheme() === UNSEALED_STORAGE_SCHEME) {
       fail(discoveryKeyHex, 'unsealed-storage', 'identity sealing fell back to a file key', {
+        runId: msg?.runId,
         scheme: UNSEALED_STORAGE_SCHEME,
       });
       return;
     }
 
-    if (refusedAsRevoked(discoveryKeyHex)) return;
+    if (refusedAsRevoked(discoveryKeyHex, msg?.runId)) return;
 
     const existing = runs.get(discoveryKeyHex);
     if (existing) {
       const age = Date.now() - existing.startedAt;
-      if (age > STALE_RUN_MS && isAlive(existing.child)) {
+      if (age > (_testStaleRunMs ?? STALE_RUN_MS) && isAlive(existing.child)) {
         killGroup(existing.child, 'SIGKILL');
-        // The exit handler tears the state down; the peer can retry once it has.
+        if (existing.killTimer) clearTimeout(existing.killTimer);
+        existing.killTimer = setTimeout(() => forceReap(discoveryKeyHex, existing), FORCE_REAP_MS);
+        if (typeof existing.killTimer.unref === 'function') existing.killTimer.unref();
+        // The kill above is what frees the slot; wait for it instead of
+        // refusing the request that arrived right as recovery started.
+        waitForSlotFree(discoveryKeyHex, FORCE_REAP_MS + 1_000).then((freed) => {
+          if (freed) handleRequest(discoveryKeyHex, msg);
+          else {
+            sendReply(discoveryKeyHex, {
+              kind: 'error',
+              runId: msg?.runId,
+              code: 'run-in-progress',
+              message: PEER_ERROR_TEXT['run-in-progress'],
+            });
+          }
+        });
+        return;
       }
       sendReply(discoveryKeyHex, {
         kind: 'error',
+        runId: msg?.runId,
         code: 'run-in-progress',
         message: PEER_ERROR_TEXT['run-in-progress'],
       });
@@ -508,6 +600,7 @@ function createExecHost(ctx) {
       console.warn('[peer] spawnRun failed:', err?.message ?? err);
       const run = runs.get(discoveryKeyHex);
       fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), {
+        runId: msg?.runId,
         mode: msg?.mode ?? null,
         fileName: msg?.fileName ?? null,
       });
@@ -539,6 +632,7 @@ function createExecHost(ctx) {
       fileName = sanitizeExecFileName(path.basename(String(rawFileName || 'snippet.mts')));
     } catch (err) {
       fail(discoveryKeyHex, 'invalid-request', err?.message ?? String(err), {
+        runId: msg?.runId,
         mode: mode ?? null,
         fileName: null,
       });
@@ -547,6 +641,7 @@ function createExecHost(ctx) {
 
     const run = {
       child: null,
+      runId: msg.runId,
       phase: 'starting',
       startedAt: Date.now(),
       mode,
@@ -557,6 +652,7 @@ function createExecHost(ctx) {
       cancelled: false,
       denyConsent: null,
       denyIdentityWait: null,
+      denyScanWait: null,
       useKernelSandbox: true,
     };
     // Before the first await, so the slot covers the waits below.
@@ -580,17 +676,17 @@ function createExecHost(ctx) {
         discoveryKeyHex,
         stopped ? 'cancelled' : 'unverified',
         stopped ? 'cancelled during the identity wait' : 'identity handshake did not settle',
-        { mode, fileName, reason: verified.reason ?? 'unverified' },
+        { runId: run.runId, mode, fileName, reason: verified.reason ?? 'unverified' },
       );
       finishRun(discoveryKeyHex, run);
       return;
     }
-    if (refusedAsRevoked(discoveryKeyHex)) {
+    if (refusedAsRevoked(discoveryKeyHex, run.runId)) {
       finishRun(discoveryKeyHex, run);
       return;
     }
     if (run.cancelled) {
-      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { mode, fileName, label });
+      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { runId: run.runId, mode, fileName, label });
       finishRun(discoveryKeyHex, run);
       return;
     }
@@ -602,6 +698,7 @@ function createExecHost(ctx) {
       const refused = wanted.filter((pkg) => !allowed.includes(pkg));
       if (refused.length > 0) {
         fail(discoveryKeyHex, 'package-not-allowed', `refused packages: ${refused.join(', ')}`, {
+          runId: run.runId,
           mode,
           fileName,
           label,
@@ -616,7 +713,7 @@ function createExecHost(ctx) {
           discoveryKeyHex,
           'package-prepare-failed',
           `could not prepare ${warm.failed.map((f) => `${f.pkg}: ${f.error}`).join('; ')}`,
-          { mode, fileName },
+          { runId: run.runId, mode, fileName },
         );
         finishRun(discoveryKeyHex, run);
         return;
@@ -657,17 +754,40 @@ function createExecHost(ctx) {
     let securityVerdict = 'clean';
     let securityConcerns = [];
     try {
-      const scanned = await runSecurityScan({
-        code: displaySource,
-        lessonKey: null,
-        lessonReference: typeof declared.lessonReference === 'string' ? declared.lessonReference : null,
-        // The receiving device's own configured/loaded model, same as any
-        // other host-side chat call; a peer cannot pick this remotely.
-        modelHint: undefined,
-      });
-      securityVerdict = scanned.result.verdict;
-      securityConcerns = scanned.result.concerns.map((c) => c.summary);
+      const scanned = await Promise.race([
+        runSecurityScan({
+          code: displaySource,
+          lessonKey: null,
+          lessonReference: typeof declared.lessonReference === 'string' ? declared.lessonReference : null,
+          // The receiving device's own configured/loaded model, same as any
+          // other host-side chat call; a peer cannot pick this remotely.
+          modelHint: undefined,
+        }),
+        new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(null), SECURITY_SCAN_TIMEOUT_MS);
+          if (typeof timer.unref === 'function') timer.unref();
+          // No child yet at this phase, so cancel has nothing to signal;
+          // wire it here so Stop doesn't have to wait out the full timeout.
+          run.denyScanWait = () => {
+            clearTimeout(timer);
+            resolve(null);
+          };
+        }),
+      ]);
+      run.denyScanWait = null;
+      if (scanned) {
+        securityVerdict = scanned.result.verdict;
+        securityConcerns = scanned.result.concerns.map((c) => c.summary);
+      } else {
+        securityVerdict = 'unavailable';
+        securityConcerns = [
+          run.cancelled
+            ? 'Cancelled while the AI security review was still loading its model.'
+            : 'AI security review timed out on this device. Review the code yourself before approving.',
+        ];
+      }
     } catch (err) {
+      run.denyScanWait = null;
       securityVerdict = 'unavailable';
       securityConcerns = [
         'AI security review unavailable on this device. Review the code yourself before approving.',
@@ -684,7 +804,7 @@ function createExecHost(ctx) {
         discoveryKeyHex,
         'security-flagged',
         `security scan flagged: ${securityConcerns.join('; ') || 'no reason returned'}`,
-        { mode, fileName, label },
+        { runId: run.runId, mode, fileName, label },
       );
       finishRun(discoveryKeyHex, run);
       return;
@@ -698,8 +818,16 @@ function createExecHost(ctx) {
         discoveryKeyHex,
         'network-unenforceable',
         `sandbox enforces ${netScope} for a requested ${netMode}`,
-        { mode, fileName, network: netMode, networkScope: netScope },
+        { runId: run.runId, mode, fileName, network: netMode, networkScope: netScope },
       );
+      finishRun(discoveryKeyHex, run);
+      return;
+    }
+
+    // A cancel that arrived during the scan above would otherwise still
+    // reach here and prompt for consent on a run already doomed to fail.
+    if (run.cancelled) {
+      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { runId: run.runId, mode, fileName, label });
       finishRun(discoveryKeyHex, run);
       return;
     }
@@ -732,7 +860,7 @@ function createExecHost(ctx) {
           discoveryKeyHex,
           reason === 'cancelled' ? 'cancelled-awaiting-consent' : 'consent-denied',
           `consent ${reason} for ${[...wantedDevices, netMode].join(', ')}`,
-          { mode, fileName, devices: wantedDevices, network: netReason },
+          { runId: run.runId, mode, fileName, devices: wantedDevices, network: netReason },
         );
         finishRun(discoveryKeyHex, run);
         return;
@@ -743,7 +871,7 @@ function createExecHost(ctx) {
     }
 
     if (run.cancelled) {
-      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { mode, fileName, label });
+      fail(discoveryKeyHex, 'cancelled', 'cancelled before the run started', { runId: run.runId, mode, fileName, label });
       finishRun(discoveryKeyHex, run);
       return;
     }
@@ -772,11 +900,27 @@ function createExecHost(ctx) {
         mismatchedModels.length > 0
           ? `${mismatchedModels.length} cached model file(s) have bytes that do not match the recorded hash`
           : `${changedModels.length} cached model file(s) changed outside the app`,
-        { mode, fileName, label, changedModels },
+        { runId: run.runId, mode, fileName, label, changedModels },
       );
       finishRun(discoveryKeyHex, run);
       return;
     }
+
+    const portableResult = substitutePortableImports(code, {
+      resolveSdk: resolvePortableSdk,
+      resolveBuiltin: resolvePortableBuiltin,
+    });
+    if (portableResult.unresolved.length > 0) {
+      fail(
+        discoveryKeyHex,
+        'portable-import-unresolved',
+        `this device is missing: ${portableResult.unresolved.join(', ')}`,
+        { runId: run.runId, mode, fileName, label, unresolved: portableResult.unresolved },
+      );
+      finishRun(discoveryKeyHex, run);
+      return;
+    }
+    code = portableResult.code;
 
     // The host picks the workspace, not the peer: a `cwd` in the request would
     // let a remote choose where writes land.
@@ -795,6 +939,7 @@ function createExecHost(ctx) {
       // Containment: the resolved path must stay under the temp dir.
       if (!file.startsWith(run.fileDir + path.sep)) {
         fail(discoveryKeyHex, 'filename-escape', 'fileName escaped the run directory', {
+          runId: run.runId,
           mode,
           fileName: null,
           label,
@@ -818,6 +963,7 @@ function createExecHost(ctx) {
     const interpreter = runtime === 'node' ? getExecPath() : bareBin;
     if (!interpreter) {
       fail(discoveryKeyHex, 'runtime-missing', `${runtime} runtime not resolvable`, {
+        runId: run.runId,
         mode,
         fileName,
         label,
@@ -857,6 +1003,7 @@ function createExecHost(ctx) {
       // it actually failed.
       if (!wrapErr) console.warn('[peer] sandbox unavailable:', message, wrap?.warnings ?? []);
       fail(discoveryKeyHex, 'sandbox-unavailable', message, {
+        runId: run.runId,
         mode,
         fileName,
         label,
@@ -932,7 +1079,7 @@ function createExecHost(ctx) {
 
     // A cancel that arrived between the consent answer and here had no child to
     // signal, so honour it now that there is one.
-    if (run.cancelled) terminate(run);
+    if (run.cancelled) terminate(discoveryKeyHex, run);
 
     appendAudit('peer:exec:started', {
       discoveryKey: discoveryKeyHex,
@@ -943,7 +1090,7 @@ function createExecHost(ctx) {
       // that never triggered a consent prompt at all.
       sourcePreview: previewCode(displaySource),
     });
-    sendReply(discoveryKeyHex, { kind: 'started', mode, fileName, label });
+    sendReply(discoveryKeyHex, { kind: 'started', runId: run.runId, mode, fileName, label });
 
     const stderrFilter = createNoiseFilter();
     let firstChunkAt = 0;
@@ -966,18 +1113,18 @@ function createExecHost(ctx) {
     childStdout.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
       armFinalIdle();
-      sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stdout', data: chunk.toString('utf8') });
+      sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stdout', data: chunk.toString('utf8') });
     });
     childStderr.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
       armFinalIdle();
       const data = stderrFilter.push(chunk.toString('utf8'));
-      if (data) sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data });
+      if (data) sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stderr', data });
     });
     child.on('error', (err) => {
       if (finalIdleTimer) clearTimeout(finalIdleTimer);
       if (!isCurrent(discoveryKeyHex, run)) return;
-      fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), { mode, fileName, label });
+      fail(discoveryKeyHex, 'spawn-failed', err?.message ?? String(err), { runId: run.runId, mode, fileName, label });
       finishRun(discoveryKeyHex, run);
     });
     child.on('exit', (exitCode, signal) => {
@@ -986,16 +1133,17 @@ function createExecHost(ctx) {
       // exit event here belongs to that sweep, not to the lesson.
       if (!isCurrent(discoveryKeyHex, run)) return;
       const tail = stderrFilter.end();
-      if (tail) sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data: tail });
+      if (tail) sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stderr', data: tail });
 
       try {
         const note = describeNewOutputs(run.outputsBefore ?? new Map(), lessonCwd());
-        if (note) sendReply(discoveryKeyHex, { kind: 'chunk', stream: 'stderr', data: note });
+        if (note) sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stderr', data: note });
       } catch {}
 
       // Fail closed on SIGTRAP: do not re-run unsandboxed.
       if (signal === 'SIGTRAP' && run.useKernelSandbox && !run.cancelled) {
         fail(discoveryKeyHex, 'sigtrap', 'child trapped under the OS sandbox', {
+          runId: run.runId,
           mode,
           fileName,
           label,
@@ -1023,7 +1171,7 @@ function createExecHost(ctx) {
     run.denyIdentityWait?.();
     // The child's own exit arrives after the slot has been released, so a run
     // that had reached spawn is reported here or not at all.
-    if (terminate(run)) {
+    if (terminate(discoveryKeyHex, run)) {
       reportExit(discoveryKeyHex, run, { code: null, signal: 'SIGTERM', source: 'stopped' });
     }
     finishRun(discoveryKeyHex, run);
@@ -1055,6 +1203,13 @@ module.exports = {
   PEER_ERROR_TEXT,
   WIRE_SAFE_META,
   SIGKILL_GRACE_MS,
+  FORCE_REAP_MS,
   DEVICE_CONSENT_TIMEOUT_MS,
   RUN_FINAL_IDLE_MS,
+  STALE_RUN_MS,
+  // Module-level, so it applies to every createExecHost() instance in this
+  // process; tests reset it in teardown rather than scoping it per-instance.
+  _setTestStaleRunMs(value) {
+    _testStaleRunMs = value;
+  },
 };

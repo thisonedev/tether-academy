@@ -16,6 +16,10 @@ const MAX_RUNTIME_MS = 10 * 60 * 1000;
 // Stop needs a follow-up SIGKILL after this grace window.
 const SIGKILL_GRACE_MS = 3_000;
 
+// SIGKILL can't reap a child stuck in an uninterruptible kernel wait (e.g. a
+// GPU driver call). Past this, stop waiting for a real exit and settle anyway.
+const FORCE_REAP_MS = 5_000;
+
 // Electron-as-node (ELECTRON_RUN_AS_NODE) still claims its own Dock icon on
 // macOS unless told otherwise; see electron/dock-hide-shim.cjs.
 const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
@@ -26,6 +30,7 @@ const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, for
 const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
+const { hintForMissingLib } = require('./shared/linux-lib-hint.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
@@ -130,11 +135,13 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
   };
 
   let stopRequested = false;
+  // Same 1 MiB per-stream cap peer-exec uses. Hoisted out of the Promise
+  // executor so abort()'s force-reap can settle without a real exit event.
+  const output = createAccumulator();
+  let settle = () => {};
   const promise = new Promise((resolve) => {
-    // Same 1 MiB per-stream cap peer-exec uses.
-    const output = createAccumulator();
     let killed = false;
-    const settle = (value) => {
+    settle = (value) => {
       if (stopRequested && typeof value === 'object' && value) {
         value.stopRequested = true;
       }
@@ -192,7 +199,13 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
       try {
         acceptAll();
       } catch {}
-      const fullOutput = `${output.result('stdout')}${output.result('stderr')}`;
+      let fullOutput = `${output.result('stdout')}${output.result('stderr')}`;
+      // Missing shared libraries (e.g. no Vulkan loader) crash the QVAC
+      // worker with a message that names the .so but gives no next step.
+      if (process.platform === 'linux' && code !== 0) {
+        const hint = hintForMissingLib(fullOutput);
+        if (hint) fullOutput += `\n[runner] ${hint}`;
+      }
       if (killed)
         settle({
           ok: false,
@@ -210,6 +223,14 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
     killGroup('SIGTERM');
     const killTimer = setTimeout(() => {
       if (child.exitCode === null && !child.killed) killGroup('SIGKILL');
+      const reapTimer = setTimeout(() => {
+        if (child.exitCode !== null) return;
+        settle({
+          ok: false,
+          output: `${output.result('stdout')}${output.result('stderr')}\n[runner] stop sent but the process did not exit; treating the run as stopped`,
+        });
+      }, FORCE_REAP_MS);
+      if (typeof reapTimer.unref === 'function') reapTimer.unref();
     }, SIGKILL_GRACE_MS);
     if (typeof killTimer.unref === 'function') killTimer.unref();
     return true;

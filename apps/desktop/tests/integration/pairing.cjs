@@ -66,6 +66,26 @@ test('pairing - hostIdentity flows to the guest only', async (t) => {
   t.is(hostEvent.hostIdentity, null, 'host peerInfo carries no hostIdentity');
 });
 
+// blind-pairing's handshake has no channel for the host to hand the guest
+// its userData, so the guest used to fall back to displaying its own.
+test('pairing - guest learns the host real name via a profile frame, not its own', async (t) => {
+  const { peers: [host, guest] } = await createPeers(t, 2, { label: 'host-profile' });
+
+  const invite = await host.createInvite({ autoApprove: true, userData: { name: 'host-from-test' } });
+  await guest.acceptInvite(invite.invite, {
+    userData: { name: 'guest-from-test' },
+    code: invite.pairingCode,
+  });
+
+  const corrected = await waitFor(
+    guest,
+    'peer:paired',
+    (payload) => payload.userData?.name === 'host-from-test',
+    10_000,
+  );
+  t.is(corrected.userData?.name, 'host-from-test');
+});
+
 test('pairing - both sides list exactly one peer, and dropPeer removes it', async (t) => {
   const { peers: [host, guest] } = await createPeers(t, 2, { label: 'drop' });
 
