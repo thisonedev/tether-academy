@@ -640,8 +640,21 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       const chatApi = window.academy.chat;
       return new Promise<ChatSecurityResult | null>((resolve) => {
         let settled = false;
-        let off: (() => void) | undefined;
+        // Subscribed before the call, not inside its .then: a review that
+        // answers without loading a model emits its result before the
+        // requestId crosses the bridge, and a later listener misses it and
+        // waits out the timeout below with the run held up behind it.
+        let requestId: string | null = null;
+        let early: { requestId: string; error: string | null; result: ChatSecurityResult | null } | null = null;
         const timer = setTimeout(() => settle(null), 20_000);
+        const off = chatApi.onSecurityResult((payload) => {
+          if (requestId === null) {
+            early = payload;
+            return;
+          }
+          if (payload.requestId !== requestId) return;
+          settle(payload.error ? null : payload.result);
+        });
         function settle(value: ChatSecurityResult | null) {
           if (settled) return;
           settled = true;
@@ -658,11 +671,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                 : null,
             lessonReference: data.lessonReference,
           })
-          .then(({ requestId }) => {
-            off = chatApi.onSecurityResult((payload) => {
-              if (payload.requestId !== requestId) return;
-              settle(payload.error ? null : payload.result);
-            });
+          .then(({ requestId: id }) => {
+            requestId = id;
+            if (early && early.requestId === id) settle(early.error ? null : early.result);
           })
           .catch(() => settle(null));
       });
@@ -776,11 +787,31 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       // Streamed as chunks arrive so 30-60s finetune runs don't look frozen.
       const streamBuffer: OutputLine[] = [];
 
+      // Fed through the same path a real chunk takes, so the review reads as a
+      // stage on the rail. Trailing newline included: without it the next real
+      // chunk merges into this line instead of starting its own.
+      const noteStage = (line: string) => {
+        const chunk = { stream: 'stderr' as const, data: `${line}\n` };
+        streamBuffer.splice(0, streamBuffer.length, ...appendChunkLines(streamBuffer, chunk));
+        setEntries((prev) =>
+          prev.map((e) =>
+            e.id === runEntryId && e.kind === 'run' ? { ...e, lines: appendChunkLines(e.lines, chunk) } : e,
+          ),
+        );
+      };
+
       // Advisory only; the paired device runs its own authoritative scan.
       if (isRemoteRun) {
+        // Nothing reaches the peer until this answers, so without a row of its
+        // own the panel sat empty and then filled all at once.
+        noteStage('→ Reviewing the code on this device...');
+        const reviewStartedAt = Date.now();
         const scan = await awaitSecurityScan(userCode);
+        const reviewSecs = (Date.now() - reviewStartedAt) / 1000;
+        noteStage(`  ✓ Reviewed on this device${reviewSecs >= 1 ? ` (${reviewSecs.toFixed(1)}s)` : ''}`);
         if (scan?.verdict === 'malicious') {
           const lines: OutputLine[] = [
+            ...streamBuffer,
             { stream: 'stderr', line: '[security] This code was not sent to the paired device.' },
             ...scan.concerns.map((c) => ({ stream: 'stderr' as const, line: `  - ${c.summary}` })),
             { stream: 'stdout', line: 'Edit the code to remove the flagged content, then click Run again.' },
@@ -1318,7 +1349,7 @@ function Runner({
             </span>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
+        <div className="flex min-w-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
           <button
             type="button"
             onClick={isAnimating ? onStop : onRun}
@@ -1326,9 +1357,9 @@ function Runner({
             className={
               isAnimating
                 ? stopRequested
-                  ? 'inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
-                  : 'inline-flex items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
-                : 'inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
+                  ? 'inline-flex shrink-0 items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
+                  : 'inline-flex shrink-0 items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
+                : 'inline-flex shrink-0 items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
             }
             title={stopRequested ? 'Stopping…' : isAnimating ? 'Stop run' : 'Run code (R)'}
             aria-label={stopRequested ? 'Stopping' : isAnimating ? 'Stop run' : 'Run code'}
@@ -1350,7 +1381,7 @@ function Runner({
             type="button"
             onClick={onCheck}
             disabled={readOnly || checkDisabled}
-            className="rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
             title="Check answer"
             aria-label="Check answer"
           >
@@ -1362,7 +1393,7 @@ function Runner({
             onChange={(e) => setRunMode(e.target.value as RunMode)}
             disabled={readOnly}
             suppressHydrationWarning
-            className="run-mode-select-desktop ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            className="run-mode-select-desktop ml-1 min-w-0 max-w-[6.5rem] shrink truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground sm:max-w-none transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
             title="Run mode"
             aria-label="Run mode"
           >
@@ -1389,7 +1420,7 @@ function Runner({
               onChange={(e) => setSelectedPeerId(e.target.value)}
               disabled={readOnly}
               suppressHydrationWarning
-              className="ml-1 max-w-[10rem] truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              className="ml-1 min-w-0 max-w-[5.5rem] shrink truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 sm:max-w-[10rem] text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
               title={
                 remotePeers.length === 0
                   ? 'No paired devices. Pair one in Settings.'
@@ -1417,7 +1448,7 @@ function Runner({
             tabIndex={isDesktop ? -1 : undefined}
             disabled={isDesktop || readOnly}
             suppressHydrationWarning
-            className="run-mode-select-web ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground"
+            className="run-mode-select-web ml-1 shrink-0 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground"
             title={isDesktop ? undefined : 'Run mode'}
             aria-label={isDesktop ? undefined : 'Run mode'}
           >
@@ -1434,7 +1465,7 @@ function Runner({
             aria-label="Reset code"
             onClick={onReset}
             disabled={readOnly}
-            className="rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
             title="Reset to starting code"
           >
             <RotateCcw className="size-4" />
@@ -1631,7 +1662,14 @@ function Runner({
           <LessonConsole entries={entries} onStopCheck={onStopCheck} />
         </div>
       )}
-      {footer ? <div className="shrink-0 border-t border-canvas-border p-2">{footer}</div> : null}
+      {/* No padding and no border of its own: the inset was the panel's own
+          fill showing through around the chat bar, and the bar draws the only
+          two rules this needs. */}
+      {footer ? (
+        <div className="shrink-0" style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}>
+          {footer}
+        </div>
+      ) : null}
     </div>
   );
 }

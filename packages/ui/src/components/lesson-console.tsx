@@ -1,7 +1,7 @@
 'use client';
 
 import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
-import { ArrowUp, Check, ChevronDown, Loader2, Settings, Square, X } from 'lucide-react';
+import { Check, Loader2, Settings, Square, X } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAiBotModel } from './ai-bot-models.js';
@@ -144,26 +144,105 @@ function ShuffleWord({ active, className = '' }: { active: boolean; className?: 
   );
 }
 
+// A run whose checks are all cached finishes its stages inside one frame, so
+// they all appear at once and nothing reads as having happened. Revealing them a
+// beat apart paces only when a row appears; its duration stays the measured one.
+const STAGE_REVEAL_MS = 1200;
+
+/**
+ * How many rows to show, in order, so output never appears above a stage still
+ * waiting its turn. `paced` marks the rows that wait, read through a ref so a
+ * fresh array each render does not restart the timer. `settled` shows a run
+ * that was already over on mount all at once.
+ */
+function useRevealed(total: number, paced: boolean[], settled: boolean): number {
+  const pacedRef = useRef(paced);
+  pacedRef.current = paced;
+  // Read once on mount and never again: a run that finishes mid-reveal keeps
+  // revealing rather than dumping the rest at once.
+  const [shown, setShown] = useState(() => (settled ? total : 0));
+  useEffect(() => {
+    if (shown >= total) return;
+    const id = setTimeout(() => setShown((n) => n + 1), pacedRef.current[shown] ? STAGE_REVEAL_MS : 0);
+    return () => clearTimeout(id);
+  }, [shown, total]);
+  return Math.min(shown, total);
+}
+
 // Gutter dot + connector rail. User bubbles skip this. Dot color: grey=in flight, green=ok, red=fail.
 type TimelineState = 'thinking' | 'success' | 'failure' | 'neutral';
 
+// Grey while it is happening or when it is only output, green once it
+// finished, red when it did not.
+const DOT_BUSY = 'bg-canvas-muted-foreground animate-pulse';
+const DOT_DONE = 'bg-emerald-500';
+const DOT_FAIL = 'bg-red-500';
+const DOT_IDLE = 'bg-canvas-muted-foreground';
+
 const TIMELINE_DOT: Record<TimelineState, string> = {
-  thinking: 'bg-canvas-muted-foreground animate-pulse',
-  success: 'bg-emerald-500',
-  failure: 'bg-red-500',
-  neutral: 'bg-canvas-muted-foreground',
+  thinking: DOT_BUSY,
+  success: DOT_DONE,
+  failure: DOT_FAIL,
+  neutral: DOT_IDLE,
 };
 
-function TimelineRow({ state, children }: { state: TimelineState; children: React.ReactNode }) {
+// One geometry for every row on the rail, so a chat reply, a host stage and a
+// line of output all hang off one line at one size.
+const RAIL_ROW = 'relative pl-[22px]';
+const RAIL_LINE = 'absolute inset-y-0 left-[5px] w-px bg-canvas-border';
+const RAIL_DOT = 'absolute left-[1px] size-[9px] rounded-full';
+// Every row pads itself equally, so one offset serves all of them.
+// Padding the children instead left the dot centred on some rows, adrift on others.
+const ROW_PAD = 3;
+// A boxed row starts its text one border and one padding lower, so the dot has
+// to know which it is marking. Change one of these and the other has to follow.
+const RAIL_CARD = 'max-w-full overflow-hidden rounded-lg border border-canvas-border px-2.5 py-1.5';
+const CARD_INSET = 1 + 6;
+// Centre of a 16px first line, less half the dot, plus a point and a half:
+// a monospace glyph reads low in its line box because of the ascender space.
+const DOT_OFFSET = 5;
+
+function RailRow({
+  dot,
+  card = false,
+  children,
+}: {
+  dot: string;
+  /** Wrap the content in a box. The row owns this so the dot can allow for it. */
+  card?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex gap-3">
-      <div className="relative flex w-3 shrink-0 justify-center">
-        {/* Rail first, dot second: keeps the colored dot on top of the line. */}
-        <span className="absolute inset-y-0 top-1.5 left-1/2 w-px -translate-x-1/2 bg-canvas-border" />
-        <span className={`relative z-10 mt-1.5 size-1.5 shrink-0 rounded-full ${TIMELINE_DOT[state]}`} />
-      </div>
-      <div className="min-w-0 flex-1">{children}</div>
+    <div className={RAIL_ROW} style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
+      {/* Padding, not margin: the line spans the full row, so spacing a row
+          out does not leave a gap in the rail. */}
+      <span className={RAIL_LINE} />
+      {/* Ringed in the panel background so the line does not run through it. */}
+      <span
+        className={`${RAIL_DOT} ${dot}`}
+        style={{
+          top: ROW_PAD + (card ? CARD_INSET : 0) + DOT_OFFSET,
+          boxShadow: `0 0 0 3px ${QVAC_EDITOR_BACKGROUND}`,
+        }}
+      />
+      <div className="min-w-0">{card ? <div className={RAIL_CARD}>{children}</div> : children}</div>
     </div>
+  );
+}
+
+function TimelineRow({
+  state,
+  card,
+  children,
+}: {
+  state: TimelineState;
+  card?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <RailRow dot={TIMELINE_DOT[state]} card={card}>
+      {children}
+    </RailRow>
   );
 }
 
@@ -187,7 +266,7 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
     <div className="flex min-h-0 flex-1 flex-col border-t border-canvas-border">
     <div
       ref={scrollRef}
-      className="min-h-0 flex-1 space-y-0 overflow-y-auto p-3 text-sm"
+      className="min-h-0 flex-1 space-y-0 overflow-x-hidden overflow-y-auto p-3 text-sm"
       style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}
     >
       {entries.length === 0 ? <EmptyState /> : null}
@@ -198,26 +277,17 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
           // yet, so it gets no row of its own until it has something to say.
           if (entry.streaming && entry.content.length === 0) return null;
           return (
-            <TimelineRow key={entry.id} state={entry.streaming ? 'thinking' : 'success'}>
+            <TimelineRow key={entry.id} state={entry.streaming ? 'thinking' : 'success'} card>
               <AssistantBubble content={entry.content} />
             </TimelineRow>
           );
         }
-        if (entry.kind === 'run') {
-          return (
-            <TimelineRow
-              key={entry.id}
-              state={entry.status === 'running' ? 'thinking' : entry.status === 'ok' ? 'success' : 'failure'}
-            >
-              <RunCard entry={entry} />
-            </TimelineRow>
-          );
-        }
+        // No outer dot: the run's own stages carry theirs, and this one used
+        // to appear the moment a run started, before it had anything to show.
+        if (entry.kind === 'run') return <RunCard key={entry.id} entry={entry} />;
         return (
-          <TimelineRow key={entry.id} state={checkState(entry)}>
-            <div className="space-y-2">
-              <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
-            </div>
+          <TimelineRow key={entry.id} state={checkState(entry)} card>
+            <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
           </TimelineRow>
         );
       })}
@@ -424,11 +494,16 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         : undefined;
 
   return (
-    <div className="w-full min-w-0">
+    <div className="w-full min-w-0" style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}>
+      {/* No box of its own: the editor's background carries through and only a
+          rule above and below separates it, so it reads as part of the panel. */}
       <div
-        className="flex h-9 items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-2"
+        className="flex h-9 items-center gap-2 border-t border-canvas-border px-3"
         title={disabledReason}
       >
+        <span aria-hidden className="shrink-0 font-mono text-xs leading-4 text-canvas-muted-foreground/70">
+          &rsaquo;
+        </span>
         <textarea
           rows={1}
           value={draft}
@@ -440,7 +515,9 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
               void handleSend();
             }
           }}
-          placeholder={disabledReason ?? 'How can I help you today?'}
+          // The `›` already says "type here", so the only placeholder left is
+          // the one that explains why you cannot.
+          placeholder={disabledReason ?? ''}
           className="min-w-0 flex-1 resize-none bg-transparent font-mono text-xs leading-4 text-canvas-muted-foreground outline-none placeholder:text-canvas-muted-foreground/60 disabled:cursor-not-allowed"
           style={{ height: '16px' }}
         />
@@ -470,24 +547,16 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
           >
             <Settings className="size-3.5" />
           </Link>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={readOnly || !modelName || draft.trim().length === 0}
-            aria-label="Send"
-            className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-emerald-500 text-canvas transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-            style={{ height: '24px', width: '24px', boxSizing: 'border-box', padding: 0 }}
-          >
-            <ArrowUp className="size-3.5" />
-          </button>
-        )}
+        ) : null}
       </div>
       {chatError ? <p className="mt-1 px-1 text-[10px] text-red-400">{chatError}</p> : null}
     </div>
   );
 }
 
+// Same control as the run-mode and paired-device pickers in the editor
+// toolbar: a native select, so the three read as one family and the popup
+// this used to open is the platform's.
 function ModelSwitcher({
   modelName,
   options,
@@ -499,64 +568,27 @@ function ModelSwitcher({
   busy: boolean;
   onSelect: (modelName: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onMouseDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onMouseDown);
-    return () => document.removeEventListener('mousedown', onMouseDown);
-  }, [open]);
-
   if (!modelName && options.length === 0) return null;
 
   return (
-    <div ref={ref} className="relative min-w-0 shrink-0" style={{ height: '24px', marginBottom: '5px' }}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
+    <div className="flex shrink-0 items-center gap-1">
+      {busy ? <Loader2 className="size-2.5 shrink-0 animate-spin text-canvas-muted-foreground" /> : null}
+      <select
+        aria-label="Chat model"
+        title="Chat model"
+        value={modelName ?? ''}
+        onChange={(e) => onSelect(e.target.value)}
         disabled={busy || options.length === 0}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="inline-flex max-w-[8rem] items-center gap-1 rounded bg-emerald-500/15 px-1.5 font-mono text-[9px] uppercase leading-none tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
-        style={{ height: '24px', width: '100%', boxSizing: 'border-box', lineHeight: '1' }}
+        suppressHydrationWarning
+        className="min-w-0 max-w-[6rem] truncate rounded border border-canvas-border bg-transparent px-1.5 py-1 sm:max-w-[9rem] text-[10px] font-medium tracking-wider text-canvas-muted-foreground uppercase transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
       >
-        <span className="truncate">{modelName ? shortName(modelName) : 'Pick model'}</span>
-        {busy ? (
-          <Loader2 className="size-2.5 shrink-0 animate-spin" />
-        ) : options.length > 0 ? (
-          <ChevronDown className="size-2.5 shrink-0" />
-        ) : null}
-      </button>
-      {open ? (
-        <div
-          role="listbox"
-          aria-label="Chat model"
-          className="absolute bottom-full right-0 z-10 mb-1 w-48 overflow-hidden rounded-md border border-canvas-border bg-canvas-muted py-1 shadow-lg shadow-black/30"
-        >
-          {options.map((name) => (
-            <button
-              key={name}
-              type="button"
-              role="option"
-              aria-selected={name === modelName}
-              onClick={() => {
-                setOpen(false);
-                onSelect(name);
-              }}
-              className={`flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-[11px] transition-colors hover:bg-canvas ${
-                name === modelName ? 'text-emerald-400' : 'text-canvas-foreground'
-              }`}
-            >
-              <span className="truncate">{shortName(name)}</span>
-              {name === modelName ? <Check className="size-3 shrink-0" /> : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
+        {modelName ? null : <option value="">Pick model</option>}
+        {options.map((name) => (
+          <option key={name} value={name}>
+            {shortName(name)}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -572,7 +604,7 @@ function EntryCard({
 }) {
   return (
     <div className="max-w-full overflow-hidden">
-      <div className="flex items-center gap-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
+      <div className="flex items-center gap-1.5 pb-1 text-[10px] font-semibold uppercase leading-4 tracking-wider text-canvas-muted-foreground">
         {icon}
         <span>{label}</span>
       </div>
@@ -584,13 +616,15 @@ function EntryCard({
 function UserBubble({ content }: { content: string }) {
   return (
     <div className="my-3 max-w-full overflow-hidden rounded-md border border-canvas-border/60 bg-canvas-muted/40 px-3 py-2">
-      <p className="whitespace-pre-wrap font-mono text-xs text-canvas-foreground">{content}</p>
+      <p className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-foreground">{content}</p>
     </div>
   );
 }
 
 function AssistantBubble({ content }: { content: string }) {
-  return <p className="whitespace-pre-wrap px-1 font-mono text-xs text-canvas-muted-foreground">{content}</p>;
+  return (
+    <p className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-muted-foreground">{content}</p>
+  );
 }
 
 // Label shown for each whole-submission verdict. 'match' is set client-side
@@ -637,7 +671,7 @@ function CheckCard({
   const verdictPassed = entry.aiVerdict ? PASSING_VERDICTS.has(entry.aiVerdict) : false;
   return (
     <EntryCard label="check">
-      <div className="px-3 py-2.5 font-mono text-xs">
+      <div className="font-mono text-xs">
       <ul className="space-y-1.5">
         {entry.structural.map((r) => (
           <li key={r.id} className="flex items-start gap-2">
@@ -838,16 +872,29 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
   const progress = parseProgress(allLines);
   const segments = splitStages(allLines);
   const firstLines = segments.find((s) => s.kind === 'lines');
-  // Each host stage becomes an opener and (when the stage closes) a closer.
-  const body = segments.map((segment, i) => {
+  // One rail row per segment: a stage as a labelled row, output as a card.
+  const body: React.ReactNode[] = [];
+  // Parallel to `body`: true where the row is a host stage, the only kind the
+  // reveal below paces. Output is never held back.
+  const paced: boolean[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
     if (segment.kind === 'stage') {
-      // biome-ignore lint/suspicious/noArrayIndexKey: position in the run is the identity
-      return <StageTranscript key={`stage-${i}`} stage={segment} />;
+      body.push(<StageRow key={`stage-${i}`} stage={segment} />);
+      // Only the host's own stages are paced. A call already appears at the
+      // moment the lesson makes it.
+      paced.push(!segment.call);
+      continue;
     }
-    return (
+    // Blank lines between two stages would otherwise draw a rail dot with
+    // nothing beside it. A progress bar counts as content, download ticks or not.
+    const own = progress && progress.at >= segment.from && progress.at < segment.from + segment.count;
+    const speaks = allLines
+      .slice(segment.from, segment.from + segment.count)
+      .some((l) => l.line.trim().length > 0);
+    if (!speaks && !own) continue;
+    const out = (
       <SegmentLines
-        // biome-ignore lint/suspicious/noArrayIndexKey: position in the run is the identity
-        key={`lines-${i}`}
         lines={allLines}
         segment={segment}
         progress={progress}
@@ -856,10 +903,17 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
         dimPreamble={segment === firstLines}
       />
     );
-  });
+    body.push(<OutputRow key={`lines-${i}`}>{out}</OutputRow>);
+    paced.push(false);
+  }
 
+  const revealed = useRevealed(body.length, paced, !isAnimating);
+  const visible = body.slice(0, revealed);
+
+  // The rail line is drawn once behind every row, so consecutive stages share
+  // one continuous line instead of each stacking its own segment.
   return (
-    <div className="space-y-1 text-canvas-muted-foreground">
+    <div className="text-canvas-muted-foreground">
       {allLines.length === 0 && !isAnimating ? (
         <>
           <p className="text-emerald-400">$ Run your code to see results</p>
@@ -869,28 +923,41 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
           </p>
         </>
       ) : null}
-      {body}
+      <div>{visible}</div>
       {savedFiles.length > 0 ? <SavedFilesBar files={savedFiles} /> : null}
     </div>
   );
 }
 
-// Re-emits a host phase as its `→ Open...` and `  ✓ Close (1.2s)` lines.
-// A `note` (a `✓` with no opener) shows only the close; a still-open stage
-// shows only the opener. The closer pads 2ch in from the opener.
-function StageTranscript({ stage }: { stage: StageSegment }) {
-  const showOpener = stage.state !== 'note';
-  const showCloser = stage.state !== 'open';
+// A stage still open pulses; one the host skipped is a passive row with no
+// time of its own. The wording is the closer once there is one, since that
+// carries the outcome the opener could only promise.
+function StageRow({ stage }: { stage: StageSegment }) {
+  const open = stage.state === 'open';
+  const passive = stage.state === 'note';
+  const label = stage.call || open ? stage.openLabel.replace(/\.{3}$/, '') : stage.closeLabel;
+  const dot = open ? DOT_BUSY : passive ? `${DOT_IDLE}/50` : DOT_DONE;
   return (
-    <>
-      {showOpener ? <p className="text-canvas-foreground/80">→ {stage.openLabel}</p> : null}
-      {showCloser ? (
-        <p className="pl-[2ch] text-canvas-foreground/80">
-          ✓ {stage.closeLabel}
-          {stage.seconds !== null ? ` (${stage.seconds.toFixed(1)}s)` : ''}
-        </p>
-      ) : null}
-    </>
+    <RailRow dot={dot}>
+      <div className="flex justify-between gap-3">
+        <span className={passive ? 'text-canvas-muted-foreground/75' : 'text-canvas-foreground'}>{label}</span>
+        {stage.seconds !== null ? (
+          <span className="shrink-0 text-[11px] whitespace-nowrap text-canvas-muted-foreground">
+            {formatSeconds(stage.seconds)}
+          </span>
+        ) : null}
+      </div>
+    </RailRow>
+  );
+}
+
+// Program output, as its own row rather than loose text under the last stage.
+// The dot stays neutral, since the lesson printed this and the host did not.
+function OutputRow({ children }: { children: React.ReactNode }) {
+  return (
+    <RailRow dot={DOT_IDLE} card>
+      {children}
+    </RailRow>
   );
 }
 
@@ -988,8 +1055,8 @@ function OutputLines({ lines: allLines, dimPreamble }: { lines: OutputLine[]; di
             const isPrefix = !isStderr && i < prefixEnd;
             const className =
               isStderr || isPrefix
-                ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
-                : 'whitespace-pre-wrap';
+                ? 'wrap-anywhere whitespace-pre-wrap text-canvas-muted-foreground/60 italic'
+                : 'wrap-anywhere whitespace-pre-wrap';
             return (
               <p key={i} className={className}>
                 {entry.line}
@@ -1007,7 +1074,7 @@ function OutputLines({ lines: allLines, dimPreamble }: { lines: OutputLine[]; di
           if (last && last.stream === entry.stream) last.lines.push(entry.line);
           else groups.push({ stream: entry.stream, lines: [entry.line] });
         }
-        const dim = 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic';
+        const dim = 'wrap-anywhere whitespace-pre-wrap text-canvas-muted-foreground/60 italic';
 
         let stdoutSeen = 0;
         return (
@@ -1030,7 +1097,7 @@ function OutputLines({ lines: allLines, dimPreamble }: { lines: OutputLine[]; di
                 // stays dimmed, but only the very first one across the run.
                 const isPrefix = dimPreamble && stdoutSeen++ === 0 && paragraphs.length + g > 1;
                 return (
-                  <p key={`out-${g}-${i}`} className={isPrefix ? dim : 'whitespace-pre-wrap'}>
+                  <p key={`out-${g}-${i}`} className={isPrefix ? dim : 'wrap-anywhere whitespace-pre-wrap'}>
                     {para}
                   </p>
                 );

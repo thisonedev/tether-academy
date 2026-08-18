@@ -1,6 +1,6 @@
 const path = require('node:path');
 const fs = require('node:fs');
-const { diagnoseNativeAddonError } = require('../shared/linux-lib-hint.cjs');
+const { diagnoseNativeAddonError } = require('./linux-lib-hint.cjs');
 
 // Lazy so a missing native dep (e.g. rocksdb-native needs libatomic.so.1)
 // throws from createStore(), where it's catchable, instead of crashing the

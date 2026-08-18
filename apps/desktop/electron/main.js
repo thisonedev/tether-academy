@@ -6,7 +6,7 @@ const FramedStream = require('framed-stream');
 const { isMac, isLinux, isWindows } = require('which-runtime');
 const { command, flag } = require('paparam');
 const { promises: fs } = require('node:fs');
-const { diagnoseNativeAddonError, checkRequiredLinuxLibs } = require('../shared/linux-lib-hint.cjs');
+const { diagnoseNativeAddonError, checkRequiredLinuxLibs } = require('./linux-lib-hint.cjs');
 
 // A missing library (e.g. no Vulkan loader) can crash several unrelated native
 // addons the moment their require chain gets touched, each with a different,

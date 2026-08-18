@@ -9,6 +9,10 @@ export interface StageLine {
 }
 
 const STAGE_OPEN = /^→\s+(.+?)\s*$/;
+// The lesson runtime traces its SDK calls with the markers the host also uses
+// for its stages, so one run carries both. Only a host phase ends in an
+// ellipsis, which separates `Preparing packages...` from `loadModel({ ctx })`.
+const HOST_PHASE = /\.{3}$/;
 const STAGE_CLOSE = /^\s*✓\s+(.+?)(?:\s+\((\d+(?:\.\d+)?)s\))?\s*$/;
 
 export interface StageSegment {
@@ -21,6 +25,8 @@ export interface StageSegment {
   /** 'note' is a ✓ with no opener, such as a stage the host skipped. */
   state: 'open' | 'done' | 'note';
   seconds: number | null;
+  /** An SDK call the lesson made, rather than a stage the host ran. */
+  call: boolean;
 }
 
 export interface LinesSegment {
@@ -36,6 +42,9 @@ export type RunSegment = StageSegment | LinesSegment;
 export function splitStages(lines: StageLine[]): RunSegment[] {
   const segments: RunSegment[] = [];
   let open: StageSegment | null = null;
+  // A marker ends the run of lines it interrupts. Reading the tail of
+  // `segments` instead would rejoin what a call printed with what followed it.
+  let printed: LinesSegment | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const entry = lines[i];
@@ -44,8 +53,16 @@ export function splitStages(lines: StageLine[]): RunSegment[] {
 
     const opened = fromHost ? STAGE_OPEN.exec(entry.line) : null;
     if (opened) {
-      open = { kind: 'stage', openLabel: opened[1], closeLabel: opened[1], state: 'open', seconds: null };
+      open = {
+        kind: 'stage',
+        openLabel: opened[1],
+        closeLabel: opened[1],
+        state: 'open',
+        seconds: null,
+        call: !HOST_PHASE.test(opened[1]),
+      };
       segments.push(open);
+      printed = null;
       continue;
     }
 
@@ -61,14 +78,17 @@ export function splitStages(lines: StageLine[]): RunSegment[] {
         open.seconds = seconds;
         open = null;
       } else {
-        segments.push({ kind: 'stage', openLabel: '', closeLabel: closed[1], state: 'note', seconds });
+        segments.push({ kind: 'stage', openLabel: '', closeLabel: closed[1], state: 'note', seconds, call: false });
       }
+      printed = null;
       continue;
     }
 
-    const last = segments[segments.length - 1];
-    if (last?.kind === 'lines') last.count++;
-    else segments.push({ kind: 'lines', from: i, count: 1 });
+    if (printed) printed.count++;
+    else {
+      printed = { kind: 'lines', from: i, count: 1 };
+      segments.push(printed);
+    }
   }
 
   return segments;

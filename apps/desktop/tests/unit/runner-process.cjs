@@ -87,16 +87,19 @@ test('buildLesson - a slow SDK call names itself while it runs', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-trace-'));
   t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+  // loadModel is slow here too, and stays silent: every lesson calls it, so
+  // its row told you nothing about this run.
   fs.writeFileSync(
     path.join(dir, 'sdk.mjs'),
     'export const loadModel = async () => { await new Promise((r) => setTimeout(r, 500)); return "m1"; };\n'
-      + 'export const completion = () => ({ events: [] });\n'
+      + 'export const completion = async () => { await new Promise((r) => setTimeout(r, 500)); return { events: [] }; };\n'
+      + 'export const embed = () => [];\n'
       + 'export const close = async () => {};\n',
   );
   const built = buildLesson({
     source:
-      'import { loadModel, completion } from "@qvac/sdk";\n'
-      + 'async function main() { const m = await loadModel({ modelSrc: 1, ctx: 2 }); completion({ modelId: m }); }\n'
+      'import { loadModel, completion, embed } from "@qvac/sdk";\n'
+      + 'async function main() { const m = await loadModel({ modelSrc: 1, ctx: 2 }); await completion({ modelId: m, history: 3 }); embed({ text: 1 }); }\n'
       + 'main();\n',
     cwd: COURSES,
   }).replace(/^import \{[^}]*\} from ".*";$/m, (line) => line.replace(/from ".*";$/, 'from "./sdk.mjs";'));
@@ -110,7 +113,8 @@ test('buildLesson - a slow SDK call names itself while it runs', async (t) => {
   await new Promise((resolve) => child.on('exit', resolve));
   clearTimeout(timer);
 
-  t.ok(/^→ loadModel\(\{ modelSrc, ctx \}\)$/m.test(err), 'the open call names itself and its arguments');
-  t.ok(/^ {2}✓ loadModel \(0\.\d+s\)$/m.test(err), 'and closes with what it cost');
-  t.absent(/completion/.test(err), 'a call that returns at once is not worth a line');
+  t.ok(/^→ completion\(\{ modelId, history \}\)$/m.test(err), 'the open call names itself and its arguments');
+  t.ok(/^ {2}✓ completion \(0\.\d+s\)$/m.test(err), 'and closes with what it cost');
+  t.absent(/embed/.test(err), 'a call that returns at once is not worth a line');
+  t.absent(/loadModel/.test(err), 'and the call every lesson makes is never worth one');
 });

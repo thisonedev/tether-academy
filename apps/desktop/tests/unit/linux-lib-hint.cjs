@@ -5,7 +5,7 @@
 
 const test = require('brittle');
 
-const { hintForMissingLib, checkRequiredLinuxLibs } = require('../../shared/linux-lib-hint.cjs');
+const { hintForMissingLib, checkRequiredLinuxLibs } = require('../../electron/linux-lib-hint.cjs');
 
 test('linux-lib-hint - known lib gets an install command', (t) => {
   const hint = hintForMissingLib('libvulkan.so.1: cannot open shared object file: No such file or directory');

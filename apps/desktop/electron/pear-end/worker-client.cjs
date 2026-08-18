@@ -7,7 +7,7 @@ const RPC = require('bare-rpc');
 const { EventEmitter } = require('events');
 const CMD = require('../../shared/rpc-commands.cjs');
 const { resolveBareBin } = require('../../shared/bare-bin.cjs');
-const { diagnoseNativeAddonError } = require('../../shared/linux-lib-hint.cjs');
+const { diagnoseNativeAddonError } = require('../linux-lib-hint.cjs');
 
 const WORKER_ENTRY = require.resolve('../../workers/entry.cjs');
 const SHUTDOWN_TIMEOUT_MS = 5000;

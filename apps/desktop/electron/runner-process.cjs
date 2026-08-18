@@ -510,6 +510,10 @@ const tracePreamble = `
 // A call that returns inside this window is not the one anyone is waiting on,
 // so it prints nothing at all.
 const __ACADEMY_TRACE_AFTER_MS = 200;
+// Setup every lesson performs, never the call a lesson is about. It always
+// outruns the window above, so tracing it repeated one uninformative row on
+// every run. A cold load still shows up as download progress.
+const __ACADEMY_UNTRACED = new Set(["loadModel", "unloadModel"]);
 // Keys, counts and lengths only: enough to tell two calls apart, without
 // putting a prompt or a document in the output.
 function __academyDescribeArg(v) {
@@ -530,7 +534,7 @@ function __academyTrace(bindings) {
     // Constants pass through, and a class needs \`new\`, which a plain
     // function wrapper would break.
     const isClass = typeof value === "function" && /^class[\\s{]/.test(Function.prototype.toString.call(value));
-    if (typeof value !== "function" || isClass) {
+    if (typeof value !== "function" || isClass || __ACADEMY_UNTRACED.has(name)) {
       out[name] = value;
       continue;
     }

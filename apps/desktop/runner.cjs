@@ -30,7 +30,7 @@ const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, for
 const { acceptAll, syncFast, pruneTruncatedModels } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
-const { hintForMissingLib } = require('./shared/linux-lib-hint.cjs');
+const { hintForMissingLib } = require('./electron/linux-lib-hint.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
