@@ -5,6 +5,7 @@ import { ArrowUp, Check, ChevronDown, Loader2, Settings, Square, X } from 'lucid
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAiBotModel } from './ai-bot-models.js';
+import { parseProgress } from './lesson-progress.js';
 import type { OutputLine } from './lesson-workspace.js';
 
 export interface LessonConsoleLessonContext {
@@ -96,6 +97,9 @@ function newId(): string {
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
+
+// One per download tick, rendered as the progress bar instead of as output.
+const DOWNLOAD_TICK_LINE = /^\s*▸\s*Downloading\s+\d+(?:\.\d+)?%/;
 
 // Rotating word so a slow model doesn't look frozen.
 const SHUFFLE_WORDS = [
@@ -797,43 +801,13 @@ function SavedPreview({ file }: { file: string }) {
   return <audio src={src} controls preload="metadata" className="w-full" />;
 }
 
-function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {
-  const savedFiles = savedFilesFrom(lines);
-  // Find the latest finetune tick. Format: `▸ epoch=1 step=1 batch=1/16 ...`.
-  const tickPattern = /epoch=(\d+)\s+step=(\d+)\s+batch=(\d+)\/(\d+)/;
-  // The trainer skips a tick on the last step, so without this the bar caps below 100%.
-  const completedPattern = /(Training completed through step \d+|status:\s*COMPLETED)/;
-  const progress = (() => {
-    let latestStep = 0;
-    let latestEpoch = 1;
-    let totalBatches = 0;
-    let completed = false;
-    for (const { line } of lines) {
-      const m = line.match(tickPattern);
-      if (m) {
-        latestEpoch = Number(m[1]);
-        latestStep = Number(m[2]);
-        if (Number(m[4]) > totalBatches) totalBatches = Number(m[4]);
-      }
-      if (completedPattern.test(line)) completed = true;
-    }
-    if (totalBatches === 0) return null;
-    const totalEpochs = Math.max(1, Math.ceil(latestStep / totalBatches));
-    const totalSteps = totalEpochs * totalBatches;
-    const percent = completed ? 100 : Math.min(100, Math.round((latestStep / totalSteps) * 100));
-    return {
-      currentStep: latestStep,
-      totalSteps,
-      epoch: latestEpoch,
-      totalEpochs,
-      percent,
-      completed,
-    };
-  })();
+function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {
+  const savedFiles = savedFilesFrom(allLines);
+  const progress = parseProgress(allLines);
 
   return (
     <div className="space-y-1 p-4 text-canvas-muted-foreground">
-      {lines.length === 0 && !isAnimating ? (
+      {allLines.length === 0 && !isAnimating ? (
         <>
           <p className="text-emerald-400">$ Run your code to see results</p>
           <p>
@@ -846,9 +820,7 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
         <div className="mb-2 rounded border border-canvas-border bg-canvas/50 p-2">
           <div className="mb-1 flex items-center justify-between font-mono text-xs">
             <span className="text-emerald-400">
-              {progress.completed
-                ? 'Training complete'
-                : `Training: step ${progress.currentStep} / ${progress.totalSteps} (epoch ${progress.epoch} / ${progress.totalEpochs})`}
+              {progress.completed ? `${progress.label} complete` : `${progress.label}: ${progress.detail}`}
             </span>
             <span className="text-canvas-muted-foreground">{progress.percent}%</span>
           </div>
@@ -861,6 +833,9 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
         </div>
       ) : null}
       {(() => {
+        // The bar above already reports these, so printing them too just fills
+        // the console with one line per tick. parseProgress still sees them.
+        const lines = allLines.filter((e) => !DOWNLOAD_TICK_LINE.test(e.line));
         // Falls back to line-by-line when finetune progress lines are present.
         const hasFinetuneProgress = lines.some((e) => e.stream === 'stdout' && /^▸\s+epoch=/.test(e.line));
 
@@ -882,40 +857,44 @@ function OutputView({ lines, isAnimating }: { lines: OutputLine[]; isAnimating: 
           });
         }
 
-        const stdoutText = lines
-          .filter((e) => e.stream === 'stdout')
-          .map((e) => e.line)
-          .join('\n');
-        const stdoutParagraphs = stdoutText
-          .split(/\n{2,}/)
-          .map((p) => p.replace(/\n+/g, ' ').trim())
-          .filter(Boolean);
-        const dimFirstStdout = stdoutParagraphs.length > 1;
+        // Grouped by consecutive stream rather than stdout-then-stderr: the
+        // host's stage lines are stderr, so splitting the two puts a result
+        // above the steps that produced it.
+        const groups: { stream: string; lines: string[] }[] = [];
+        for (const entry of lines) {
+          const last = groups[groups.length - 1];
+          if (last && last.stream === entry.stream) last.lines.push(entry.line);
+          else groups.push({ stream: entry.stream, lines: [entry.line] });
+        }
+        const dim = 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic';
 
-        const stderrLines = lines.filter((e) => e.stream === 'stderr');
-
-        const renderStdout = stdoutParagraphs.map((para, i) => {
-          const isPrefix = dimFirstStdout && i === 0;
-          return (
-            <p
-              key={`out-${i}`}
-              className={isPrefix ? 'whitespace-pre-wrap text-canvas-muted-foreground/60 italic' : 'whitespace-pre-wrap'}
-            >
-              {para}
-            </p>
-          );
-        });
-
-        const renderStderr = stderrLines.map((entry, i) => (
-          <p key={`err-${i}`} className="whitespace-pre-wrap text-canvas-muted-foreground/60 italic">
-            {entry.line}
-          </p>
-        ));
-
+        let stdoutSeen = 0;
         return (
           <>
-            {renderStdout}
-            {renderStderr}
+            {groups.flatMap((group, g) => {
+              if (group.stream === 'stderr') {
+                return group.lines.map((line, i) => (
+                  <p key={`err-${g}-${i}`} className={dim}>
+                    {line}
+                  </p>
+                ));
+              }
+              const paragraphs = group.lines
+                .join('\n')
+                .split(/\n{2,}/)
+                .map((p) => p.replace(/\n+/g, ' ').trim())
+                .filter(Boolean);
+              return paragraphs.map((para, i) => {
+                // Lessons open with a preamble before their real output; it
+                // stays dimmed, but only the very first one across the run.
+                const isPrefix = stdoutSeen++ === 0 && paragraphs.length + g > 1;
+                return (
+                  <p key={`out-${g}-${i}`} className={isPrefix ? dim : 'whitespace-pre-wrap'}>
+                    {para}
+                  </p>
+                );
+              });
+            })}
           </>
         );
       })()}

@@ -152,3 +152,30 @@ test('exec-cancel - a run that never replies frees the peer on its own', async (
     guest.cancelExec(discoveryKey);
   } catch {}
 });
+
+// The stale window is an idle timeout, not a runtime budget. A lesson that
+// downloads a multi-GB model runs far past it while the peer is still working,
+// so replies have to push it back.
+test('exec-cancel - steady output keeps a run alive past the stale window', async (t) => {
+  const { guest, discoveryKey } = await pairForExec(t, 'stale-refresh');
+  // Wide enough to cover the host's spawn pipeline before the first reply,
+  // narrow enough that the 8s run below cannot fit inside one window.
+  guest._testHooks.setGuestExecStaleMs(3_000);
+  t.teardown(() => guest._testHooks.setGuestExecStaleMs(null));
+
+  // ~8s of run in 400ms beats: no single gap comes near the window, but the
+  // total is far past it.
+  const code =
+    bareRequires('process') +
+    'let n = 0;' +
+    'const t = setInterval(() => {' +
+    '  process.stdout.write("beat " + (++n) + "\\n");' +
+    '  if (n === 20) { clearInterval(t); process.exit(0); }' +
+    '}, 400);';
+
+  const out = await settled(runExec(guest, { peerId: discoveryKey, code }, 30_000));
+  t.absent(out.err, `steady output must not read as no reply; got: ${oneLine(out.err?.message ?? '')}`);
+  if (!out.err) {
+    t.ok(out.result.stdout.includes('beat 20'), `ran to completion; got: ${oneLine(out.result.stdout)}`);
+  }
+});

@@ -456,6 +456,34 @@ function knownGoodSizes(filename) {
 }
 
 /**
+ * Cached files whose size disagrees with the registry, i.e. a download that
+ * stopped partway. Reports without removing, for a run still holding the file.
+ * @param {string} [root]
+ * @returns {string[]}
+ */
+function findTruncatedModels(root = modelsRoot()) {
+  const found = [];
+  for (const [rel, stat] of scan(root)) {
+    const sizes = knownGoodSizes(rel.replace(CACHE_HASH_PREFIX, ''));
+    if (!sizes || sizes.has(stat.sizeBytes)) continue;
+    found.push(rel);
+  }
+  return found;
+}
+
+/**
+ * Total bytes across the cache. The peer host samples this to tell a download
+ * in flight from one that has stopped.
+ * @param {string} [root]
+ * @returns {number}
+ */
+function cacheBytes(root = modelsRoot()) {
+  let total = 0;
+  for (const [, stat] of scan(root)) total += stat.sizeBytes;
+  return total;
+}
+
+/**
  * A run that never reaches its own cleanup can leave a truncated download at
  * its final name. Removes any file whose size mismatches its registry entry.
  * @param {string} [root]
@@ -463,10 +491,7 @@ function knownGoodSizes(filename) {
  */
 function pruneTruncatedModels(root = modelsRoot()) {
   const removed = [];
-  for (const [rel, stat] of scan(root)) {
-    const displayName = rel.replace(CACHE_HASH_PREFIX, '');
-    const sizes = knownGoodSizes(displayName);
-    if (!sizes || sizes.has(stat.sizeBytes)) continue;
+  for (const rel of findTruncatedModels(root)) {
     try {
       fs.rmSync(path.join(root, rel), { force: true });
       removed.push(rel);
@@ -494,6 +519,8 @@ module.exports = {
   acceptAll,
   removeAddedSince,
   pruneTruncatedModels,
+  findTruncatedModels,
+  cacheBytes,
   verifyAll,
   verifyAllAsync,
 };

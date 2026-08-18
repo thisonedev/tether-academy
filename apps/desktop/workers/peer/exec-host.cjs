@@ -25,14 +25,14 @@ const {
   sanitizeExecArgv,
   sanitizeExecCode,
 } = require('./exec-validate.cjs');
-const { detectNetworkNeed, referencedModels, modelRegistry } = require('./exec-network.cjs');
+const { detectNetworkNeed, referencedModels, modelRegistry, modelDownloadProgress } = require('./exec-network.cjs');
 const {
   lessonCwd,
   precreateOutputDirs,
   snapshotOutputs,
   describeNewOutputs,
 } = require('../../shared/lesson-output.cjs');
-const { syncFast, scan, removeAddedSince, verifyModelsAsync, pruneTruncatedModels, acceptAll } = require('../../shared/model-integrity.cjs');
+const { syncFast, scan, removeAddedSince, verifyModelsAsync, pruneTruncatedModels, findTruncatedModels, cacheBytes, acceptAll } = require('../../shared/model-integrity.cjs');
 // Cache entries are prefixed with the SDK's content hash, same convention as model-integrity.cjs.
 const CACHE_HASH_PREFIX = /^[0-9a-f]{16}_/;
 const { substitutePortableImports } = require('../../shared/portable-lesson-imports.cjs');
@@ -58,6 +58,10 @@ const IDENTITY_WAIT_MS = 10_000;
 // The scan loads its own model before it can look at the code; a run has no
 // child yet at this point, so a hung load would otherwise wedge it forever.
 const SECURITY_SCAN_TIMEOUT_MS = 30_000;
+// Hardware that cannot finish the review inside its timeout pays the timeout
+// and the CPU on every run and never gets a verdict, so stop asking after this
+// many consecutive failures. A single success clears it.
+const SECURITY_SCAN_FAILURE_LIMIT = 2;
 // Native inference ignores SIGTERM, hence the grace before SIGKILL.
 const SIGKILL_GRACE_MS = 3_000;
 // SIGKILL can't reap a child stuck in an uninterruptible kernel wait (e.g. a
@@ -70,6 +74,12 @@ let _testStaleRunMs = null;
 // workers can keep the child alive past the lesson's main flow (BCI lessons
 // hit this), so waiting on child.on('exit') alone would stay stuck in Running.
 const RUN_FINAL_IDLE_MS = 30_000;
+// How often the host reports download progress it can see from disk.
+const DOWNLOAD_TICK_MS = 3_000;
+// A download that has grown by nothing for this long has stopped for a reason
+// the run cannot recover from (no route to the registry, a full disk). Short
+// stalls are normal on a slow link, so this is generous.
+const DOWNLOAD_STALL_MS = 5 * 60_000;
 // Fallback sealing: the identity record's decrypt key is a file on disk
 // rather than a keychain entry, one bug away from the device secret key.
 const UNSEALED_STORAGE_SCHEME = 'aes-gcm-local';
@@ -213,7 +223,7 @@ function previewCode(code) {
  * @param {() => string | null} [ctx.getSecretScheme]
  * @param {(discoveryKeyHex: string) => string | null} [ctx.getRevokedDeviceKey]
  * @param {(discoveryKeyHex: string, timeoutMs: number) => Promise<{ ok: boolean, reason: string | null }>} [ctx.awaitDeviceVerified]
- * @param {(payload: { code: string, lessonKey: null, lessonReference: string | null, modelHint: undefined }) => Promise<{ modelName: string | null, result: { verdict: string, concerns: Array<{ summary: string, snippet: string }> } }>} [ctx.runSecurityScan]
+ * @param {(payload: { code: string, lessonKey: null, lessonReference: string | null, modelHint: undefined, timeoutMs: number }) => Promise<{ modelName: string | null, result: { verdict: string, concerns: Array<{ summary: string, snippet: string }> } }>} [ctx.runSecurityScan]
  */
 function createExecHost(ctx) {
   const {
@@ -234,6 +244,10 @@ function createExecHost(ctx) {
       throw new Error('security scan not configured');
     },
   } = ctx;
+
+  // Consecutive review failures on this device. Per host rather than module
+  // scope so one host's bad hardware can't switch the review off elsewhere.
+  let securityScanFailures = 0;
 
   // discoveryKey -> in-flight run, set from the moment a request is accepted
   // (including while parked on a device answer), so one peer holds one slot.
@@ -369,6 +383,7 @@ function createExecHost(ctx) {
   function finishRun(discoveryKeyHex, run) {
     if (!isCurrent(discoveryKeyHex, run)) return;
     if (run.killTimer) clearTimeout(run.killTimer);
+    if (run.downloadTicker) clearInterval(run.downloadTicker);
     // A clean exit still leaves the worker running if the lesson never
     // unloaded its model, so sweep the group either way.
     killGroup(run.child, 'SIGKILL');
@@ -660,6 +675,7 @@ function createExecHost(ctx) {
       label,
       fileDir: null,
       killTimer: null,
+      downloadTicker: null,
       cancelled: false,
       denyConsent: null,
       denyIdentityWait: null,
@@ -669,10 +685,33 @@ function createExecHost(ctx) {
     // Before the first await, so the slot covers the waits below.
     runs.set(discoveryKeyHex, run);
 
+    // Every run crosses the same host stages whatever the lesson does, so one
+    // reporter here covers all of them. Same shape the CLI uses.
+    let phaseAt = 0;
+    const phase = (label) => {
+      phaseAt = Date.now();
+      sendReply(discoveryKeyHex, {
+        kind: 'chunk',
+        runId: run.runId,
+        stream: 'stderr',
+        data: `→ ${label}\n`,
+      });
+    };
+    const phaseDone = (label) => {
+      const secs = phaseAt ? (Date.now() - phaseAt) / 1000 : 0;
+      sendReply(discoveryKeyHex, {
+        kind: 'chunk',
+        runId: run.runId,
+        stream: 'stderr',
+        data: `  ✓ ${label}${secs >= 1 ? ` (${secs.toFixed(1)}s)` : ''}\n`,
+      });
+    };
+
     // A guest pipelining a request on channel open can reach here ahead of
     // its own identity proof; everything below that reads a device key needs
     // this wait to have happened first.
     run.phase = 'awaiting-identity';
+    phase('Verifying the requesting device...');
     const verified = await Promise.race([
       awaitDeviceVerified(discoveryKeyHex, IDENTITY_WAIT_MS),
       new Promise((resolve) => {
@@ -681,6 +720,7 @@ function createExecHost(ctx) {
     ]);
     run.denyIdentityWait = null;
     run.phase = 'starting';
+    if (verified?.ok) phaseDone('Device verified');
     if (!verified?.ok) {
       const stopped = verified.reason === 'cancelled' || run.cancelled;
       fail(
@@ -718,6 +758,7 @@ function createExecHost(ctx) {
         finishRun(discoveryKeyHex, run);
         return;
       }
+      phase(`Preparing ${wanted.join(', ')}...`);
       const warm = sandbox.warmPackages(sandbox.npmCacheDir(), wanted);
       if (!warm.ok) {
         fail(
@@ -729,6 +770,7 @@ function createExecHost(ctx) {
         finishRun(discoveryKeyHex, run);
         return;
       }
+      phaseDone('Packages ready');
       appendAudit('peer:exec:mcp-warmed', { discoveryKey: discoveryKeyHex, packages: wanted });
     }
 
@@ -764,7 +806,16 @@ function createExecHost(ctx) {
     // it never turns a run needing no device/network access into one that does.
     let securityVerdict = 'clean';
     let securityConcerns = [];
-    try {
+    if (securityScanFailures >= SECURITY_SCAN_FAILURE_LIMIT) {
+      // Past the limit, so the prompt goes up without an AI opinion behind it.
+      securityVerdict = 'unavailable';
+      securityConcerns = [
+        'AI security review is switched off on this device after repeatedly failing to finish. '
+        + 'Review the code yourself before approving.',
+      ];
+      phaseDone('AI review skipped on this device');
+    } else try {
+      phase('Reviewing the code...');
       const scanned = await Promise.race([
         runSecurityScan({
           code: displaySource,
@@ -773,6 +824,9 @@ function createExecHost(ctx) {
           // The receiving device's own configured/loaded model, same as any
           // other host-side chat call; a peer cannot pick this remotely.
           modelHint: undefined,
+          // The race below cannot reach the process generating the verdict,
+          // so the deadline has to travel with the request.
+          timeoutMs: SECURITY_SCAN_TIMEOUT_MS,
         }),
         new Promise((resolve) => {
           const timer = setTimeout(() => resolve(null), SECURITY_SCAN_TIMEOUT_MS);
@@ -787,22 +841,28 @@ function createExecHost(ctx) {
       ]);
       run.denyScanWait = null;
       if (scanned) {
+        securityScanFailures = 0;
         securityVerdict = scanned.result.verdict;
         securityConcerns = scanned.result.concerns.map((c) => c.summary);
+        phaseDone(`Reviewed: ${securityVerdict}`);
       } else {
+        if (!run.cancelled) securityScanFailures += 1;
         securityVerdict = 'unavailable';
         securityConcerns = [
           run.cancelled
             ? 'Cancelled while the AI security review was still loading its model.'
             : 'AI security review timed out on this device. Review the code yourself before approving.',
         ];
+        phaseDone(run.cancelled ? 'Review cancelled' : 'Review timed out');
       }
     } catch (err) {
       run.denyScanWait = null;
+      securityScanFailures += 1;
       securityVerdict = 'unavailable';
       securityConcerns = [
         'AI security review unavailable on this device. Review the code yourself before approving.',
       ];
+      phaseDone('Review unavailable');
     }
 
     if (securityVerdict === 'malicious') {
@@ -911,6 +971,7 @@ function createExecHost(ctx) {
     try {
       // A large cached model's hash can take a while under a throttled host;
       // let Stop reach it instead of leaving the run unkillable until it finishes.
+      if (wantedIds.length > 0) phase(`Checking cached models (${wantedIds.length})...`);
       const result = await verifyModelsAsync(wantedIds, undefined, undefined, () => run.cancelled);
       // Scoped to this run's models: an unrelated file changing elsewhere in
       // the cache (another lesson's download) should not block this one.
@@ -920,6 +981,7 @@ function createExecHost(ctx) {
         return wantedIds.includes(base);
       });
       mismatchedModels = result.mismatched;
+      if (wantedIds.length > 0) phaseDone('Models checked');
     } catch (err) {
       console.warn('[peer] model integrity check failed:', err?.message ?? err);
     }
@@ -1139,18 +1201,101 @@ function createExecHost(ctx) {
       sourcePreview: previewCode(displaySource),
     });
     sendReply(discoveryKeyHex, { kind: 'started', runId: run.runId, mode, fileName, label });
+    phase('Running the lesson...');
 
     const stderrFilter = createNoiseFilter();
     let firstChunkAt = 0;
     let finalIdleTimer = null;
+    // The SDK logs one line per blob and then prints nothing until the whole
+    // transfer is done, so silence never means the run stopped working. Only a
+    // cache that has stopped growing does. Sampled when the timer fires rather
+    // than per chunk, so a chatty run doesn't walk the cache per line.
+    const readCacheBytes = () => {
+      try {
+        return cacheBytes();
+      } catch {
+        return -1;
+      }
+    };
+    let idleCacheBytes = readCacheBytes();
+    let stalledSince = 0;
+    const incompleteWanted = () => {
+      try {
+        return findTruncatedModels().filter((rel) =>
+          wantedIds.includes(path.basename(rel).replace(CACHE_HASH_PREFIX, '')));
+      } catch {
+        return [];
+      }
+    };
+    const onFinalIdle = () => {
+      if (!isAlive(child) || run.cancelled || run.phase !== 'running') return;
+      const bytes = readCacheBytes();
+      if (bytes !== idleCacheBytes) {
+        idleCacheBytes = bytes;
+        stalledSince = 0;
+        armFinalIdle();
+        return;
+      }
+      // Closing here kills the child, so an unfinished download must not be
+      // reported as the lesson succeeding, and a slow link must not be
+      // mistaken for a dead one.
+      const incomplete = incompleteWanted();
+      if (incomplete.length > 0) {
+        if (stalledSince === 0) stalledSince = Date.now();
+        if (Date.now() - stalledSince < DOWNLOAD_STALL_MS) {
+          armFinalIdle();
+          return;
+        }
+        appendAudit('peer:exec:model-download-stalled', {
+          discoveryKey: discoveryKeyHex,
+          stalled: incomplete,
+        });
+        sendReply(discoveryKeyHex, {
+          kind: 'chunk',
+          runId: run.runId,
+          stream: 'stderr',
+          data:
+            `[peer] a model download made no progress for ${DOWNLOAD_STALL_MS / 60_000} minutes. `
+            + 'Check the network connection and free disk space, then run this again.\n',
+        });
+        reportExit(discoveryKeyHex, run, { code: 1, signal: null, source: 'download-stalled' });
+        return;
+      }
+      reportExit(discoveryKeyHex, run, { code: 0, signal: null, source: 'final-idle' });
+    };
     const armFinalIdle = () => {
       if (finalIdleTimer) clearTimeout(finalIdleTimer);
-      finalIdleTimer = setTimeout(() => {
-        if (!isAlive(child) || run.cancelled || run.phase !== 'running') return;
-        reportExit(discoveryKeyHex, run, { code: 0, signal: null, source: 'final-idle' });
-      }, RUN_FINAL_IDLE_MS);
+      finalIdleTimer = setTimeout(onFinalIdle, RUN_FINAL_IDLE_MS);
       if (typeof finalIdleTimer.unref === 'function') finalIdleTimer.unref();
     };
+    // Emitted in the same shape the lessons print, so one console parser
+    // covers a host-reported download and a lesson-reported one alike.
+    let lastDownloadPercent = -1;
+    const downloadTicker = setInterval(() => {
+      if (!isAlive(child) || run.cancelled) return;
+      let seen;
+      try {
+        seen = modelDownloadProgress(wantedModels);
+      } catch {
+        return;
+      }
+      if (!seen) return;
+      const percent = Math.max(0, Math.min(100, Math.round((seen.downloaded / seen.total) * 100)));
+      // Report the finish too. Stopping at the last sample below 100 leaves the
+      // console's bar frozen mid-transfer on a download that actually landed.
+      if (seen.downloaded >= seen.total && lastDownloadPercent < 0) return;
+      if (percent === lastDownloadPercent) return;
+      lastDownloadPercent = percent;
+      const mb = (n) => Math.round(n / (1024 * 1024));
+      sendReply(discoveryKeyHex, {
+        kind: 'chunk',
+        runId: run.runId,
+        stream: 'stderr',
+        data: `▸ Downloading ${percent}% (${mb(seen.downloaded)}/${mb(seen.total)} MB)\n`,
+      });
+    }, DOWNLOAD_TICK_MS);
+    if (typeof downloadTicker.unref === 'function') downloadTicker.unref();
+    run.downloadTicker = downloadTicker;
     // The stdio array above names 'pipe' for stdout/stderr, so child.stdout
     // and child.stderr are non-null at runtime. The JSDoc satisfies the
     // checker without a defensive branch that would otherwise be dead code.

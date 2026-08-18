@@ -402,3 +402,35 @@ test('exec-host - a throw inside spawnRun is reported with a stable code', async
 test('exec-host - RUN_FINAL_IDLE_MS is large enough not to trip a quiet compute phase', (t) => {
   t.ok(RUN_FINAL_IDLE_MS >= 10_000, 'idle threshold >= 10s');
 });
+
+// Pins the backoff: attempted while it might still work, dropped once it can't.
+test('exec-host - a review that keeps failing is switched off for later runs', async (t) => {
+  let calls = 0;
+  const { host } = fakeHost({
+    runSecurityScan: async () => {
+      calls += 1;
+      throw new Error('no model loaded');
+    },
+  });
+  t.teardown(() => host.stopAll());
+
+  // The pipeline awaits several times before reaching the review, and the
+  // slot only frees once the cancel has been through it.
+  const drain = async () => {
+    for (let i = 0; i < 12; i++) await settle();
+  };
+  const run = async () => {
+    host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+    await drain();
+    host.cancel(PEER);
+    await drain();
+  };
+
+  await run();
+  await run();
+  t.is(calls, 2, 'it is attempted while it might still work');
+
+  await run();
+  await run();
+  t.is(calls, 2, 'and not attempted again once it has failed its limit');
+});

@@ -16,6 +16,8 @@ const {
   scheduleVerifyAll,
   readManifest,
   pruneTruncatedModels,
+  findTruncatedModels,
+  cacheBytes,
 } = require('../../shared/model-integrity.cjs');
 const { tmpDir } = require('../helpers/index.cjs');
 
@@ -205,11 +207,24 @@ test('model-integrity - prunes a truncated model, leaves a complete one alone', 
   fs.truncateSync(complete, 773025824);
   const unknown = writeModel(root, 'cccccccccccccccc_not-a-real-model.gguf', Buffer.alloc(10));
 
+  t.alike(findTruncatedModels(root), ['aaaaaaaaaaaaaaaa_Llama-3.2-1B-Instruct-Q4_0.gguf'],
+    'reported before anything is removed');
+
   const removed = pruneTruncatedModels(root);
   t.alike(removed.sort(), ['aaaaaaaaaaaaaaaa_Llama-3.2-1B-Instruct-Q4_0.gguf']);
   t.absent(fs.existsSync(truncated), 'the truncated file is gone');
   t.ok(fs.existsSync(complete), 'the correctly-sized file survives');
   t.ok(fs.existsSync(unknown), 'a name with no registry entry is left alone');
+});
+
+// The peer host keeps a run alive for as long as this number moves.
+test('model-integrity - cacheBytes tracks a growing download', (t) => {
+  const { root } = fixture(t, 'mi-cache-bytes');
+  const before = cacheBytes(root);
+  t.ok(before > 0, 'counts what is already cached');
+
+  writeModel(root, 'dddddddddddddddd_partial.gguf', Buffer.alloc(4096));
+  t.is(cacheBytes(root), before + 4096, 'grows by what the transfer wrote');
 });
 
 // Main warms the manifest via scheduleVerifyAll so most files already have hashes before the worker's run-time check asks.

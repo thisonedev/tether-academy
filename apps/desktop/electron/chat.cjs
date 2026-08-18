@@ -590,6 +590,9 @@ function onVerifyResult(callback) {
 
 const SECURITY_VERDICTS = new Set(['clean', 'suspicious', 'malicious']);
 const MAX_SECURITY_CONCERNS = 10;
+// Ceiling on the review's generation. MAX_SECURITY_CONCERNS summaries plus the
+// verdict fit well inside this; the rest was only ever unused headroom.
+const SECURITY_PREDICT_CAP = 384;
 
 // A shape mismatch returns null rather than coercing to "clean", so a parse
 // failure never looks like a real verdict.
@@ -618,7 +621,7 @@ function parseSecurityResponse(text) {
 
 // One completion call, parsed to a verdict. Wrapped by securityScan() below,
 // and called directly by peer exec-host.cjs via the worker-client.cjs RPC bridge.
-async function runSecurityScan({ code, lessonKey, lessonReference, modelHint }) {
+async function runSecurityScan({ code, lessonKey, lessonReference, modelHint, timeoutMs, signal }) {
   const sdk = require('@qvac/sdk');
   if (typeof sdk.completion !== 'function') {
     throw new Error('@qvac/sdk does not export completion in this build');
@@ -626,7 +629,10 @@ async function runSecurityScan({ code, lessonKey, lessonReference, modelHint }) 
 
   const modelName = await resolveModel(modelHint);
   const ctxWindow = approxContextWindow(modelName);
-  const predictBudget = Math.max(300, Math.floor(ctxWindow / 2));
+  // A verdict is a short JSON object, so half the context was budget the model
+  // could spend but never needed. On a CPU-only host that alone was minutes of
+  // generation, which is why the review never landed inside its timeout.
+  const predictBudget = Math.min(SECURITY_PREDICT_CAP, Math.max(300, Math.floor(ctxWindow / 2)));
 
   const lessonBudget = Math.max(64, Math.floor((ctxWindow - predictBudget) / 4));
   const lessonContext =
@@ -646,21 +652,46 @@ async function runSecurityScan({ code, lessonKey, lessonReference, modelHint }) 
 
   const thinkingFilter = createThinkingFilter();
   let assembled = '';
-  const result = sdk.completion({
-    modelId: current.modelId,
-    history,
-    stream: true,
-    captureThinking: false,
-    generationParams: { predict: predictBudget, temp: 0.2 },
-  });
-  for await (const event of result.events) {
-    if (!event || typeof event !== 'object') continue;
-    const type = event.type;
-    if ((type === 'contentDelta' || type === 'rawDelta') && typeof event.text === 'string' && event.text.length > 0) {
-      assembled += thinkingFilter.push(event.text);
-    } else if (type === 'toolError' && typeof event.error === 'string') {
-      throw new Error(`tool error: ${event.error}`);
+  // The caller's timeout only stops it waiting for a verdict. Without a
+  // deadline on the completion itself, a review that misses it keeps
+  // generating and competes for CPU with the run it was meant to clear.
+  const controller = new AbortController();
+  const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  if (deadline && typeof deadline.unref === 'function') deadline.unref();
+  // The RPC bridge cannot carry a signal, so peer exec passes timeoutMs
+  // instead; this covers the in-process caller that stops on request.
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  try {
+    const result = sdk.completion({
+      modelId: current.modelId,
+      history,
+      stream: true,
+      captureThinking: false,
+      signal: controller.signal,
+      generationParams: { predict: predictBudget, temp: 0.2 },
+    });
+    for await (const event of result.events) {
+      if (controller.signal.aborted) break;
+      if (!event || typeof event !== 'object') continue;
+      const type = event.type;
+      if ((type === 'contentDelta' || type === 'rawDelta') && typeof event.text === 'string' && event.text.length > 0) {
+        assembled += thinkingFilter.push(event.text);
+      } else if (type === 'toolError' && typeof event.error === 'string') {
+        throw new Error(`tool error: ${event.error}`);
+      }
     }
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
+  // Half a verdict is not a verdict: parsing a truncated response could read
+  // as clean, so an aborted review has to fail rather than answer.
+  if (controller.signal.aborted) {
+    throw new Error('The AI security review ran past its deadline.');
   }
   assembled += thinkingFilter.flush();
   const parsed = parseSecurityResponse(assembled);
@@ -680,7 +711,13 @@ async function securityScan({ code, lessonKey, lessonReference, modelHint }) {
   let modelName = current.filename;
   (async () => {
     try {
-      const outcome = await runSecurityScan({ code, lessonKey, lessonReference, modelHint });
+      const outcome = await runSecurityScan({
+        code,
+        lessonKey,
+        lessonReference,
+        modelHint,
+        signal: controller.signal,
+      });
       modelName = outcome.modelName;
       if (controller.signal.aborted) return;
       emitSecurityResult({ requestId, done: true, error: null, result: outcome.result });

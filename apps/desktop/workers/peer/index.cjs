@@ -1001,6 +1001,10 @@ function handleExecReply(discoveryKeyHex, buf) {
   // A stale run's delayed reply can arrive after a fresh run already took the
   // slot; drop it instead of misrouting it to that newer run.
   if (payload.runId !== active.runId) return;
+  // Any reply proves the peer is still on this run. Without pushing the window
+  // back, the timer is a ceiling on total runtime rather than the idle timeout
+  // its message describes, and a long model download trips it mid-stream.
+  armGuestExecTimer(discoveryKeyHex, active);
   if (payload.kind === 'started') {
     appendAudit('peer:exec:remote-started', {
       discoveryKey: discoveryKeyHex,
@@ -1064,6 +1068,18 @@ function clearActiveGuestExec(peerId, expectedEntry) {
   return true;
 }
 
+// Restarts the idle window. Armed at send time and pushed back by every reply,
+// so a run stays alive for as long as the peer keeps talking.
+function armGuestExecTimer(peerId, entry) {
+  if (activeGuestExec.get(peerId) !== entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => {
+    if (!clearActiveGuestExec(peerId, entry)) return;
+    entry.emitter.emit('error', new Error(`no reply from peer after ${Math.round(entry.staleMs / 1000)}s`));
+    entry.emitter.emit('end');
+  }, entry.staleMs);
+}
+
 function exec({ peerId, code, mode = 'inline', argv = [], fileName = 'snippet.mts', label = null, declared = null }) {
   if (typeof peerId !== 'string' || !peerId) {
     throw new Error('exec: peerId is required');
@@ -1092,14 +1108,9 @@ function exec({ peerId, code, mode = 'inline', argv = [], fileName = 'snippet.mt
   // Tags every reply for this run, so a stale run's late reply can't be
   // mistaken for this one once a later exec has replaced it in the map.
   const runId = crypto.randomUUID();
-  const guestEntry = { emitter, timer: null, runId };
-  const staleMs = guestExecStaleMs();
-  guestEntry.timer = setTimeout(() => {
-    if (!clearActiveGuestExec(peerId, guestEntry)) return;
-    emitter.emit('error', new Error(`no reply from peer after ${Math.round(staleMs / 1000)}s`));
-    emitter.emit('end');
-  }, staleMs);
+  const guestEntry = { emitter, timer: null, runId, staleMs: guestExecStaleMs() };
   activeGuestExec.set(peerId, guestEntry);
+  armGuestExecTimer(peerId, guestEntry);
   try {
     // No cwd on the wire: the host recomputes it from the lesson path,
     // since a renderer-supplied value would be dead by the time it lands.
