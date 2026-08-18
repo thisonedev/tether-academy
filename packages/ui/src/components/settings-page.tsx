@@ -311,7 +311,10 @@ export function SettingsPage() {
     );
   }
 
-  const totalBytes = (models ?? []).reduce((sum, m) => sum + m.sizeBytes, 0);
+  // The AI bot's active model has its own section above; listing it again
+  // here just makes it easy to remove by accident.
+  const downloadedModels = (models ?? []).filter((m) => m.name !== configuredChatModel);
+  const totalBytes = downloadedModels.reduce((sum, m) => sum + m.sizeBytes, 0);
   const removingAll = remove.pending === 'all';
 
   return (
@@ -510,12 +513,12 @@ export function SettingsPage() {
                     <p className="mt-1 text-sm text-canvas-muted-foreground">
                       {models === null
                         ? 'Scanning…'
-                        : models.length === 0
+                        : downloadedModels.length === 0
                           ? 'Nothing downloaded yet. Run a lesson to pull a model.'
-                          : `${models.length} ${models.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
+                          : `${downloadedModels.length} ${downloadedModels.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
                     </p>
                   </div>
-                  {models && models.length > 0 ? (
+                  {downloadedModels.length > 0 ? (
                     <RemoveAllButton
                       state={remove}
                       onRequestRemove={() => requestRemove('all')}
@@ -534,13 +537,13 @@ export function SettingsPage() {
                 </p>
               ) : models === null ? (
                 <p className="text-sm text-canvas-muted-foreground">Loading…</p>
-              ) : models.length === 0 ? (
+              ) : downloadedModels.length === 0 ? (
                 <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
                   No models yet. Pick a lesson and hit run; QVAC downloads what it needs into your
                   home directory.
                 </p>
               ) : (
-                models.map((m) => (
+                downloadedModels.map((m) => (
                   <ModelRow
                     key={m.id}
                     model={m}
@@ -552,9 +555,9 @@ export function SettingsPage() {
                 ))
               )}
 
-              {models && models.length > 0 ? (
+              {downloadedModels.length > 0 ? (
                 <p className="text-[11px] text-canvas-muted-foreground/70">
-                  {models.length} {models.length === 1 ? 'model' : 'models'} downloaded
+                  {downloadedModels.length} {downloadedModels.length === 1 ? 'model' : 'models'} downloaded
                 </p>
               ) : null}
             </div>
@@ -870,7 +873,7 @@ function RemoveAllButton({
           </button>
         </div>
         <p className="text-right text-[10px] text-canvas-muted-foreground/80">
-          Frees all model files on this device.
+          Frees all model files on this device except the AI bot's active model.
         </p>
       </div>
     );

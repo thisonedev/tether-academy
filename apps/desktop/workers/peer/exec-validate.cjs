@@ -1,6 +1,8 @@
 // Input validation for peer-exec, checked before anything reaches spawn.
 'use strict';
 
+const { isPortableToken, TOKEN_PREFIX } = require('../../shared/portable-lesson-imports.cjs');
+
 const MAX_EXEC_ARGV = 32;
 const MAX_EXEC_ARGV_ENTRY = 4096;
 const MAX_EXEC_SOURCE_BYTES = 1_000_000;
@@ -80,8 +82,19 @@ const IMPORT_SPECIFIER = /\bfrom\s+["']([^"']+)["']/g;
 // Everything after the last node_modules segment, i.e. the installed name.
 const PACKAGE_NAME = /.*\/node_modules\/((?:@[^/]+\/)?[^/]+)/;
 
+// In portable mode a specifier is one of our own tokens, not an absolute
+// path; PACKAGE_NAME can't read a package name out of that on its own.
+function packageNameFromSpec(spec) {
+  if (!isPortableToken(spec)) return PACKAGE_NAME.exec(spec)?.[1] ?? null;
+  const rest = spec.slice(TOKEN_PREFIX.length);
+  if (!rest.startsWith('npm-package:')) return null; // qvac-sdk/bare-builtin tokens are already bare-safe
+  const importSpec = rest.slice('npm-package:'.length);
+  return importSpec.startsWith('@') ? importSpec.split('/').slice(0, 2).join('/') : importSpec.split('/')[0];
+}
+
 /**
- * Run on the built source, where every specifier is already an absolute path.
+ * Run on the built source, where every specifier is either an absolute path
+ * (local run) or one of our portable tokens (peer-exec).
  * @param {string} code
  * @returns {string[]}
  */
@@ -89,7 +102,7 @@ function nodeOnlyPackages(code) {
   if (typeof code !== 'string' || !code) return [];
   const out = [];
   for (const [, spec] of code.matchAll(IMPORT_SPECIFIER)) {
-    const name = PACKAGE_NAME.exec(spec)?.[1];
+    const name = packageNameFromSpec(spec);
     if (!name || BARE_SAFE_PACKAGES.some((re) => re.test(name))) continue;
     if (!out.includes(name)) out.push(name);
   }

@@ -2,10 +2,10 @@
 
 import { useUserStore } from '@academy/core';
 import type { CurriculumChapter, CurriculumLesson } from '@academy/courses';
+import { normalizeLessonCode } from '@academy/validation/lesson-code';
 import type { AcademyAPI, AcademyRunChunk, ChatSecurityResult, MatchStatus } from '@academy/validation';
 // Subpath, not the package root: the root re-exports the MDX frontmatter config, pulling fumadocs-mdx's fs/promises import into the browser bundle.
 import {
-  ArrowLeft,
   ArrowRight,
   Check,
   Copy,
@@ -14,10 +14,10 @@ import {
   Play,
   RotateCcw,
   Square,
-  Sparkles,
   X,
 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
@@ -26,6 +26,7 @@ import { MonacoLessonEditor } from './monaco-lesson-editor.js';
 import { QuestionCheck } from './question-check.js';
 import { ChatInputBar, LessonConsole } from './lesson-console.js';
 import type { ConsoleEntry } from './lesson-console.js';
+import { QVAC_EDITOR_BACKGROUND } from './qvac-theme.js';
 
 export interface LessonTest {
   id: string;
@@ -91,14 +92,8 @@ const CAPTURE_MARKERS: Array<{ pattern: RegExp; target: string }> = [
   { pattern: /▸\s+Provider Public Key:\s+([a-f0-9]{64})/i, target: 'lastProviderPublicKey' },
 ];
 
-// Whitespace-insensitive equality: detects an untouched starter file and
-// fast-paths a formatting-only match against the answer without the AI.
-function normalizeForCompare(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
-}
-
 // Which check-entry verdicts count as the lesson being done. 'match' is set
-// client-side by normalizeForCompare, never returned by the AI itself.
+// client-side by normalizeLessonCode, never returned by the AI itself.
 const PASSING_MATCH_STATUSES = new Set<MatchStatus>(['match', 'complete', 'different-but-valid']);
 
 // Streamed chunks rarely align with real newlines; treating each chunk as
@@ -456,6 +451,12 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
   const hasQuestions = (data.questions?.length ?? 0) > 0;
   const codeCheckPassed = hasTests ? structuralPassed && aiGate : true;
   const allPassed = codeCheckPassed && (!hasQuestions || questionsCorrect);
+  const blockedReason =
+    hasQuestions && hasTests
+      ? 'Pass the code check and answer the questions to continue'
+      : hasQuestions
+        ? 'Answer the questions to continue'
+        : 'Pass the code check to continue';
 
   // Subscribed for the workspace's lifetime (not just while checking) so a
   // review that's still running when the user navigates away is ignored
@@ -548,7 +549,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
 
     // A formatting-only match is real; skip the AI call entirely for it.
     const hasAnswer = typeof data.answer === 'string' && data.answer.length > 0;
-    if (hasAnswer && normalizeForCompare(userCode) === normalizeForCompare(data.answer)) {
+    if (hasAnswer && normalizeLessonCode(userCode) === normalizeLessonCode(data.answer)) {
       setEntries((prev) =>
         prev.map((e) => (e.id === entryId && e.kind === 'check' ? { ...e, ai: 'done', aiVerdict: 'match', aiReason: '' } : e)),
       );
@@ -639,8 +640,21 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       const chatApi = window.academy.chat;
       return new Promise<ChatSecurityResult | null>((resolve) => {
         let settled = false;
-        let off: (() => void) | undefined;
+        // Subscribed before the call, not inside its .then: a review that
+        // answers without loading a model emits its result before the
+        // requestId crosses the bridge, and a later listener misses it and
+        // waits out the timeout below with the run held up behind it.
+        let requestId: string | null = null;
+        let early: { requestId: string; error: string | null; result: ChatSecurityResult | null } | null = null;
         const timer = setTimeout(() => settle(null), 20_000);
+        const off = chatApi.onSecurityResult((payload) => {
+          if (requestId === null) {
+            early = payload;
+            return;
+          }
+          if (payload.requestId !== requestId) return;
+          settle(payload.error ? null : payload.result);
+        });
         function settle(value: ChatSecurityResult | null) {
           if (settled) return;
           settled = true;
@@ -657,11 +671,9 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                 : null,
             lessonReference: data.lessonReference,
           })
-          .then(({ requestId }) => {
-            off = chatApi.onSecurityResult((payload) => {
-              if (payload.requestId !== requestId) return;
-              settle(payload.error ? null : payload.result);
-            });
+          .then(({ requestId: id }) => {
+            requestId = id;
+            if (early && early.requestId === id) settle(early.error ? null : early.result);
           })
           .catch(() => settle(null));
       });
@@ -690,7 +702,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
 
     // Whitespace-normalized, not a leftover-TODO heuristic: finishing TODO 1
     // but not 2 is a real change even with boilerplate still present.
-    const unchangedFromStarter = normalizeForCompare(userCode) === normalizeForCompare(data.startingCode);
+    const unchangedFromStarter = normalizeLessonCode(userCode) === normalizeLessonCode(data.startingCode);
     if (unchangedFromStarter) {
       finalizeRunEntry(
         [
@@ -775,11 +787,31 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
       // Streamed as chunks arrive so 30-60s finetune runs don't look frozen.
       const streamBuffer: OutputLine[] = [];
 
+      // Fed through the same path a real chunk takes, so the review reads as a
+      // stage on the rail. Trailing newline included: without it the next real
+      // chunk merges into this line instead of starting its own.
+      const noteStage = (line: string) => {
+        const chunk = { stream: 'stderr' as const, data: `${line}\n` };
+        streamBuffer.splice(0, streamBuffer.length, ...appendChunkLines(streamBuffer, chunk));
+        setEntries((prev) =>
+          prev.map((e) =>
+            e.id === runEntryId && e.kind === 'run' ? { ...e, lines: appendChunkLines(e.lines, chunk) } : e,
+          ),
+        );
+      };
+
       // Advisory only; the paired device runs its own authoritative scan.
       if (isRemoteRun) {
+        // Nothing reaches the peer until this answers, so without a row of its
+        // own the panel sat empty and then filled all at once.
+        noteStage('→ Reviewing the code on this device...');
+        const reviewStartedAt = Date.now();
         const scan = await awaitSecurityScan(userCode);
+        const reviewSecs = (Date.now() - reviewStartedAt) / 1000;
+        noteStage(`  ✓ Reviewed on this device${reviewSecs >= 1 ? ` (${reviewSecs.toFixed(1)}s)` : ''}`);
         if (scan?.verdict === 'malicious') {
           const lines: OutputLine[] = [
+            ...streamBuffer,
             { stream: 'stderr', line: '[security] This code was not sent to the paired device.' },
             ...scan.concerns.map((c) => ({ stream: 'stderr' as const, line: `  - ${c.summary}` })),
             { stream: 'stdout', line: 'Edit the code to remove the flagged content, then click Run again.' },
@@ -977,11 +1009,52 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     void window.academy?.stop?.();
   }, [isAnimating]);
 
+  // The chevrons' shortcut. Anywhere a key means something else (the editor,
+  // the chat box, the completion modal) the arrow belongs to that, not here.
+  const router = useRouter();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (showCompleteModal) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest('input, textarea, select, [contenteditable="true"], .monaco-editor')) return;
+      const href = e.key === 'ArrowLeft' ? data.prevUrl : allPassed ? data.nextUrl : undefined;
+      if (!href) return;
+      e.preventDefault();
+      router.push(href);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [router, data.prevUrl, data.nextUrl, allPassed, showCompleteModal]);
+
+  // A lesson is exactly one viewport, the editor and console its only scroll
+  // regions. Narrow layouts still scroll as a page, so the rule is a media
+  // query in global.css rather than a style set from here.
+  const isLessonPage = !!data.currentLesson;
+  useEffect(() => {
+    if (!isLessonPage) return;
+    document.documentElement.classList.add('lesson-viewport');
+    return () => document.documentElement.classList.remove('lesson-viewport');
+  }, [isLessonPage]);
+
   return (
     <div className="workspace-root flex w-full flex-col lg:h-[calc(100vh-3.5rem)]">
-      <div className="workspace-row flex min-h-0 flex-col gap-4 overflow-x-auto px-4 pb-24 pt-4 sm:px-6 sm:pt-6 lg:flex-1 lg:flex-row lg:gap-6 lg:overflow-hidden lg:pb-0 lg:overflow-x-hidden">
+      <div
+        className={`workspace-row flex min-h-0 flex-col gap-4 overflow-x-auto px-4 pt-4 sm:px-6 sm:pt-6 lg:flex-1 lg:flex-row lg:gap-6 lg:overflow-hidden lg:pb-0 lg:overflow-x-hidden ${
+          data.currentLesson ? 'pb-4' : 'pb-24'
+        }`}
+      >
         <section className="workspace-sidebar min-w-0 lg:max-w-[42%] lg:min-w-[360px] lg:flex-shrink-0 lg:h-full lg:overflow-y-auto lg:pb-[9px] lg:pr-2">
-          <CurriculumStrip chapter={data.currentChapter} currentLesson={data.currentLesson} />
+          <CurriculumStrip
+            chapter={data.currentChapter}
+            currentLesson={data.currentLesson}
+            prevUrl={data.prevUrl}
+            nextUrl={data.nextUrl}
+            nextBlockedReason={allPassed ? undefined : blockedReason}
+            onFinish={chapterReady ? () => setShowCompleteModal(true) : undefined}
+            finishLabel={data.nextUrl ? 'Finish chapter' : 'Course complete'}
+          />
 
           <header className="mb-5">
             <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-canvas-foreground sm:text-4xl">
@@ -1048,45 +1121,42 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             localIsOnlyHost={localIsOnlyHost}
             lastRemoteRun={lastRemoteRun}
             clearLastRemoteRun={() => setLastRemoteRun(null)}
+            footer={
+              data.currentLesson ? (
+                data.readOnly ? (
+                  <p className="py-1 text-center text-sm text-canvas-muted-foreground">
+                    No code in this section
+                  </p>
+                ) : (
+                  <ChatInputBar
+                    entries={entries}
+                    setEntries={setEntries}
+                    lessonContext={
+                      data.currentChapter
+                        ? {
+                            chapter: data.currentChapter.slug,
+                            lesson: data.currentLesson.slug,
+                            title: data.currentLesson.title,
+                            reference: data.lessonReference,
+                          }
+                        : null
+                    }
+                    readOnly={data.readOnly}
+                  />
+                )
+              ) : undefined
+            }
           />
         </section>
       </div>
 
-      {data.currentChapter ? (
+      {/* Only a chapter landing page still needs a row of its own: on a lesson
+          the chat is docked in the runner column and navigation is on the
+          stepper, so the page ends at the workspace. */}
+      {data.currentChapter && !data.currentLesson ? (
         <nav className="sticky bottom-0 z-10 shrink-0 border-t border-canvas-border bg-canvas/95 backdrop-blur supports-[backdrop-filter]:bg-canvas/85 lg:static">
           <div className="flex items-center justify-between gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-3.5">
-            {data.prevUrl ? (
-              <Link
-                href={data.prevUrl}
-                className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-3 py-2 text-sm text-canvas-foreground transition-colors hover:bg-canvas-muted"
-              >
-                <ArrowLeft className="size-4" />
-                <span className="hidden sm:inline">Previous</span>
-              </Link>
-            ) : null}
-            {data.currentLesson ? (
-              data.readOnly ? (
-                <span className="mx-auto inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-4 py-2 text-sm font-medium text-canvas-muted-foreground">
-                  No code in this section
-                </span>
-              ) : (
-                <ChatInputBar
-                  entries={entries}
-                  setEntries={setEntries}
-                  lessonContext={
-                    data.currentChapter && data.currentLesson
-                      ? {
-                          chapter: data.currentChapter.slug,
-                          lesson: data.currentLesson.slug,
-                          title: data.currentLesson.title,
-                          reference: data.lessonReference,
-                        }
-                      : null
-                  }
-                  readOnly={data.readOnly}
-                />
-              )
-            ) : data.firstLessonHref ? (
+            {data.firstLessonHref ? (
               <Link
                 href={data.firstLessonHref}
                 className="mx-auto inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400"
@@ -1099,50 +1169,6 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
                 No lessons shipped yet
               </span>
             )}
-            {data.nextUrl ? (
-              chapterReady ? (
-                <button
-                  type="button"
-                  onClick={() => setShowCompleteModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 transition-colors hover:bg-emerald-500/20"
-                >
-                  <Sparkles className="size-4" />
-                  <span className="hidden sm:inline">Finish chapter</span>
-                  <ArrowRight className="size-4" />
-                </button>
-              ) : allPassed ? (
-                <Link
-                  href={data.nextUrl}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-3 py-2 text-sm text-canvas-foreground transition-colors hover:bg-canvas-muted"
-                >
-                  <span className="hidden sm:inline">Next</span>
-                  <ArrowRight className="size-4" />
-                </Link>
-              ) : (
-                <span
-                  title={
-                    hasQuestions && hasTests
-                      ? 'Pass the code check and answer the questions to continue'
-                      : hasQuestions
-                        ? 'Answer the questions to continue'
-                        : 'Pass the code check to continue'
-                  }
-                  className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-3 py-2 text-sm text-canvas-muted-foreground opacity-50"
-                >
-                  <span className="hidden sm:inline">Next</span>
-                  <ArrowRight className="size-4" />
-                </span>
-              )
-            ) : chapterReady ? (
-              <button
-                type="button"
-                onClick={() => setShowCompleteModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 transition-colors hover:bg-emerald-500/20"
-              >
-                <Sparkles className="size-4" />
-                <span className="hidden sm:inline">Course complete</span>
-              </button>
-            ) : null}
           </div>
         </nav>
       ) : null}
@@ -1195,6 +1221,7 @@ function Runner({
   localIsOnlyHost,
   lastRemoteRun,
   clearLastRemoteRun,
+  footer,
 }: {
   userCode: string;
   setUserCode: (s: string) => void;
@@ -1241,6 +1268,8 @@ function Runner({
       }
     | null;
   clearLastRemoteRun: () => void;
+  /** Docked under the console, so the column reads code, output, input. */
+  footer?: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   const [capturedCopiedKey, setCapturedCopiedKey] = useState<string | null>(null);
@@ -1320,7 +1349,7 @@ function Runner({
             </span>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
+        <div className="flex min-w-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
           <button
             type="button"
             onClick={isAnimating ? onStop : onRun}
@@ -1328,9 +1357,9 @@ function Runner({
             className={
               isAnimating
                 ? stopRequested
-                  ? 'inline-flex items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
-                  : 'inline-flex items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
-                : 'inline-flex items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
+                  ? 'inline-flex shrink-0 items-center gap-1.5 rounded-md bg-canvas-muted px-2.5 py-1 text-xs font-semibold text-canvas-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
+                  : 'inline-flex shrink-0 items-center justify-center rounded p-1.5 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40'
+                : 'inline-flex shrink-0 items-center justify-center rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40'
             }
             title={stopRequested ? 'Stopping…' : isAnimating ? 'Stop run' : 'Run code (R)'}
             aria-label={stopRequested ? 'Stopping' : isAnimating ? 'Stop run' : 'Run code'}
@@ -1352,7 +1381,7 @@ function Runner({
             type="button"
             onClick={onCheck}
             disabled={readOnly || checkDisabled}
-            className="rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
             title="Check answer"
             aria-label="Check answer"
           >
@@ -1364,7 +1393,7 @@ function Runner({
             onChange={(e) => setRunMode(e.target.value as RunMode)}
             disabled={readOnly}
             suppressHydrationWarning
-            className="run-mode-select-desktop ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            className="run-mode-select-desktop ml-1 min-w-0 max-w-[6.5rem] shrink truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground sm:max-w-none transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
             title="Run mode"
             aria-label="Run mode"
           >
@@ -1391,7 +1420,7 @@ function Runner({
               onChange={(e) => setSelectedPeerId(e.target.value)}
               disabled={readOnly}
               suppressHydrationWarning
-              className="ml-1 max-w-[10rem] truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              className="ml-1 min-w-0 max-w-[5.5rem] shrink truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 sm:max-w-[10rem] text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
               title={
                 remotePeers.length === 0
                   ? 'No paired devices. Pair one in Settings.'
@@ -1419,7 +1448,7 @@ function Runner({
             tabIndex={isDesktop ? -1 : undefined}
             disabled={isDesktop || readOnly}
             suppressHydrationWarning
-            className="run-mode-select-web ml-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground"
+            className="run-mode-select-web ml-1 shrink-0 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground"
             title={isDesktop ? undefined : 'Run mode'}
             aria-label={isDesktop ? undefined : 'Run mode'}
           >
@@ -1436,7 +1465,7 @@ function Runner({
             aria-label="Reset code"
             onClick={onReset}
             disabled={readOnly}
-            className="rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
             title="Reset to starting code"
           >
             <RotateCcw className="size-4" />
@@ -1530,6 +1559,9 @@ function Runner({
         </div>
       ) : null}
 
+      {/* One platform is not a choice, and the row costs as much height as six
+          lines of code. Only lessons that actually offer an alternative get it. */}
+      {platforms.length > 1 ? (
       <div className="flex flex-wrap items-center gap-1 border-b border-canvas-border bg-canvas px-3 py-2 sm:px-4">
         {platforms.map((p) => (
           <button
@@ -1552,10 +1584,15 @@ function Runner({
           </span>
         ) : null}
       </div>
+      ) : null}
 
+      {/* lg split: code 70% / output 30% of the runner card's height. */}
       {/* Monaco sits out of flow so its height comes from this box; in the stacked layout
           its own height:100% wrapper would otherwise resolve to auto and collapse. */}
-      <div className="relative min-h-[420px] flex-1 overflow-hidden">
+      <div
+        className="relative min-h-[420px] flex-1 overflow-hidden lg:min-h-0 lg:flex lg:basis-[70%]"
+        style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}
+      >
         <div className="absolute inset-0">
           <MonacoLessonEditor
             value={userCode}
@@ -1566,7 +1603,7 @@ function Runner({
       </div>
 
       {runMode === 'remote' && remotePeers.length === 0 ? (
-        <div className="flex h-[280px] shrink-0 items-center justify-center border-t border-canvas-border bg-canvas-muted font-sans text-sm text-canvas-muted-foreground">
+        <div className="flex h-[280px] shrink-0 items-center justify-center border-t border-canvas-border bg-canvas-muted font-sans text-sm text-canvas-muted-foreground lg:h-auto lg:min-h-0 lg:flex lg:basis-[30%]">
           <div className="flex max-w-sm flex-col items-center gap-2 text-center">
             {localIsOnlyHost ? (
               <>
@@ -1621,8 +1658,18 @@ function Runner({
           </div>
         </div>
       ) : (
-        <LessonConsole entries={entries} onStopCheck={onStopCheck} />
+        <div className="flex min-h-0 lg:flex lg:basis-[30%]">
+          <LessonConsole entries={entries} onStopCheck={onStopCheck} />
+        </div>
       )}
+      {/* No padding and no border of its own: the inset was the panel's own
+          fill showing through around the chat bar, and the bar draws the only
+          two rules this needs. */}
+      {footer ? (
+        <div className="shrink-0" style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}>
+          {footer}
+        </div>
+      ) : null}
     </div>
   );
 }

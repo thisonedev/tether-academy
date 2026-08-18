@@ -13,7 +13,7 @@ const {
   createPairingAttemptGate,
   DEFAULT_MAX_ATTEMPTS: MAX_PAIRING_CODE_ATTEMPTS,
 } = require('./pairing-attempt-gate.cjs');
-const { createExecHost } = require('./exec-host.cjs');
+const { createExecHost, STALE_RUN_MS } = require('./exec-host.cjs');
 const { isAllowed: rateAllow, reset: rateReset, GLOBAL_KEY } = require('./rate-limit.cjs');
 const {
   isSafeExecFileName,
@@ -30,6 +30,46 @@ const AUDIT_CAP = 1000;
 // Self-reported peer string for compatibility display only; not a trust check.
 const BUILD_ID = 'tether-academy-desktop';
 const EXEC_PROTOCOL = 'academy-exec';
+// Longer than the host's own STALE_RUN_MS, so its force-kill-and-reply has
+// time to land here first; a dropped reply just means one extra retry.
+const GUEST_EXEC_STALE_MS = STALE_RUN_MS + 60_000;
+let _testGuestExecStaleMs = null;
+function guestExecStaleMs() {
+  return _testGuestExecStaleMs ?? GUEST_EXEC_STALE_MS;
+}
+const PROFILE_KIND = 'peer-profile';
+// A profile frame is a name plus a few short fields; anything larger is exec
+// output that happens to contain the marker string.
+const MAX_PROFILE_FRAME_BYTES = 4096;
+const HEX_64 = /^[0-9a-fA-F]{64}$/;
+
+function isProfileFrame(buf) {
+  if (!buf || buf.length > MAX_PROFILE_FRAME_BYTES) return false;
+  const head = Buffer.from(buf).subarray(0, Math.min(buf.length, 32)).toString('utf8');
+  return head.includes(`"${PROFILE_KIND}"`);
+}
+
+// Only the fields the UI actually reads, each bounded; anything else in the
+// frame is dropped rather than stored.
+function sanitizeProfileUserData(userData) {
+  if (!userData || typeof userData !== 'object') return null;
+  const name = typeof userData.name === 'string' ? userData.name.slice(0, 200) : null;
+  if (!name) return null;
+  return {
+    name,
+    app: typeof userData.app === 'string' ? userData.app.slice(0, 200) : null,
+    buildId: typeof userData.buildId === 'string' ? userData.buildId.slice(0, 200) : null,
+    devicePublicKey: typeof userData.devicePublicKey === 'string' && HEX_64.test(userData.devicePublicKey)
+      ? userData.devicePublicKey
+      : null,
+    // Where to find this peer again without an invite. Derived from their
+    // identity, so it is the same on their next run. Self-reported like the
+    // rest of this frame: it only says where to knock, never who answers.
+    swarmPublicKey: typeof userData.swarmPublicKey === 'string' && HEX_64.test(userData.swarmPublicKey)
+      ? userData.swarmPublicKey
+      : null,
+  };
+}
 
 // Re-derive the reply keypair manually: blind-pairing's poll adds the peer to
 // its skip cache before approve, so the DHT put would never fire on its own.
@@ -52,6 +92,23 @@ const fromHex = (hex) => Buffer.from(hex, 'hex');
 function defaultDeviceName() {
   const key = localClaim?.devicePublicKey;
   return key ? `device-${key.slice(0, 8)}` : 'Unnamed device';
+}
+
+// What this device announces about itself once paired. blind-pairing's
+// handshake has no channel for the host to hand the guest its userData, so a
+// peer only learns the other side's real name from this frame, sent once the
+// exec channel opens. Rebuilt on each invite/accept.
+let myProfileUserData = null;
+function buildLocalUserData(userDataOpt) {
+  myProfileUserData = {
+    name: userDataOpt?.name || defaultDeviceName(),
+    app: 'tether-academy',
+    ...(userDataOpt ?? {}),
+    buildId: BUILD_ID,
+    devicePublicKey: localClaim?.devicePublicKey ?? null,
+    swarmPublicKey: swarm ? toHex(swarm.keyPair.publicKey) : null,
+  };
+  return myProfileUserData;
 }
 
 let swarm = null;
@@ -90,6 +147,9 @@ const execChannels = new Map();
 const pendingPairingResponses = new Map();
 // discoveryKeyHex -> in-flight identity handshake. See identity-handshake.cjs.
 const identitySessions = new Map();
+// Real userData a peer-profile frame delivered before finalizePair ran for
+// that discoveryKey; applied once the peer entry exists. See sendProfileFrame.
+const pendingProfiles = new Map();
 
 // Test-only flags. Never set in production.
 let _testSkipDhtPut = false;
@@ -308,6 +368,7 @@ function attachExecProtocol(mux, discoveryKey) {
     ch.open();
     flushPendingPairingResponse(discoveryKeyHex);
     startIdentityHandshake(discoveryKeyHex);
+    sendProfileFrame(discoveryKeyHex);
   });
   if (!members.has(discoveryKeyHex)) return;
   const ch = mux.createChannel(channelOpts);
@@ -316,6 +377,7 @@ function attachExecProtocol(mux, discoveryKey) {
   ch.open();
   flushPendingPairingResponse(discoveryKeyHex);
   startIdentityHandshake(discoveryKeyHex);
+  sendProfileFrame(discoveryKeyHex);
 }
 
 function routeExecMessage(discoveryKeyHex, buf) {
@@ -344,6 +406,19 @@ function routeExecMessage(discoveryKeyHex, buf) {
       const msg = JSON.parse(Buffer.from(buf).toString('utf8'));
       if (msg?.kind === identityHandshake.HELLO_KIND || msg?.kind === identityHandshake.PROOF_KIND) {
         verification.handleIdentityFrame(discoveryKeyHex, msg);
+        return;
+      }
+    } catch {}
+  }
+  // Display-only, like the pending-request userData above; carries no trust
+  // decision, so a malformed or oversized frame is just dropped, not audited.
+  if (isProfileFrame(buf)) {
+    if (!rateAllow('peer-profile:frame', discoveryKeyHex)) return;
+    try {
+      const msg = JSON.parse(Buffer.from(buf).toString('utf8'));
+      const remoteUserData = sanitizeProfileUserData(msg?.userData);
+      if (msg?.kind === PROFILE_KIND && remoteUserData) {
+        applyRemoteProfile(discoveryKeyHex, remoteUserData);
         return;
       }
     } catch {}
@@ -435,6 +510,31 @@ function sendIdentityFrame(discoveryKeyHex, frame) {
   }
 }
 
+function sendProfileFrame(discoveryKeyHex) {
+  if (!myProfileUserData) return false;
+  const msg = execChannels.get(discoveryKeyHex)?.channel?.messages?.[0];
+  if (!msg) return false;
+  try {
+    msg.send(Buffer.from(JSON.stringify({ kind: PROFILE_KIND, userData: myProfileUserData }), 'utf8'));
+    return true;
+  } catch (err) {
+    console.warn('[peer] profile frame send failed:', err?.message ?? err);
+    return false;
+  }
+}
+
+// Corrects the finalizePair-time placeholder with the peer's real userData.
+// Can arrive before finalizePair runs on this side, so it's held until then.
+function applyRemoteProfile(discoveryKeyHex, remoteUserData) {
+  const peer = peers.get(discoveryKeyHex);
+  if (!peer) {
+    pendingProfiles.set(discoveryKeyHex, remoteUserData);
+    return;
+  }
+  peer.userData = remoteUserData;
+  emit('peer:paired', peer);
+}
+
 // Runs on channel open, not pairing completion: the ordering differs between
 // host and guest, and a nonce costs nothing to hold.
 function startIdentityHandshake(discoveryKeyHex) {
@@ -481,6 +581,13 @@ function finalizePair(discoveryKeyHex, role, userData, autobaseKey, inviteId, ho
     verifiedIdentityPublicKey: null,
   };
   peers.set(discoveryKeyHex, peerInfo);
+  // A profile frame may have already arrived on this channel; corrects the
+  // live entry only, leaving the audit below showing what was known then.
+  const pendingProfile = pendingProfiles.get(discoveryKeyHex);
+  if (pendingProfile) {
+    peerInfo.userData = pendingProfile;
+    pendingProfiles.delete(discoveryKeyHex);
+  }
   appendAudit('peer:paired', {
     discoveryKey: discoveryKeyHex,
     role,
@@ -494,6 +601,7 @@ function finalizePair(discoveryKeyHex, role, userData, autobaseKey, inviteId, ho
 
 async function createInvite({ userData = null, autoApprove = false, code = null } = {}) {
   ensureReady();
+  buildLocalUserData(userData);
   const autobaseKey = crypto.randomBytes(32);
   const { invite, publicKey, discoveryKey } = BlindPairing.createInvite(autobaseKey);
   const sessionPublicKey = toHex(publicKey);
@@ -577,6 +685,24 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
         return;
       }
 
+      // An invite pasted back into the device that issued it otherwise pairs a
+      // device to itself, listing its own name as the peer and sending runs
+      // nowhere. Compares the device key, so the same account on a second
+      // device still pairs normally.
+      if (
+        typeof claimedDeviceKey === 'string'
+        && localClaim?.devicePublicKey
+        && claimedDeviceKey === localClaim.devicePublicKey
+      ) {
+        candidate._denied = true;
+        appendAudit('peer:rejected', {
+          discoveryKey: discoveryKeyHex,
+          reason: 'self-pairing',
+          devicePublicKey: claimedDeviceKey,
+        });
+        return;
+      }
+
       if (autoApprove) {
         candidate.confirm({ key: autobaseKey });
         finalizePair(discoveryKeyHex, 'host', remoteUserData, autobaseKey, inviteIdHex);
@@ -628,8 +754,11 @@ async function createInvite({ userData = null, autoApprove = false, code = null 
       });
     },
   });
-  await member.flushed();
+  // Before the flush, not after: addMember announces the topic immediately, and
+  // a guest connecting during the flush found itself absent from `members`, so
+  // neither side ever opened the exec channel.
   members.set(discoveryKeyHex, member);
+  await member.flushed();
   attachExecToAllConnections(discoveryKey);
 
   return {
@@ -762,14 +891,12 @@ async function acceptInvite(inviteB64, { userData = null, code = null, hostIdent
   const { discoveryKey } = BlindPairing.decodeInvite(invite);
   const discoveryKeyHex = toHex(discoveryKey);
 
+  // pairingCode is proof of invite knowledge for this one attempt, not part
+  // of the profile a peer-profile frame broadcasts later; kept out of
+  // buildLocalUserData's return and added on top here instead.
   const localUserData = {
-    name: userData?.name || defaultDeviceName(),
-    app: 'tether-academy',
-    ...(userData ?? {}),
+    ...buildLocalUserData(userData),
     pairingCode: code || null,
-    buildId: BUILD_ID,
-    // Lets the host drop a revoked device before a human sees it. Proven later.
-    devicePublicKey: localClaim?.devicePublicKey ?? null,
   };
 
   const candidate = pairing.addCandidate({
@@ -777,10 +904,15 @@ async function acceptInvite(inviteB64, { userData = null, code = null, hostIdent
     userData: Buffer.from(JSON.stringify(localUserData), 'utf8'),
     async onadd(result) {
       const keyBuf = result?.key;
+      // Null, not this device's own userData: blind-pairing tells the guest
+      // nothing about the host, so the real name only lands with the profile
+      // frame. Passing localUserData here labelled the host with the guest's
+      // own name, so a pairing that never got that frame read as paired to
+      // yourself instead of as unknown.
       finalizePair(
         discoveryKeyHex,
         'guest',
-        localUserData,
+        null,
         Buffer.isBuffer(keyBuf) ? keyBuf : null,
         null,
         hostIdentity,
@@ -856,14 +988,14 @@ async function dropPeer(discoveryKeyHex) {
   if (peer.inviteId) pendingByInvite.delete(peer.inviteId);
   pendingPairingResponses.delete(discoveryKeyHex);
   identitySessions.delete(discoveryKeyHex);
+  pendingProfiles.delete(discoveryKeyHex);
   // A mid-run disconnect otherwise leaves this entry behind and wedges the
   // guest until the next pairing; emit before deleting so main's promise
   // settles on a real event rather than a timeout.
   const guestRun = activeGuestExec.get(discoveryKeyHex);
-  if (guestRun) {
+  if (guestRun && clearActiveGuestExec(discoveryKeyHex, guestRun)) {
     guestRun.emitter.emit('error', new Error('peer disconnected'));
     guestRun.emitter.emit('end');
-    activeGuestExec.delete(discoveryKeyHex);
   }
   verification.settleVerificationWaiters(discoveryKeyHex);
   // Without this a re-pair inherits the previous peer's rate-limit tally.
@@ -899,6 +1031,13 @@ function handleExecReply(discoveryKeyHex, buf) {
   if (!payload) return;
   const active = activeGuestExec.get(discoveryKeyHex);
   if (!active) return;
+  // A stale run's delayed reply can arrive after a fresh run already took the
+  // slot; drop it instead of misrouting it to that newer run.
+  if (payload.runId !== active.runId) return;
+  // Any reply proves the peer is still on this run. Without pushing the window
+  // back, the timer is a ceiling on total runtime rather than the idle timeout
+  // its message describes, and a long model download trips it mid-stream.
+  armGuestExecTimer(discoveryKeyHex, active);
   if (payload.kind === 'started') {
     appendAudit('peer:exec:remote-started', {
       discoveryKey: discoveryKeyHex,
@@ -917,7 +1056,7 @@ function handleExecReply(discoveryKeyHex, buf) {
       cancelled: payload.cancelled === true,
     });
     active.emitter.emit('end');
-    activeGuestExec.delete(discoveryKeyHex);
+    clearActiveGuestExec(discoveryKeyHex, active);
     appendAudit('peer:exec:remote-finished', {
       discoveryKey: discoveryKeyHex,
       code: payload.code,
@@ -928,7 +1067,7 @@ function handleExecReply(discoveryKeyHex, buf) {
   } else if (payload.kind === 'error') {
     active.emitter.emit('error', new Error(payload.message ?? 'exec failed'));
     active.emitter.emit('end');
-    activeGuestExec.delete(discoveryKeyHex);
+    clearActiveGuestExec(discoveryKeyHex, active);
     appendAudit('peer:exec:remote-error', {
       discoveryKey: discoveryKeyHex,
       message: payload.message ?? 'exec failed',
@@ -951,6 +1090,28 @@ function sendExecReply(discoveryKeyHex, payload) {
 }
 
 const activeGuestExec = new Map();
+
+// Only clears `peerId`'s entry if it's still exactly this one, so a timer
+// left over from an abandoned run can't clear a newer one that replaced it.
+function clearActiveGuestExec(peerId, expectedEntry) {
+  const current = activeGuestExec.get(peerId);
+  if (!current || current !== expectedEntry) return false;
+  if (current.timer) clearTimeout(current.timer);
+  activeGuestExec.delete(peerId);
+  return true;
+}
+
+// Restarts the idle window. Armed at send time and pushed back by every reply,
+// so a run stays alive for as long as the peer keeps talking.
+function armGuestExecTimer(peerId, entry) {
+  if (activeGuestExec.get(peerId) !== entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => {
+    if (!clearActiveGuestExec(peerId, entry)) return;
+    entry.emitter.emit('error', new Error(`no reply from peer after ${Math.round(entry.staleMs / 1000)}s`));
+    entry.emitter.emit('end');
+  }, entry.staleMs);
+}
 
 function exec({ peerId, code, mode = 'inline', argv = [], fileName = 'snippet.mts', label = null, declared = null }) {
   if (typeof peerId !== 'string' || !peerId) {
@@ -977,13 +1138,18 @@ function exec({ peerId, code, mode = 'inline', argv = [], fileName = 'snippet.mt
     throw new Error('exec: another exec is already running on this peer');
   }
   const emitter = new EventEmitter();
-  activeGuestExec.set(peerId, { emitter });
+  // Tags every reply for this run, so a stale run's late reply can't be
+  // mistaken for this one once a later exec has replaced it in the map.
+  const runId = crypto.randomUUID();
+  const guestEntry = { emitter, timer: null, runId, staleMs: guestExecStaleMs() };
+  activeGuestExec.set(peerId, guestEntry);
+  armGuestExecTimer(peerId, guestEntry);
   try {
     // No cwd on the wire: the host recomputes it from the lesson path,
     // since a renderer-supplied value would be dead by the time it lands.
-    msg.send(Buffer.from(JSON.stringify({ kind: 'request', code, mode, argv, fileName, label, declared }), 'utf8'));
+    msg.send(Buffer.from(JSON.stringify({ kind: 'request', runId, code, mode, argv, fileName, label, declared }), 'utf8'));
   } catch (err) {
-    activeGuestExec.delete(peerId);
+    clearActiveGuestExec(peerId, guestEntry);
     throw err;
   }
   return emitter;
@@ -1094,5 +1260,7 @@ module.exports = {
   _testHooks: {
     setSkipDhtPut(value) { _testSkipDhtPut = !!value; },
     setSkipBlindPairingChannel(value) { _testSkipBlindPairingChannel = !!value; },
+    setGuestExecStaleMs(value) { _testGuestExecStaleMs = value; },
+    setStaleRunMs(value) { require('./exec-host.cjs')._setTestStaleRunMs(value); },
   },
 };

@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, Check } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import {
   type CurriculumChapter,
@@ -21,9 +21,27 @@ const PULSE_STYLES = `
 interface CurriculumStripProps {
   chapter?: CurriculumChapter;
   currentLesson?: CurriculumLesson;
+  prevUrl?: string;
+  nextUrl?: string;
+  /** Why the forward chevron does not navigate yet; undefined means it does. */
+  nextBlockedReason?: string;
+  /** Takes over the forward chevron on the last lesson of a chapter. */
+  onFinish?: () => void;
+  finishLabel?: string;
 }
 
-export function CurriculumStrip({ chapter, currentLesson }: CurriculumStripProps) {
+const CHEVRON =
+  'inline-flex size-7 shrink-0 items-center justify-center rounded-full border-[1.5px] border-canvas-border text-canvas-foreground transition-colors hover:border-emerald-500/40 hover:text-emerald-400';
+
+export function CurriculumStrip({
+  chapter,
+  currentLesson,
+  prevUrl,
+  nextUrl,
+  nextBlockedReason,
+  onFinish,
+  finishLabel,
+}: CurriculumStripProps) {
   const completedChapters = useUserStore((s) => s.completedChapters);
   const completedLessons = useUserStore((s) => s.completedLessons);
   const chapterDone = !!chapter && completedChapters.includes(chapter.slug);
@@ -68,20 +86,54 @@ export function CurriculumStrip({ chapter, currentLesson }: CurriculumStripProps
         </span>
       </div>
 
-      <ol
-        className="m-0 flex list-none flex-wrap items-center gap-x-1.5 gap-y-2 p-0"
-        aria-label={`${chapter.label} lessons`}
-      >
-        {chapter.lessons.map((lesson) => (
-          <LessonPill
-            key={lesson.num}
-            lesson={lesson}
-            state={stateOf(lesson, chapter, currentLesson)}
-            chapterDone={chapterDone}
-            isCompleted={completedLessons.includes(`${chapter.slug}-${lesson.slug}`)}
-          />
-        ))}
-      </ol>
+      {/* Navigation sits on the control that already shows position, which
+          costs no vertical space of its own. */}
+      <div className="flex items-center gap-x-1.5">
+        {prevUrl ? (
+          <Link href={prevUrl} aria-label="Previous lesson" title="Previous lesson (left arrow key)" className={CHEVRON}>
+            <ChevronLeft className="size-4" />
+          </Link>
+        ) : null}
+
+        <ol
+          className="m-0 flex list-none flex-wrap items-center gap-x-1.5 gap-y-2 p-0"
+          aria-label={`${chapter.label} lessons`}
+        >
+          {chapter.lessons.map((lesson) => (
+            <LessonPill
+              key={lesson.num}
+              lesson={lesson}
+              state={stateOf(lesson, chapter, currentLesson)}
+              chapterDone={chapterDone}
+              isCompleted={completedLessons.includes(`${chapter.slug}-${lesson.slug}`)}
+            />
+          ))}
+        </ol>
+
+        {onFinish ? (
+          <button
+            type="button"
+            onClick={onFinish}
+            aria-label={finishLabel ?? 'Finish chapter'}
+            title={finishLabel ?? 'Finish chapter'}
+            className={`${CHEVRON} border-emerald-500/40 bg-emerald-500/10 text-emerald-300`}
+          >
+            <Sparkles className="size-3.5" />
+          </button>
+        ) : nextUrl && !nextBlockedReason ? (
+          <Link href={nextUrl} aria-label="Next lesson" title="Next lesson (right arrow key)" className={CHEVRON}>
+            <ChevronRight className="size-4" />
+          </Link>
+        ) : nextUrl ? (
+          <span
+            aria-label={nextBlockedReason}
+            title={nextBlockedReason}
+            className={`${CHEVRON} cursor-not-allowed text-canvas-muted-foreground opacity-50 hover:border-canvas-border hover:text-canvas-muted-foreground`}
+          >
+            <ChevronRight className="size-4" />
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -113,7 +165,8 @@ function LessonPill({
 
   if (!lesson.href) return null;
 
-  // The arrow is the "you are here" affordance; the ring reads as focus.
+  // Filled pill and pulse for "you are here". The number stays visible: an
+  // arrow sits next to two chevrons that navigate, and would read as a third.
   if (state === 'current') {
     return (
       <li>
@@ -121,9 +174,9 @@ function LessonPill({
           href={lesson.href}
           aria-label={`${ariaLabel} · current`}
           title={`${lesson.title} (current lesson)`}
-          className="current-pill inline-flex size-7 shrink-0 list-none items-center justify-center rounded-full bg-emerald-400 text-canvas ring-2 ring-emerald-400/40"
+          className="current-pill inline-flex size-7 shrink-0 list-none items-center justify-center rounded-full bg-emerald-400 font-mono text-[11px] font-bold text-canvas ring-2 ring-emerald-400/40"
         >
-          <ArrowRight className="size-3.5" strokeWidth={3} />
+          {lesson.num}
         </Link>
       </li>
     );

@@ -1,6 +1,19 @@
 const path = require('node:path');
 const fs = require('node:fs');
-const Corestore = require('corestore');
+const { diagnoseNativeAddonError } = require('./linux-lib-hint.cjs');
+
+// Lazy so a missing native dep (e.g. rocksdb-native needs libatomic.so.1)
+// throws from createStore(), where it's catchable, instead of crashing the
+// whole process at require time with no chance to add a hint.
+function loadCorestore() {
+  try {
+    return require('corestore');
+  } catch (err) {
+    const hint = diagnoseNativeAddonError(err);
+    if (hint) err.message = `${err.message}\n${hint}`;
+    throw err;
+  }
+}
 
 // Key-value state only; device identity lives in identity/manager.cjs.
 //
@@ -15,6 +28,7 @@ const SNAPSHOT_THRESHOLD = 64;
  * @param {string} userDataDir
  */
 async function createStore(userDataDir) {
+  const Corestore = loadCorestore();
   const dir = path.join(userDataDir, 'corestore');
   fs.mkdirSync(dir, { recursive: true });
   const store = new Corestore(dir);

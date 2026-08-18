@@ -7,6 +7,16 @@
 const { createRequire } = require('node:module');
 const net = require('node:net');
 const path = require('node:path');
+const {
+  BARE_BUILTINS,
+  BARE_PLUGIN_DIR,
+  BARE_PLUGINS,
+  qvacSdkToken,
+  qvacSdkPluginToken,
+  bareBuiltinToken,
+  npmPackageToken,
+  courseAssetToken,
+} = require('../shared/portable-lesson-imports.cjs');
 
 const parentRequire = createRequire(__filename);
 
@@ -191,41 +201,13 @@ async function decideMockImports(source, opts = {}) {
   return { mockImports: { [spec]: entry }, note: entry.note, real: false };
 }
 
-// Node builtins the course samples use, mapped to their Bare package, resolved
-// to absolute paths so the snippet needs no resolution root of its own.
-const BARE_BUILTINS = {
-  fs: 'bare-fs',
-  'fs/promises': 'bare-fs/promises',
-  os: 'bare-os',
-  path: 'bare-path',
-  child_process: 'bare-subprocess',
-  process: 'bare-process',
-  events: 'bare-events',
-  crypto: 'bare-crypto',
-};
-
-// Registered together (461 ms for the set) since which one a snippet needs
-// isn't known until it runs. Reached by path because the package's own
-// `./<name>/plugin` exports are import-only and a CJS resolve of them fails.
-const BARE_PLUGIN_DIR = 'dist/server/bare/plugins';
-const BARE_PLUGINS = [
-  'llamacpp-completion',
-  'llamacpp-embedding',
-  'whispercpp-transcription',
-  'bci-whispercpp-transcription',
-  'parakeet-transcription',
-  'nmtcpp-translation',
-  'tts-ggml',
-  'ggml-ocr',
-  'sdcpp-generation',
-  'audiogen-ggml',
-  'ggml-vla',
-  'ggml-classification',
-];
-
-function bareBuiltinPath(spec) {
+// Absolute path so the snippet needs no resolution root of its own; in
+// portable mode (peer-exec), a token instead, since the sender's own path
+// is wrong on the receiver. See shared/portable-lesson-imports.cjs.
+function bareBuiltinPath(spec, portable) {
   const target = BARE_BUILTINS[spec.replace(/^node:/, '')];
   if (!target) return null;
+  if (portable) return bareBuiltinToken(target);
   try {
     return parentRequire.resolve(target);
   } catch {
@@ -233,17 +215,27 @@ function bareBuiltinPath(spec) {
   }
 }
 
-function resolveImport(spec, runtime) {
+function resolveImport(spec, runtime, portable) {
   if (spec.startsWith('node:')) {
-    return runtime === 'bare' ? bareBuiltinPath(spec) ?? spec : spec;
+    return runtime === 'bare' ? bareBuiltinPath(spec, portable) ?? spec : spec;
   }
   if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('..')) {
     return spec;
   }
   if (runtime === 'bare') {
-    const builtin = bareBuiltinPath(spec);
+    const builtin = bareBuiltinPath(spec, portable);
     if (builtin) return builtin;
   }
+  // @qvac/sdk already gets one combined import (buildLesson injects it,
+  // stripForNode removes this original line); the generic branch below
+  // would otherwise tokenize it too, redeclaring the same names.
+  if (spec === '@qvac/sdk') {
+    return portable ? qvacSdkToken() : parentRequire.resolve(spec);
+  }
+  // A real npm dependency of a lesson (e.g. an MCP client library), not a
+  // builtin. In portable mode this machine's resolved path is meaningless on
+  // the receiver, so hand off a token instead of the sender's own path.
+  if (portable) return npmPackageToken(spec);
   try {
     return parentRequire.resolve(spec);
   } catch {
@@ -260,11 +252,11 @@ function extractImportedNames(src) {
     .filter(Boolean);
 }
 
-function resolveAllImports(src, runtime) {
+function resolveAllImports(src, runtime, portable) {
   return src.replace(
     /(\bimport\s+(?:[\w*\s{},]+\s+from\s+)?|\bexport\s+(?:[\w*\s{},]+\s+from\s+)?)(['"])([^'"]+)\2/g,
     (match, head, quote, spec) => {
-      const resolved = resolveImport(spec, runtime);
+      const resolved = resolveImport(spec, runtime, portable);
       return resolved === spec ? match : `${head}${quote}${resolved}${quote}`;
     },
   );
@@ -311,28 +303,21 @@ function mockPreamble(mockMap, bindingsBySpec) {
 function stripForNode(src) {
   const sdkPath = parentRequire.resolve('@qvac/sdk');
   const sdkPathRe = sdkPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // In portable mode resolveAllImports already rewrote the original @qvac/sdk
+  // specifier to this token, not the sender's own path; strip that form too,
+  // or the token's names collide with the freshly injected importLine below.
+  const tokenRe = qvacSdkToken().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return src
     .replace(/^import\s+type\s+.+?from\s+['"][^'"]+['"];?\s*$/gm, '')
     .replace(
       new RegExp(
-        `^import\\s+\\{[^}]+\\}\\s+from\\s+['"]@qvac/sdk['"];?\\s*$`,
+        `^import\\s+\\{[^}]+\\}\\s+from\\s+['"](?:@qvac/sdk|${sdkPathRe}|${tokenRe})['"];?\\s*$`,
         'gm',
       ),
       '',
     )
     .replace(
-      new RegExp(
-        `^import\\s+\\{[^}]+\\}\\s+from\\s+['"]${sdkPathRe}['"];?\\s*$`,
-        'gm',
-      ),
-      '',
-    )
-    .replace(
-      new RegExp(`^import\\s+.+?from\\s+['"]@qvac/sdk['"];?\\s*$`, 'gm'),
-      '',
-    )
-    .replace(
-      new RegExp(`^import\\s+.+?from\\s+['"]${sdkPathRe}['"];?\\s*$`, 'gm'),
+      new RegExp(`^import\\s+.+?from\\s+['"](?:@qvac/sdk|${sdkPathRe}|${tokenRe})['"];?\\s*$`, 'gm'),
       '',
     )
     .replace(/^export\s+(?:default\s+)?[^=].*;?\s*$/gm, '')
@@ -419,7 +404,7 @@ function hookLessonExit(src) {
   return `${src.slice(0, match.index)}__academyFinish(${expr});${src.slice(end)}`;
 }
 
-function resolveFixturePaths(src, coursesDir) {
+function resolveFixturePaths(src, coursesDir, portable) {
   // path.join collapses `..` silently, so the resolved path is checked against coursesDir.
   const root = path.resolve(coursesDir);
   const rootWithSep = root + path.sep;
@@ -429,13 +414,18 @@ function resolveFixturePaths(src, coursesDir) {
     if (abs !== root && !abs.startsWith(rootWithSep)) {
       throw new Error(`buildLesson: refused path outside coursesDir: ${rel}`);
     }
+    // A peer run opens the file on the other machine, where this checkout's
+    // path means nothing, so the host resolves the token against its own.
+    if (portable) {
+      return `${quote}${courseAssetToken(path.relative(root, abs).split(path.sep).join('/'))}${quote}`;
+    }
     return `${quote}${abs}${quote}`;
   });
 }
 
 // Never clobber: add _1, _2 like a browser download, swapped in at the call site.
-const dedupePreamble = (runtime) => `import { writeFileSync as __academyWrite, existsSync as __academyExists, mkdirSync as __academyMkdir } from ${JSON.stringify(resolveImport('node:fs', runtime))};
-import { dirname as __academyDirname, extname as __academyExt, join as __academyJoin, basename as __academyBase, resolve as __academyResolve } from ${JSON.stringify(resolveImport('node:path', runtime))};
+const dedupePreamble = (runtime, portable) => `import { writeFileSync as __academyWrite, existsSync as __academyExists, mkdirSync as __academyMkdir } from ${JSON.stringify(resolveImport('node:fs', runtime, portable))};
+import { dirname as __academyDirname, extname as __academyExt, join as __academyJoin, basename as __academyBase, resolve as __academyResolve } from ${JSON.stringify(resolveImport('node:path', runtime, portable))};
 function __academyFreePath(target) {
   const p = String(target);
   __academyMkdir(__academyDirname(p), { recursive: true });
@@ -513,28 +503,98 @@ function routeWritesThroughDedupe(src) {
   return src.replace(/\b(?:fs\s*\.\s*)?writeFileSync\s*\(/g, '__academyWriteFile(');
 }
 
+// A lesson parked in loadModel for two minutes prints nothing and reads as a
+// hang. The wrap already hands the lesson its SDK bindings, so these are the
+// timed ones, reported in the same `→`/`✓` lines the host uses for its stages.
+const tracePreamble = `
+// A call that returns inside this window is not the one anyone is waiting on,
+// so it prints nothing at all.
+const __ACADEMY_TRACE_AFTER_MS = 200;
+// Setup every lesson performs, never the call a lesson is about. It always
+// outruns the window above, so tracing it repeated one uninformative row on
+// every run. A cold load still shows up as download progress.
+const __ACADEMY_UNTRACED = new Set(["loadModel", "unloadModel"]);
+// Keys, counts and lengths only: enough to tell two calls apart, without
+// putting a prompt or a document in the output.
+function __academyDescribeArg(v) {
+  if (v === null || v === undefined) return String(v);
+  if (typeof v === "string") return JSON.stringify(v.length > 32 ? v.slice(0, 32) + "…" : v);
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return "[" + v.length + " items]";
+  if (typeof v === "object") {
+    const keys = Object.keys(v);
+    return "{ " + keys.slice(0, 4).join(", ") + (keys.length > 4 ? ", …" : "") + " }";
+  }
+  return typeof v;
+}
+function __academyTrace(bindings) {
+  const out = {};
+  for (const name of Object.keys(bindings)) {
+    const value = bindings[name];
+    // Constants pass through, and a class needs \`new\`, which a plain
+    // function wrapper would break.
+    const isClass = typeof value === "function" && /^class[\\s{]/.test(Function.prototype.toString.call(value));
+    if (typeof value !== "function" || isClass || __ACADEMY_UNTRACED.has(name)) {
+      out[name] = value;
+      continue;
+    }
+    const traced = function (...args) {
+      const startedAt = Date.now();
+      let announced = false;
+      const timer = setTimeout(() => {
+        announced = true;
+        console.error("→ " + name + "(" + args.map(__academyDescribeArg).join(", ") + ")");
+      }, __ACADEMY_TRACE_AFTER_MS);
+      if (typeof timer.unref === "function") timer.unref();
+      const settled = () => {
+        clearTimeout(timer);
+        if (!announced) return;
+        console.error("  ✓ " + name + " (" + ((Date.now() - startedAt) / 1000).toFixed(1) + "s)");
+      };
+      let result;
+      try {
+        result = value.apply(this, args);
+      } catch (err) {
+        settled();
+        throw err;
+      }
+      // A streaming call returns its handle at once; the tick says the call
+      // came back, not that the stream is drained.
+      if (result && typeof result.then === "function") {
+        return result.then((v) => { settled(); return v; }, (err) => { settled(); throw err; });
+      }
+      settled();
+      return result;
+    };
+    try { Object.assign(traced, value); } catch {}
+    out[name] = traced;
+  }
+  return out;
+}
+`;
+
 /**
  * What Bare doesn't hand a snippet for free: a `process` global and an SDK with
  * its plugins loaded. Skipped when the snippet binds `process` itself, which
  * would be a syntax error.
  */
-function barePreamble(source) {
+function barePreamble(source, portable) {
   // resolve() lands on dist/index.js; the plugin tree hangs off the package root.
-  const sdkRoot = path.resolve(path.dirname(parentRequire.resolve('@qvac/sdk')), '..');
+  const sdkRoot = portable ? null : path.resolve(path.dirname(parentRequire.resolve('@qvac/sdk')), '..');
   const lines = [];
   if (!/^\s*import\s[^;]*\bprocess\b[^;]*\bfrom\b/m.test(source)) {
-    lines.push(`import process from ${JSON.stringify(resolveImport('node:process', 'bare'))};`);
+    lines.push(`import process from ${JSON.stringify(resolveImport('node:process', 'bare', portable))};`);
   }
   const names = [];
   for (const [i, plugin] of BARE_PLUGINS.entries()) {
     const name = `__academyPlugin${i}`;
     names.push(name);
-    lines.push(
-      `import * as ${name} from ${JSON.stringify(path.join(sdkRoot, BARE_PLUGIN_DIR, plugin, 'plugin.js'))};`,
-    );
+    const pluginPath = portable ? qvacSdkPluginToken(plugin) : path.join(sdkRoot, BARE_PLUGIN_DIR, plugin, 'plugin.js');
+    lines.push(`import * as ${name} from ${JSON.stringify(pluginPath)};`);
   }
+  const sdkPath = portable ? qvacSdkToken() : parentRequire.resolve('@qvac/sdk');
   lines.push(
-    `import { plugins as __academyPlugins } from ${JSON.stringify(parentRequire.resolve('@qvac/sdk'))};`,
+    `import { plugins as __academyPlugins } from ${JSON.stringify(sdkPath)};`,
     // Each module names its export differently, so take the objects.
     `__academyPlugins([${names.join(', ')}].flatMap((m) => Object.values(m).filter((v) => v && typeof v === "object")));`,
   );
@@ -542,27 +602,36 @@ function barePreamble(source) {
 }
 
 /**
- * @param {{ source: string, cwd: string, runtime?: 'node' | 'bare', mockImports?: Record<string, object>, mockNote?: string|null }} opts
+ * @param {{ source: string, cwd: string, runtime?: 'node' | 'bare', mockImports?: Record<string, object>, mockNote?: string|null, portable?: boolean }} opts
  *   `mockImports` is the decision `decideMockImports` already made (this
  *   function is sync and can't run that probe itself). `mockNote`, when set,
- *   prints as a stderr line at the top of the wrap.
+ *   prints as a stderr line at the top of the wrap. `portable`: peer-exec
+ *   builds on the sender and runs on a different machine, so emit tokens for
+ *   require.resolve()'d paths instead of this machine's own; see
+ *   shared/portable-lesson-imports.cjs.
  * @returns {string}
  */
-function buildLesson({ source, cwd, runtime = 'node', mockImports = {}, mockNote }) {
+function buildLesson({ source, cwd, runtime = 'node', mockImports = {}, mockNote, portable = false }) {
   const { src: unmockedSource, bindingsBySpec } = stripMockedImports(source, mockImports);
   const resolvedSource = routeWritesThroughDedupe(
-    resolveFixturePaths(resolveAllImports(unmockedSource, runtime), cwd),
+    resolveFixturePaths(resolveAllImports(unmockedSource, runtime, portable), cwd, portable),
   );
   const importedNames = extractImportedNames(unmockedSource);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
-  const importLine = `import { ${namesForImport.join(', ')} } from ${JSON.stringify(parentRequire.resolve('@qvac/sdk'))};\n`;
+  const sdkPath = portable ? qvacSdkToken() : parentRequire.resolve('@qvac/sdk');
+  const aliased = namesForImport.map((n) => `${n} as __academySdk_${n}`).join(', ');
+  const importLine = `import { ${aliased} } from ${JSON.stringify(sdkPath)};\n`;
+  // Same names the lesson wrote, so nothing below this line knows the difference.
+  const traceBinding = `${tracePreamble}const { ${namesForImport.join(', ')} } = __academyTrace({ ${namesForImport
+    .map((n) => `${n}: __academySdk_${n}`)
+    .join(', ')} });\n`;
   const hooked = hookLessonExit(stripForNode(resolvedSource));
-  const runtimePreamble = runtime === 'bare' ? barePreamble(source) : '';
+  const runtimePreamble = runtime === 'bare' ? barePreamble(source, portable) : '';
   // stdout, not stderr: the lesson's own console.log lines are on stdout, and
   // the two streams don't interleave in true chronological order once captured.
   const noteLine = mockNote ? `console.log(${JSON.stringify('▸ ' + mockNote)});\n` : '';
   const mockPre = mockPreamble(mockImports, bindingsBySpec);
-  return `${runtimePreamble}${importLine}${dedupePreamble(runtime)}${noteLine}${mockPre}${hooked}\n`;
+  return `${runtimePreamble}${importLine}${traceBinding}${dedupePreamble(runtime, portable)}${noteLine}${mockPre}${hooked}\n`;
 }
 
 module.exports = {

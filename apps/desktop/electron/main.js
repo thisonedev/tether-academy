@@ -1,12 +1,35 @@
-const { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell } = require('electron');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const PearRuntime = require('pear-runtime');
 const FramedStream = require('framed-stream');
 const { isMac, isLinux, isWindows } = require('which-runtime');
 const { command, flag } = require('paparam');
 const { promises: fs } = require('node:fs');
+const { diagnoseNativeAddonError, checkRequiredLinuxLibs } = require('./linux-lib-hint.cjs');
+
+// A missing library (e.g. no Vulkan loader) can crash several unrelated native
+// addons the moment their require chain gets touched, each with a different,
+// unhelpful error, so this checks once before any of them load.
+const missingLibHint = checkRequiredLinuxLibs();
+if (missingLibHint) {
+  // dialog.showErrorBox is explicitly documented as safe pre-ready, for
+  // exactly this: reporting a fatal error before the rest of startup runs.
+  dialog.showErrorBox('Tether Academy: missing system library', missingLibHint);
+  app.exit(1);
+  return; // Stop this module's own requires from ever reaching the fragile ones below.
+}
+
+// Same lazy-require guard as state-store.cjs's loadCorestore().
+function loadPearRuntime() {
+  try {
+    return require('pear-runtime');
+  } catch (err) {
+    const hint = diagnoseNativeAddonError(err);
+    if (hint) err.message = `${err.message}\n${hint}`;
+    throw err;
+  }
+}
 
 // Has to run before whenReady; registration after that is silently ignored.
 protocol.registerSchemesAsPrivileged([
@@ -21,6 +44,13 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// Chromium only auto-picks a keyring backend via XDG_CURRENT_DESKTOP, unset
+// on headless/minimal Linux even with a real keyring running, which silently
+// drops identity sealing to a file key and blocks peer-exec.
+if (isLinux && !process.env.XDG_CURRENT_DESKTOP) {
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
 
 const { runExample } = require('../runner.cjs');
 const { createThinkingFilter } = require('./chat-thinking-filter.cjs');
@@ -156,6 +186,7 @@ function getWorker(specifier) {
         : path.join(os.homedir(), 'AppData', 'Roaming', appName);
   }
   const extension = isLinux ? '.AppImage' : isMac ? '.app' : '.msix';
+  const PearRuntime = loadPearRuntime();
   const worker = PearRuntime.run(WORKER_PATH, [
     updates,
     version,
@@ -218,13 +249,15 @@ async function runAcademy(parsed, evt) {
     // Uses detectNodeOnly, not nodeOnlyImports: buildLesson resolves specifiers
     // to absolute paths, which nodeOnlyImports skips as local files.
     // forceMock: true — a probe of this host says nothing about the peer's.
+    // portable: true, since the peer runs this on its own filesystem, not
+    // this one; see shared/portable-lesson-imports.cjs.
     const { buildLesson, decideMockImports } = require('./runner-process.cjs');
     const { detectNodeOnly } = require('../workers/peer/exec-validate.cjs');
     const { mockImports, note } = await decideMockImports(parsed.source, { forceMock: true });
     let runtime;
     let wrapped;
     for (const candidate of ['bare', 'node']) {
-      wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime: candidate, mockImports, mockNote: note });
+      wrapped = buildLesson({ source: parsed.source, cwd: COURSES_DIR, runtime: candidate, mockImports, mockNote: note, portable: true });
       if (detectNodeOnly(wrapped) === null) {
         runtime = candidate;
         break;
@@ -454,10 +487,22 @@ handle('academy:clipboard:copy', async ({ text, scrubAfterMs }) => {
 
 handle('academy:models:list', async () => listModels());
 
+// Read-only twin of academy:chat:configured-model, without that handler's
+// side effect of picking and persisting a default when none is set yet.
+async function configuredChatModelName() {
+  if (chat.currentModel()) return chat.currentModel();
+  const store = await pearEnd.store();
+  const existing = await store.get('ai.chat.model');
+  return existing && chat.isChatPreset(existing) ? existing : null;
+}
+
 handle('academy:models:remove', async (id) => {
-  // Unload first so ensureLoaded()'s "already loaded" shortcut doesn't hand out a deleted model forever.
   const items = await listModels();
   const target = items.find((it) => it.id === id);
+  if (target && target.name === (await configuredChatModelName())) {
+    throw new Error('This is the AI bot\'s active model. Change it in Settings before removing.');
+  }
+  // Unload first so ensureLoaded()'s "already loaded" shortcut doesn't hand out a deleted model forever.
   const result = await removeModel(id);
   if (target && chat.currentModel() === target.name) {
     await chat
@@ -468,14 +513,11 @@ handle('academy:models:remove', async (id) => {
 });
 
 handle('academy:models:removeAll', async () => {
-  const hadActiveModel = chat.currentModel() !== null;
-  const result = await removeAllModels();
-  if (hadActiveModel) {
-    await chat
-      .unload()
-      .catch((err) => console.warn('[tether-academy-desktop] unload after removeAll failed:', err?.message ?? err));
-  }
-  return result;
+  // The active chat model is always the one configuredChatModelName() names
+  // (it checks chat.currentModel() first), so keeping it here means removeAll
+  // never actually deletes a loaded model, and never needs to unload one.
+  const keepName = await configuredChatModelName();
+  return removeAllModels(keepName ? new Set([keepName]) : undefined);
 });
 
 handle('academy:models:verify', async () => {
@@ -1047,6 +1089,21 @@ if (!lock) {
         .catch((err) => console.warn('[tether-academy-desktop] pruneIncompleteDownloads failed:', err?.message ?? err));
     });
 
+    // A run killed with SIGKILL never runs its own JS-level cleanup, so the
+    // QVAC worker it spawned can outlive it indefinitely; sweep once per
+    // launch for any left behind by a previous session.
+    setImmediate(() => {
+      try {
+        const { reapOrphanedQvacWorkers } = require('../shared/qvac-orphan-reaper.cjs');
+        const killed = reapOrphanedQvacWorkers();
+        if (killed.length > 0) {
+          console.log('[tether-academy-desktop] reaped orphaned QVAC workers:', killed);
+        }
+      } catch (err) {
+        console.warn('[tether-academy-desktop] reapOrphanedQvacWorkers failed:', err?.message ?? err);
+      }
+    });
+
     // Warm the model manifest in the background so a peer-exec usually lands
     // with hashes already on file.
     const { scheduleVerifyAll } = require('../shared/model-integrity.cjs');
@@ -1065,7 +1122,18 @@ if (!lock) {
     setImmediate(() => {
       (async () => {
         try {
-          pearEnd.identity();
+          const idm = pearEnd.identity();
+          // A sealed record the keyring can no longer open otherwise reads as
+          // "signed out", with the real reason only in the console.
+          await idm.ready().catch(() => {});
+          const initErr = idm.initError();
+          if (initErr?.code === 'ERR_KEYRING_UNAVAILABLE') {
+            dialog.showErrorBox(
+              'Tether Academy: OS keyring unavailable',
+              `${initErr.message}\n\nUntil then this device reads as signed out, `
+              + 'and paired devices cannot run code on it.',
+            );
+          }
           await pearEnd.store();
           const ready = await pearEnd.ensureReady();
           if (!ready) {

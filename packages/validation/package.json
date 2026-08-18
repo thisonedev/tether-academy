@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./lesson-code": {
+      "types": "./dist/lesson-code.d.ts",
+      "default": "./dist/lesson-code.js"
+    },
     "./runtime-support": {
       "types": "./dist/runtime-support.d.ts",
       "default": "./dist/runtime-support.js"

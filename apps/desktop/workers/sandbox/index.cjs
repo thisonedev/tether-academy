@@ -412,6 +412,13 @@ function wrapSpawn(command, args, options, capabilities) {
         pathToExecRegex(npxDir),
       ].filter(Boolean);
       cap = appendExtraExec(cap, wrappers.paths, execRegex);
+      // npx's lock release rmdir's concurrency.lock, which needs write on its
+      // *parent*; a self-bind (src === dest) makes the real hash dir
+      // writable in place, without swapping out its already-warmed contents.
+      const { hashDirsFor } = require('./mcp-warm.cjs');
+      const lockOverrides = hashDirsFor(cacheDir, Array.isArray(options.npxPackages) ? options.npxPackages : [])
+        .map((hash) => path.join(npxDir, hash))
+        .map((dir) => ({ src: dir, dest: dir }));
       cap = {
         ...cap,
         fs: {
@@ -419,6 +426,7 @@ function wrapSpawn(command, args, options, capabilities) {
           read: [...(cap.fs?.read ?? []), wrappers.dir, cacheDir],
           write: [...(cap.fs?.write ?? []), cacheDir],
           readOnly: [...(cap.fs?.readOnly ?? []), npxDir],
+          writeOverride: [...(cap.fs?.writeOverride ?? []), ...lockOverrides],
         },
       };
       cap = {

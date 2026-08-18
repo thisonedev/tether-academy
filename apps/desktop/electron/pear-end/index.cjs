@@ -31,6 +31,37 @@ function createPearEnd(userDataDir, opts = {}) {
     return stateStorePromise;
   }
 
+  // A peer that proved its device key is one this device can recognise again,
+  // so record it. Runs on the verification event rather than on pairing: the
+  // name a peer reports is unverified, the key it proves is not.
+  async function rememberVerifiedPeer(payload) {
+    if (!payload?.identityVerified || !payload.verifiedDevicePublicKey) return;
+    const idm = identity();
+    if (idm.status() !== 'ready') return;
+    let userData = null;
+    try {
+      const known = await peer.listPeers();
+      userData = known.find((p) => p.discoveryKey === payload.discoveryKey)?.userData ?? null;
+    } catch {
+      // The name and address are a convenience; the keys are what the entry is for.
+    }
+    idm.trustPeer({
+      devicePublicKey: payload.verifiedDevicePublicKey,
+      identityPublicKey: payload.verifiedIdentityPublicKey,
+      name: userData?.name ?? null,
+      swarmPublicKey: userData?.swarmPublicKey ?? null,
+    });
+  }
+
+  // Subscribed once here rather than in initMesh, which runs again after a
+  // closeMesh and would leave a second listener recording every peer twice.
+  peer.on((event, eventPayload) => {
+    if (event !== 'peer:identity-verified') return;
+    rememberVerifiedPeer(eventPayload).catch((err) => {
+      console.warn('[pear-end] could not record trusted peer:', err?.message ?? err);
+    });
+  });
+
   async function initMesh({ bootstrap } = {}) {
     const idm = identity();
     if (idm.status() !== 'ready') return false;
@@ -99,7 +130,19 @@ function createPearEnd(userDataDir, opts = {}) {
     }
   }
 
-  return { identity, store, ensureReady, syncRevocations, closeMesh, shutdown, peer };
+  return {
+    identity,
+    store,
+    ensureReady,
+    syncRevocations,
+    closeMesh,
+    shutdown,
+    peer,
+    // Exposed for tests. Two facades cannot run in one process, since
+    // worker-client holds the RPC at module scope, so the pairing that
+    // triggers this cannot be staged here.
+    _rememberVerifiedPeer: rememberVerifiedPeer,
+  };
 }
 
 module.exports = { createPearEnd };

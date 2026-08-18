@@ -20,6 +20,15 @@ const { publicStoreFromIdentity } = require('./profile-publish.cjs');
 
 const RECORD_FILE = 'identity-v3.json';
 const RECORD_VERSION = 3;
+
+const HEX_64 = /^[0-9a-fA-F]{64}$/;
+const TRUSTED_PEERS_KIND = 'trusted-peers';
+// The blob is rewritten whole on every change, so the list stays bounded.
+const MAX_TRUSTED_PEERS = 100;
+
+function hexOrNull(value) {
+  return typeof value === 'string' && HEX_64.test(value) ? value : null;
+}
 // Attest sessions age out rather than staying confirmable indefinitely for a caller that never returns.
 const ATTEST_SESSION_TTL_MS = 10 * 60_000;
 
@@ -141,6 +150,11 @@ function createManager(userDataDir, opts = {}) {
     }
   }
 
+  // Kept so the caller can tell a startup failure apart from "never onboarded",
+  // which look identical from status() alone.
+  /** @type {Error | null} */
+  let lastInitError = null;
+
   // Resolves once init() has loaded the blob stores, so IPC handlers can
   // await it and avoid racing the async hydrate; create/recover re-resolve it.
   let readyPromise = null;
@@ -155,10 +169,16 @@ function createManager(userDataDir, opts = {}) {
   }
 
   async function init() {
-    record = loadRecordFromDisk();
-    if (record) {
-      hydrateSecrets();
-      await loadBlobStores();
+    try {
+      record = loadRecordFromDisk();
+      if (record) {
+        hydrateSecrets();
+        await loadBlobStores();
+      }
+      lastInitError = null;
+    } catch (err) {
+      lastInitError = err;
+      throw err;
     }
   }
 
@@ -648,6 +668,75 @@ function createManager(userDataDir, opts = {}) {
     };
   }
 
+  // A peer you have paired with, kept across restarts so reconnecting costs a
+  // click instead of a fresh invite. Keyed by the device key the handshake
+  // proved, never the self-reported name.
+  function listTrustedPeers() {
+    const entry = readPrivate(TRUSTED_PEERS_KIND);
+    const peers = entry?.payload?.peers;
+    if (!Array.isArray(peers)) return [];
+    return peers.filter((p) => p && HEX_64.test(p.devicePublicKey ?? ''));
+  }
+
+  function writeTrustedPeers(peers) {
+    // Most recently seen first, so the cap sheds the peers you stopped using
+    // rather than whichever happened to be written last.
+    const capped = peers
+      .slice()
+      .sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0))
+      .slice(0, MAX_TRUSTED_PEERS);
+    const entry = writePrivate(TRUSTED_PEERS_KIND, { peers: capped });
+    return { peers: capped, revision: entry.revision, updatedAt: entry.updatedAt };
+  }
+
+  /**
+   * @param {{ devicePublicKey: string, identityPublicKey?: string|null,
+   *   swarmPublicKey?: string|null, name?: string|null }} peer
+   */
+  function trustPeer(peer) {
+    ensureReady();
+    const devicePublicKey = String(peer?.devicePublicKey ?? '');
+    if (!HEX_64.test(devicePublicKey)) {
+      throw new Error('trustPeer: devicePublicKey must be 32 bytes of hex');
+    }
+    const now = Date.now();
+    const existing = listTrustedPeers();
+    const prev = existing.find((p) => p.devicePublicKey === devicePublicKey);
+    const next = {
+      devicePublicKey,
+      identityPublicKey: hexOrNull(peer?.identityPublicKey) ?? prev?.identityPublicKey ?? null,
+      // How a known peer is found again without an invite. Stable per identity,
+      // since the swarm keypair is derived from it.
+      swarmPublicKey: hexOrNull(peer?.swarmPublicKey) ?? prev?.swarmPublicKey ?? null,
+      name: typeof peer?.name === 'string' && peer.name ? peer.name.slice(0, 80) : prev?.name ?? null,
+      trustedAt: prev?.trustedAt ?? now,
+      lastSeenAt: now,
+      revoked: prev?.revoked === true,
+    };
+    writeTrustedPeers([next, ...existing.filter((p) => p.devicePublicKey !== devicePublicKey)]);
+    return next;
+  }
+
+  function untrustPeer(devicePublicKey) {
+    ensureReady();
+    const before = listTrustedPeers();
+    const after = before.filter((p) => p.devicePublicKey !== devicePublicKey);
+    if (after.length === before.length) return false;
+    writeTrustedPeers(after);
+    return true;
+  }
+
+  /** Kept in the list rather than removed, so a revoked peer stays refusable. */
+  function setTrustedPeerRevoked(devicePublicKey, revoked) {
+    ensureReady();
+    const peers = listTrustedPeers();
+    const target = peers.find((p) => p.devicePublicKey === devicePublicKey);
+    if (!target) return false;
+    target.revoked = revoked === true;
+    writeTrustedPeers(peers);
+    return true;
+  }
+
   // Progress is an open per-machine JSON blob keyed by lesson-id; the renderer owns its shape.
   function setProgress(progress) {
     ensureReady();
@@ -724,6 +813,8 @@ function createManager(userDataDir, opts = {}) {
     publicView,
     /** 'safeStorage' or 'aes-gcm-local'. Peer-exec refuses the latter. */
     secretScheme: () => secrets.scheme,
+    /** What the last init() threw, or null once one succeeds. */
+    initError: () => lastInitError,
     /** Resolves once init() has loaded the blob stores. IPC handlers
      *  await this so renderer calls never race the async hydrate. */
     ready,
@@ -751,6 +842,10 @@ function createManager(userDataDir, opts = {}) {
     },
     setUsername,
     getUsername,
+    listTrustedPeers,
+    trustPeer,
+    untrustPeer,
+    setTrustedPeerRevoked,
     setProgress,
     getProgress,
     listBlobs() {

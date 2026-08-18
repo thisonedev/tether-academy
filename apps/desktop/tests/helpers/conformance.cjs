@@ -58,7 +58,7 @@ const CONFORMANCE = [
     note:
       'bwrap has no address filter, so a loopback grant there is full egress. '
       + 'exec-host compares the requested scope against enforcedNetworkScope() '
-      + 'and refuses the run before it starts.',
+      + 'and the consent prompt names the scope approving grants.',
   },
   {
     id: 'network-granted-is-unfiltered',

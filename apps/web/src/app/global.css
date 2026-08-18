@@ -292,6 +292,22 @@ html[data-platform="desktop"] .run-mode-select-web {
     min-height: 0;
     flex: 1 1 0%;
   }
+  html.lesson-viewport,
+  html.lesson-viewport body {
+    overflow: hidden;
+  }
+  html[data-platform="desktop"].lesson-viewport,
+  html[data-platform="desktop"].lesson-viewport body {
+    overflow: hidden;
+  }
+}
+
+/* Non-desktop only: gate to lg (1024px) so the stacked layout below lg can still scroll. */
+@media (min-width: 1024px) {
+  html.lesson-viewport,
+  html.lesson-viewport body {
+    overflow: hidden;
+  }
 }
 
 /* Hide desktop-only elements when running in the web build (no data-platform="desktop" on <html>) */

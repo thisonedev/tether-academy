@@ -16,6 +16,15 @@ const PROC_ESM = bareImports('process');
 // a raw newline in a failure message would drop everything after it.
 const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
 
+// The host reports the stages it crosses on stderr, so what the lesson itself
+// wrote is whatever is left once those are removed.
+const lessonStderr = (s) =>
+  s
+    .split('\n')
+    .filter((line) => !/^\s*[→✓]/.test(line))
+    .join('\n')
+    .trim();
+
 test('exec - guest code runs on the host and stdout streams back', async (t) => {
   const { guest, discoveryKey } = await pairForExec(t, 'exec-stdout');
 
@@ -31,7 +40,7 @@ test('exec - guest code runs on the host and stdout streams back', async (t) => 
   t.ok(result.stdout.includes('hi from host'), `expected the greeting; ${detail}`);
   t.ok(result.stdout.includes('platform:'), `code really ran on the remote side; ${detail}`);
   t.is(result.code, 0, detail);
-  t.is(result.stderr, '', `a clean run produces no stderr; ${detail}`);
+  t.is(lessonStderr(result.stderr), '', `a clean run produces no stderr of its own; ${detail}`);
 });
 
 test('exec - stderr and a non-zero exit code propagate', async (t) => {

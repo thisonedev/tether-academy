@@ -50,6 +50,19 @@ const NOISE_LINE = [
   // ggml backend probing and the Metal device dump, both `<tag>: <message>`.
   // A crash's assert and frames don't match this shape, so it still shows up.
   /^ggml_[a-z0-9_]+: /i,
+  // No GPU on this device: llama.cpp falls back to CPU and says so. Matched
+  // by exact wording, not a bare `warning:` prefix, so a lesson's own
+  // console.warn still shows.
+  /^warning: no usable GPU found/i,
+  /^warning: one possible reason is that llama\.cpp was compiled without GPU support$/i,
+  /^warning: consult docs\/build\.md for compilation instructions$/i,
+  // CPU-path tensor repacking, one line per tensor on a large model.
+  /^repack: /i,
+  // The SDK's component loggers, e.g. `[QVACRegistryClient] [INFO] Downloading
+  // blob directly { ... }`. Bookkeeping for work already on screen: the stage
+  // line names the call and the bar shows the download. WARN and ERROR are
+  // left alone, since those are the run telling you something.
+  /^\[[A-Za-z][\w.-]*\]\s*\[(INFO|DEBUG|TRACE|VERBOSE)\]/,
 ];
 
 // Above this, a partial line is forwarded verbatim rather than held until the

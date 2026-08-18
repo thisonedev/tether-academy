@@ -9,6 +9,7 @@ const path = require('node:path');
 
 const { pairForExec, runExec } = require('../helpers/index.cjs');
 const { buildLesson } = require('../../electron/runner-process.cjs');
+const { qvacSdkToken, bareBuiltinToken } = require('../../shared/portable-lesson-imports.cjs');
 
 const COURSES_DIR = path.resolve(__dirname, '../../../../packages/courses');
 
@@ -69,5 +70,35 @@ test('runner-peer - a wrapped lesson runs on a remote peer with the QVAC SDK ava
     `the @qvac/sdk import resolved inside the sandbox; ${detail}`,
   );
   t.ok(result.stdout.includes('peer-runner:close=function'), `close resolved too; ${detail}`);
+  t.is(result.code, 0, detail);
+});
+
+// Both sides here share a machine, so a non-portable build would pass even
+// though it's broken across two real ones. This is the path main.js takes.
+test('runner-peer - portable mode resolves on the receiving side, not the sender\'s', async (t) => {
+  const { guest, discoveryKey } = await pairForExec(t, 'runner-peer-portable');
+
+  const wrapped = buildLesson({ source: LESSON_SOURCE, cwd: COURSES_DIR, runtime: 'bare', portable: true });
+  t.ok(wrapped.includes(qvacSdkToken()), 'sdk import is a token, not this machine\'s path');
+  t.ok(wrapped.includes(bareBuiltinToken('bare-process')), 'process import is a token too');
+
+  const result = await runExec(
+    guest,
+    {
+      peerId: discoveryKey,
+      code: wrapped,
+      mode: 'file',
+      cwd: COURSES_DIR,
+      fileName: 'snippet.mjs',
+    },
+    30_000,
+  );
+
+  const detail = oneLine(`code=${result.code} stdout=${result.stdout} stderr=${result.stderr}`);
+  t.ok(result.stdout.includes('peer-runner:hello'), `lesson ran; ${detail}`);
+  t.ok(
+    result.stdout.includes('peer-runner:loadModel=function'),
+    `the receiver resolved its own sdk copy from the token; ${detail}`,
+  );
   t.is(result.code, 0, detail);
 });

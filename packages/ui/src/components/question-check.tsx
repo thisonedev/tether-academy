@@ -58,7 +58,7 @@ export function QuestionCheck({ questions, onAllCorrectChange }: QuestionCheckPr
           return (
             <div
               key={question.id}
-              className="rounded-lg border border-canvas-border bg-canvas-muted p-4"
+              className="rounded-lg border border-canvas-border bg-[#0d1117] p-4"
             >
               <p className="mb-1 font-mono text-[11px] uppercase tracking-wider text-emerald-400">
                 Question {qi + 1} of {questions.length}

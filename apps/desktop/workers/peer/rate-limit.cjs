@@ -9,6 +9,7 @@ const LIMITS = Object.freeze({
   // code gate. 60/min is a backstop, not a per-attacker budget.
   'pairing:attempt': { max: 60,  windowMs: 60_000 },  // global
   'identity:frame':  { max: 60,  windowMs: 60_000 },  // per discovery key
+  'peer-profile:frame': { max: 60, windowMs: 60_000 }, // per discovery key
   'rpc:command':     { max: 600, windowMs: 60_000 },  // global, human-driven
 });
 

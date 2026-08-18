@@ -14,20 +14,34 @@ const WARM_TIMEOUT_MS = 4 * 60_000;
 
 /** npx unpacks into `_npx/<hash>/node_modules/<pkg>`; the hash is npm's own. */
 function isWarm(cacheDir, pkg) {
+  return hashDirsFor(cacheDir, [pkg]).length > 0;
+}
+
+/**
+ * Hash directory names under `_npx` that hold any of `packages`. npx locks
+ * per hash dir (a `concurrency.lock` it mkdir's even for an already-cached
+ * package); the sandbox needs these specific names to grant that one write.
+ * @param {string} cacheDir
+ * @param {string[]} packages
+ * @returns {string[]}
+ */
+function hashDirsFor(cacheDir, packages) {
   const root = path.join(cacheDir, '_npx');
   let hashes;
   try {
     hashes = fs.readdirSync(root);
   } catch {
-    return false;
+    return [];
   }
-  return hashes.some((hash) => {
-    try {
-      return fs.statSync(path.join(root, hash, 'node_modules', pkg)).isDirectory();
-    } catch {
-      return false;
-    }
-  });
+  return hashes.filter((hash) =>
+    packages.some((pkg) => {
+      try {
+        return fs.statSync(path.join(root, hash, 'node_modules', pkg)).isDirectory();
+      } catch {
+        return false;
+      }
+    }),
+  );
 }
 
 /**
@@ -78,4 +92,4 @@ function warmPackages(cacheDir, packages) {
   return { ok: failed.length === 0, failed };
 }
 
-module.exports = { isWarm, warmPackage, warmPackages, WARM_TIMEOUT_MS };
+module.exports = { isWarm, hashDirsFor, warmPackage, warmPackages, WARM_TIMEOUT_MS };

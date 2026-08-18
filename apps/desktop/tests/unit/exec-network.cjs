@@ -71,3 +71,20 @@ test('exec-network - a non-string source is treated as reaching nothing', (t) =>
   t.is(detectNetworkNeed(null).mode, 'none');
   t.is(detectNetworkNeed('').mode, 'none');
 });
+
+// The percentage is only as good as the total it divides by, which comes from
+// the registry rather than anything the run reports.
+test('exec-network - download progress totals what the run named', (t) => {
+  const { modelDownloadProgress } = require('../../workers/peer/exec-network.cjs');
+
+  t.is(modelDownloadProgress([]), null, 'a run naming no model has nothing to report');
+  t.is(modelDownloadProgress(['NOT_A_REAL_MODEL']), null, 'an unknown name contributes no total');
+
+  const one = modelDownloadProgress([cached]);
+  t.is(one.total, registry.get(cached).expectedSize, 'total comes from the registry');
+  t.ok(one.downloaded >= 0 && one.downloaded <= one.total, 'a partial file never exceeds the whole');
+
+  const two = modelDownloadProgress([cached, huge]);
+  t.is(two.total, registry.get(cached).expectedSize + registry.get(huge).expectedSize,
+    'several models sum into one bar');
+});

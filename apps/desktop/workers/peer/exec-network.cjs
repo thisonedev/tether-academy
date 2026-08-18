@@ -166,10 +166,33 @@ function detectNetworkNeed(code) {
   return { mode: 'none', reason: null, missingModels: [] };
 }
 
+/**
+ * Bytes on disk against bytes expected, for the models a run named. The host
+ * reports this itself so a download shows progress even when the lesson prints
+ * nothing while it transfers.
+ * @param {string[]} names registry constant names, as referencedModels returns
+ * @returns {{ downloaded: number, total: number } | null}
+ */
+function modelDownloadProgress(names) {
+  const registry = modelRegistry();
+  const sizes = cachedSizes();
+  let downloaded = 0;
+  let total = 0;
+  for (const name of names) {
+    const entry = registry.get(name);
+    if (!entry?.expectedSize) continue;
+    total += entry.expectedSize;
+    // A partial file can't count for more than the whole.
+    downloaded += Math.min(sizes.get(entry.modelId) ?? 0, entry.expectedSize);
+  }
+  return total > 0 ? { downloaded, total } : null;
+}
+
 module.exports = {
   detectNetworkNeed,
   referencedModels,
   missingModels,
   modelRegistry,
+  modelDownloadProgress,
   REGISTRY_PATH,
 };

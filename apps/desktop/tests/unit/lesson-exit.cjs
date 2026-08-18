@@ -56,7 +56,7 @@ test('lesson-exit - a lesson holding a live handle still exits', async (t) => {
     + '  for (let i = 0; i < 2000; i++) console.log("line " + i);\n'
     + '  setInterval(() => {}, 1000);\n'
     + '}\n\nmain().catch(console.error);\n',
-  ).replace(/^import \{ close \} from ".*";$/m, 'import { close } from "./sdk.mjs";');
+  ).replace(/^import \{[^}]*\} from ".*";$/m, 'import { close as __academySdk_close } from "./sdk.mjs";');
 
   fs.writeFileSync(path.join(dir, 'sdk.mjs'), 'export const close = async () => console.log("[closed]");\n');
   fs.writeFileSync(path.join(dir, 'lesson.mjs'), built);
@@ -86,7 +86,7 @@ test('lesson-exit - a failed lesson exits non-zero', async (t) => {
 
   const built = build(
     'async function main() {\n  throw new Error("boom");\n}\n\nmain();\n',
-  ).replace(/^import \{ close \} from ".*";$/m, 'import { close } from "./sdk.mjs";');
+  ).replace(/^import \{[^}]*\} from ".*";$/m, 'import { close as __academySdk_close } from "./sdk.mjs";');
 
   fs.writeFileSync(path.join(dir, 'sdk.mjs'), 'export const close = async () => {};\n');
   fs.writeFileSync(path.join(dir, 'lesson.mjs'), built);

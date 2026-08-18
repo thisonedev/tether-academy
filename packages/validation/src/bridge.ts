@@ -481,6 +481,10 @@ export interface AcademyPeerDeviceRequest {
   devices: string[];
   /** Why the run needs to reach off this machine. */
   network: string | null;
+  /** Set when this device's sandbox cannot hold the run to what it asked
+   *  for: bwrap has no loopback-only mode, so a localhost lesson gets `all`,
+   *  and approving grants that wider scope. */
+  networkScope?: string;
   label: string | null;
   userData: unknown;
   requestedAt: number;
