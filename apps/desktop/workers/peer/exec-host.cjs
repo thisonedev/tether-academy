@@ -25,14 +25,16 @@ const {
   sanitizeExecArgv,
   sanitizeExecCode,
 } = require('./exec-validate.cjs');
-const { detectNetworkNeed, referencedModels } = require('./exec-network.cjs');
+const { detectNetworkNeed, referencedModels, modelRegistry } = require('./exec-network.cjs');
 const {
   lessonCwd,
   precreateOutputDirs,
   snapshotOutputs,
   describeNewOutputs,
 } = require('../../shared/lesson-output.cjs');
-const { syncFast, scan, removeAddedSince, verifyModelsAsync } = require('../../shared/model-integrity.cjs');
+const { syncFast, scan, removeAddedSince, verifyModelsAsync, pruneTruncatedModels, acceptAll } = require('../../shared/model-integrity.cjs');
+// Cache entries are prefixed with the SDK's content hash, same convention as model-integrity.cjs.
+const CACHE_HASH_PREFIX = /^[0-9a-f]{16}_/;
 const { substitutePortableImports } = require('../../shared/portable-lesson-imports.cjs');
 // Runs under Bare (workers/entry.cjs), so it can't require electron/chat.cjs
 // directly; ctx.runSecurityScan bridges to it over RPC instead.
@@ -370,6 +372,15 @@ function createExecHost(ctx) {
     // A clean exit still leaves the worker running if the lesson never
     // unloaded its model, so sweep the group either way.
     killGroup(run.child, 'SIGKILL');
+    // A SIGKILL'd run never runs its own JS-level cleanup, so its QVAC worker
+    // can outlive it; a moment later gives the OS time to actually reap
+    // run.child first, so the reaper sees its parent as dead.
+    const reapTimer = setTimeout(() => {
+      try {
+        require('../../shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers();
+      } catch {}
+    }, 500);
+    if (typeof reapTimer.unref === 'function') reapTimer.unref();
     removeDir(run.fileDir);
     runs.delete(discoveryKeyHex);
     const waiters = slotWaiters.get(discoveryKeyHex);
@@ -876,17 +887,51 @@ function createExecHost(ctx) {
       return;
     }
 
+    // A run that never reached its own cleanup (Stop, a crash, the host dying)
+    // can leave a truncated model at its final name; catch it before the
+    // sandbox freezes it read-only and locks out every retry.
+    try {
+      const truncated = pruneTruncatedModels();
+      if (truncated.length > 0) {
+        appendAudit('peer:exec:truncated-models-pruned', { discoveryKey: discoveryKeyHex, truncated });
+      }
+    } catch (err) {
+      console.warn('[peer] pruneTruncatedModels failed:', err?.message ?? err);
+    }
+
     // Stat plus recorded hash is the steady-state path (one stat, no read);
     // an unrecorded file gets its first read here instead, off the swarm path.
+    // referencedModels gives registry constant names (e.g. LLAMA_3_2_1B_INSTRUCT);
+    // verifyModelsAsync and the cache filenames key on modelId instead.
     const wantedModels = referencedModels(code);
+    const registry = modelRegistry();
+    const wantedIds = wantedModels.map((name) => registry.get(name)?.modelId).filter(Boolean);
     let changedModels = [];
     let mismatchedModels = [];
     try {
-      const result = await verifyModelsAsync(wantedModels);
-      changedModels = scan().size > 0 ? syncFast().changed : [];
+      // A large cached model's hash can take a while under a throttled host;
+      // let Stop reach it instead of leaving the run unkillable until it finishes.
+      const result = await verifyModelsAsync(wantedIds, undefined, undefined, () => run.cancelled);
+      // Scoped to this run's models: an unrelated file changing elsewhere in
+      // the cache (another lesson's download) should not block this one.
+      const allChanged = wantedIds.length > 0 && scan().size > 0 ? syncFast().changed : [];
+      changedModels = allChanged.filter((rel) => {
+        const base = path.basename(rel).replace(CACHE_HASH_PREFIX, '');
+        return wantedIds.includes(base);
+      });
       mismatchedModels = result.mismatched;
     } catch (err) {
       console.warn('[peer] model integrity check failed:', err?.message ?? err);
+    }
+    if (run.cancelled) {
+      fail(discoveryKeyHex, 'cancelled', 'cancelled during the model integrity check', {
+        runId: run.runId,
+        mode,
+        fileName,
+        label,
+      });
+      finishRun(discoveryKeyHex, run);
+      return;
     }
     if (mismatchedModels.length > 0 || changedModels.length > 0) {
       appendAudit('peer:exec:model-integrity', {
@@ -988,6 +1033,9 @@ function createExecHost(ctx) {
           // Real resolved userData, so the profile denies the actual state
           // dir even under a `--storage` override.
           userData: getUserData(),
+          // npx locks its own hash dir even for an already-warmed package;
+          // the sandbox grants just that lock file, not the whole read-only tree.
+          npxPackages: wanted,
         },
         'qvac',
       );
@@ -1159,6 +1207,13 @@ function createExecHost(ctx) {
         source: 'exit',
       });
       if (exitCode !== 0) revertModelAdditions(discoveryKeyHex, run);
+      // Re-baseline in case this run downloaded a model, so the next
+      // peer-exec doesn't read its own download as tampering.
+      else {
+        try {
+          acceptAll();
+        } catch {}
+      }
     });
   }
 

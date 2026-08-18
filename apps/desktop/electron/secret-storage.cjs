@@ -66,6 +66,25 @@ function ensureLocalKey(userDataDir, opts = {}) {
   return key;
 }
 
+// Chromium tags a safeStorage payload with a version ('v10' basic, 'v11' OS
+// keyring). A local AES payload opens with a random IV, so this only matches a
+// record the keyring really sealed.
+const SAFE_STORAGE_TAG = /^v1[01]$/;
+
+/**
+ * @param {string} payloadB64
+ * @returns {boolean}
+ */
+function sealedBySafeStorage(payloadB64) {
+  try {
+    return SAFE_STORAGE_TAG.test(
+      Buffer.from(payloadB64, 'base64').subarray(0, 3).toString('latin1'),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function encryptAesGcm(plaintext, key) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(AES_ALGO, key, iv);
@@ -121,6 +140,17 @@ function createSecretStorage(userDataDir, opts = {}) {
       return encryptAesGcm(plaintext, key);
     },
     decryptString(payloadB64) {
+      // The local key cannot open what the keyring sealed. Name that, rather
+      // than surfacing the generic GCM authentication failure it becomes.
+      if (sealedBySafeStorage(payloadB64)) {
+        throw Object.assign(
+          new Error(
+            'Secrets on this device were sealed with the OS keyring, which is not '
+            + 'available now. Unlock it (on Linux, the login keyring) and restart.',
+          ),
+          { code: 'ERR_KEYRING_UNAVAILABLE' },
+        );
+      }
       return decryptAesGcm(payloadB64, key);
     },
   };
@@ -137,6 +167,7 @@ function wipeStringRef(obj, key) {
 module.exports = {
   createSecretStorage,
   tryLoadSafeStorage,
+  sealedBySafeStorage,
   wipeStringRef,
   localKeyPath,
   LOCAL_KEY_FILE,

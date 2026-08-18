@@ -132,6 +132,16 @@ test('exec-noise - leaves real output alone', (t) => {
   t.is(isNoiseLine('modelId: abc'), false);
 });
 
+// A CPU-only device (no GPU) prints these on every model load; not an error.
+test('exec-noise - drops the no-GPU fallback warnings and tensor repacking', (t) => {
+  t.is(isNoiseLine('warning: no usable GPU found, --gpu-layers option will be ignored'), true);
+  t.is(isNoiseLine('warning: one possible reason is that llama.cpp was compiled without GPU support'), true);
+  t.is(isNoiseLine('warning: consult docs/build.md for compilation instructions'), true);
+  t.is(isNoiseLine('repack: repack tensor token_embd.weight with q6_K_8x8'), true);
+  // A lesson's own console.warn must not be swallowed by a bare "warning:" match.
+  t.is(isNoiseLine('warning: the model may produce inaccurate results'), false);
+});
+
 test('exec-noise - filters noise out of a mixed chunk', (t) => {
   const filter = createNoiseFilter();
   const out = filter.push(

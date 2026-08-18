@@ -167,6 +167,14 @@ function buildBwrapArgs(cap, { warnings = [] } = {}) {
     args.push('--ro-bind-try', p, p);
   }
 
+  // After readOnly too, so a src/dest pair here wins over the broader
+  // read-only tree it sits inside (a narrow write exception, not a bind of
+  // the tree itself). See sandbox/index.cjs's lockOverrides.
+  for (const { src, dest } of cap.fs?.writeOverride ?? []) {
+    if (!src || !dest) continue;
+    args.push('--bind-try', src, dest);
+  }
+
   // No /dev/snd bound means an open error here rather than macOS's silent fail.
   if (cap.device?.microphone) {
     args.push('--dev-bind-try', '/dev/snd', '/dev/snd');

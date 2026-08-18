@@ -90,10 +90,15 @@ function sha256File(abs) {
   const fd = fs.openSync(abs, 'r');
   try {
     const buf = Buffer.alloc(1024 * 1024);
+    // position: null is supposed to mean "current position, auto-advancing"
+    // (Node's own readSync contract), but Bare's fs binding never advances
+    // it and never signals EOF, so it loops forever; track it ourselves.
+    let position = 0;
     for (;;) {
-      const read = fs.readSync(fd, buf, 0, buf.length, null);
+      const read = fs.readSync(fd, buf, 0, buf.length, position);
       if (read === 0) break;
       hash.update(buf.subarray(0, read));
+      position += read;
     }
   } finally {
     fs.closeSync(fd);
@@ -107,16 +112,23 @@ function yieldToLoop() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-async function sha256FileAsync(abs) {
+// isCancelled is polled once per chunk, so a run stopped mid-hash on a large
+// model gives up its file handle within one chunk instead of running to completion.
+async function sha256FileAsync(abs, isCancelled) {
   const crypto = require('crypto');
   const hash = crypto.createHash('sha256');
   const fd = fs.openSync(abs, 'r');
   try {
     const buf = Buffer.alloc(1024 * 1024);
+    // See sha256File: Bare's fs binding doesn't honor position: null, so the
+    // position has to be tracked and passed explicitly on every read.
+    let position = 0;
     for (;;) {
-      const read = fs.readSync(fd, buf, 0, buf.length, null);
+      if (isCancelled?.()) throw new Error('cancelled');
+      const read = fs.readSync(fd, buf, 0, buf.length, position);
       if (read === 0) break;
       hash.update(buf.subarray(0, read));
+      position += read;
       await yieldToLoop();
     }
   } finally {
@@ -155,7 +167,13 @@ function syncFast(stateDir = appStateDir(), root = modelsRoot()) {
       dirty = true;
       continue;
     }
-    if (!sameStat(known, stat)) changed.push(rel);
+    if (!sameStat(known, stat)) {
+      changed.push(rel);
+      // Re-baseline after reporting it, or every future scan flags the same
+      // file again forever. The old hash says nothing about the new bytes.
+      manifest.files[rel] = { ...stat, recordedAt: Date.now(), sha256: null };
+      dirty = true;
+    }
   }
   // An empty scan is more likely a moved cache than an emptied one; don't drop every record.
   if (seen.size > 0) {
@@ -282,8 +300,10 @@ function verifyModels(modelIds, stateDir = appStateDir(), root = modelsRoot()) {
  * @param {string[]} modelIds
  * @param {string} [stateDir]
  * @param {string} [root]
+ * @param {() => boolean} [isCancelled] Polled between chunks, so a Stop mid-hash
+ *   gives up the file handle instead of running the large model's hash to completion.
  */
-async function verifyModelsAsync(modelIds, stateDir = appStateDir(), root = modelsRoot()) {
+async function verifyModelsAsync(modelIds, stateDir = appStateDir(), root = modelsRoot(), isCancelled) {
   const wanted = new Set((modelIds ?? []).filter(Boolean));
   const verified = [];
   const mismatched = [];
@@ -293,11 +313,12 @@ async function verifyModelsAsync(modelIds, stateDir = appStateDir(), root = mode
   const manifest = readManifest(stateDir);
   let dirty = false;
   for (const [rel, stat] of scan(root)) {
+    if (isCancelled?.()) break;
     const base = path.basename(rel);
     if (!wanted.has(base) && !wanted.has(base.replace(CACHE_HASH_PREFIX, ''))) continue;
     let sha256;
     try {
-      sha256 = await sha256FileAsync(path.join(root, rel));
+      sha256 = await sha256FileAsync(path.join(root, rel), isCancelled);
     } catch {
       continue;
     }
@@ -412,6 +433,50 @@ function scheduleVerifyAll(stateDir = appStateDir(), root = modelsRoot()) {
   return _inFlight;
 }
 
+// Memoized filename (hash prefix stripped) -> set of valid sizes, from the
+// SDK's own registry. Mirrors electron/models.cjs's knownGoodSizes; this
+// copy has to run under Bare (exec-host.cjs), not just Electron's main process.
+let _knownSizesByName = null;
+function knownGoodSizes(filename) {
+  if (_knownSizesByName === null) {
+    _knownSizesByName = new Map();
+    try {
+      const { models: registryModels } = require('@qvac/sdk/models');
+      for (const entry of registryModels) {
+        if (!entry.modelId || !entry.expectedSize) continue;
+        const sizes = _knownSizesByName.get(entry.modelId) ?? new Set();
+        sizes.add(entry.expectedSize);
+        _knownSizesByName.set(entry.modelId, sizes);
+      }
+    } catch {
+      // no registry available; every file reads as complete below
+    }
+  }
+  return _knownSizesByName.get(filename) ?? null;
+}
+
+/**
+ * A run that never reaches its own cleanup can leave a truncated download at
+ * its final name. Removes any file whose size mismatches its registry entry.
+ * @param {string} [root]
+ * @returns {string[]}
+ */
+function pruneTruncatedModels(root = modelsRoot()) {
+  const removed = [];
+  for (const [rel, stat] of scan(root)) {
+    const displayName = rel.replace(CACHE_HASH_PREFIX, '');
+    const sizes = knownGoodSizes(displayName);
+    if (!sizes || sizes.has(stat.sizeBytes)) continue;
+    try {
+      fs.rmSync(path.join(root, rel), { force: true });
+      removed.push(rel);
+    } catch {
+      // leave it; the next attempt tries again
+    }
+  }
+  return removed;
+}
+
 module.exports = {
   MANIFEST_FILE,
   modelsRoot,
@@ -428,6 +493,7 @@ module.exports = {
   scheduleVerifyAll,
   acceptAll,
   removeAddedSince,
+  pruneTruncatedModels,
   verifyAll,
   verifyAllAsync,
 };

@@ -30,6 +30,9 @@ export interface FsCapability {
   write?: PathSpec[];
   /** Carved back out of a write grant that covers them. Applied after write. */
   readOnly?: PathSpec[];
+  /** A src/dest bind that wins over a readOnly grant it sits inside, e.g.
+   *  npx's own lock file within an otherwise read-only package cache. */
+  writeOverride?: Array<{ src: string; dest: string }>;
 }
 
 export interface NetworkCapability {
@@ -138,6 +141,8 @@ export interface WrapOptions {
    * when the host was launched with `--storage` or any userData override.
    */
   userData?: string;
+  /** Packages this run's code spawns via npx, for the lock-file write grant. */
+  npxPackages?: string[];
 }
 
 // Subset of Capability the dynamic JSON file can hold. Merged

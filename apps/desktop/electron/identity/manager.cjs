@@ -141,6 +141,11 @@ function createManager(userDataDir, opts = {}) {
     }
   }
 
+  // Kept so the caller can tell a startup failure apart from "never onboarded",
+  // which look identical from status() alone.
+  /** @type {Error | null} */
+  let lastInitError = null;
+
   // Resolves once init() has loaded the blob stores, so IPC handlers can
   // await it and avoid racing the async hydrate; create/recover re-resolve it.
   let readyPromise = null;
@@ -155,10 +160,16 @@ function createManager(userDataDir, opts = {}) {
   }
 
   async function init() {
-    record = loadRecordFromDisk();
-    if (record) {
-      hydrateSecrets();
-      await loadBlobStores();
+    try {
+      record = loadRecordFromDisk();
+      if (record) {
+        hydrateSecrets();
+        await loadBlobStores();
+      }
+      lastInitError = null;
+    } catch (err) {
+      lastInitError = err;
+      throw err;
     }
   }
 
@@ -724,6 +735,8 @@ function createManager(userDataDir, opts = {}) {
     publicView,
     /** 'safeStorage' or 'aes-gcm-local'. Peer-exec refuses the latter. */
     secretScheme: () => secrets.scheme,
+    /** What the last init() threw, or null once one succeeds. */
+    initError: () => lastInitError,
     /** Resolves once init() has loaded the blob stores. IPC handlers
      *  await this so renderer calls never race the async hydrate. */
     ready,

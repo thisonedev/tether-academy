@@ -487,10 +487,22 @@ handle('academy:clipboard:copy', async ({ text, scrubAfterMs }) => {
 
 handle('academy:models:list', async () => listModels());
 
+// Read-only twin of academy:chat:configured-model, without that handler's
+// side effect of picking and persisting a default when none is set yet.
+async function configuredChatModelName() {
+  if (chat.currentModel()) return chat.currentModel();
+  const store = await pearEnd.store();
+  const existing = await store.get('ai.chat.model');
+  return existing && chat.isChatPreset(existing) ? existing : null;
+}
+
 handle('academy:models:remove', async (id) => {
-  // Unload first so ensureLoaded()'s "already loaded" shortcut doesn't hand out a deleted model forever.
   const items = await listModels();
   const target = items.find((it) => it.id === id);
+  if (target && target.name === (await configuredChatModelName())) {
+    throw new Error('This is the AI bot\'s active model. Change it in Settings before removing.');
+  }
+  // Unload first so ensureLoaded()'s "already loaded" shortcut doesn't hand out a deleted model forever.
   const result = await removeModel(id);
   if (target && chat.currentModel() === target.name) {
     await chat
@@ -501,14 +513,11 @@ handle('academy:models:remove', async (id) => {
 });
 
 handle('academy:models:removeAll', async () => {
-  const hadActiveModel = chat.currentModel() !== null;
-  const result = await removeAllModels();
-  if (hadActiveModel) {
-    await chat
-      .unload()
-      .catch((err) => console.warn('[tether-academy-desktop] unload after removeAll failed:', err?.message ?? err));
-  }
-  return result;
+  // The active chat model is always the one configuredChatModelName() names
+  // (it checks chat.currentModel() first), so keeping it here means removeAll
+  // never actually deletes a loaded model, and never needs to unload one.
+  const keepName = await configuredChatModelName();
+  return removeAllModels(keepName ? new Set([keepName]) : undefined);
 });
 
 handle('academy:models:verify', async () => {
@@ -1080,6 +1089,21 @@ if (!lock) {
         .catch((err) => console.warn('[tether-academy-desktop] pruneIncompleteDownloads failed:', err?.message ?? err));
     });
 
+    // A run killed with SIGKILL never runs its own JS-level cleanup, so the
+    // QVAC worker it spawned can outlive it indefinitely; sweep once per
+    // launch for any left behind by a previous session.
+    setImmediate(() => {
+      try {
+        const { reapOrphanedQvacWorkers } = require('../shared/qvac-orphan-reaper.cjs');
+        const killed = reapOrphanedQvacWorkers();
+        if (killed.length > 0) {
+          console.log('[tether-academy-desktop] reaped orphaned QVAC workers:', killed);
+        }
+      } catch (err) {
+        console.warn('[tether-academy-desktop] reapOrphanedQvacWorkers failed:', err?.message ?? err);
+      }
+    });
+
     // Warm the model manifest in the background so a peer-exec usually lands
     // with hashes already on file.
     const { scheduleVerifyAll } = require('../shared/model-integrity.cjs');
@@ -1098,7 +1122,18 @@ if (!lock) {
     setImmediate(() => {
       (async () => {
         try {
-          pearEnd.identity();
+          const idm = pearEnd.identity();
+          // A sealed record the keyring can no longer open otherwise reads as
+          // "signed out", with the real reason only in the console.
+          await idm.ready().catch(() => {});
+          const initErr = idm.initError();
+          if (initErr?.code === 'ERR_KEYRING_UNAVAILABLE') {
+            dialog.showErrorBox(
+              'Tether Academy: OS keyring unavailable',
+              `${initErr.message}\n\nUntil then this device reads as signed out, `
+              + 'and paired devices cannot run code on it.',
+            );
+          }
           await pearEnd.store();
           const ready = await pearEnd.ensureReady();
           if (!ready) {

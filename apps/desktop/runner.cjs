@@ -27,7 +27,7 @@ const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
 const { buildLesson, decideMockImports } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
 const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
-const { acceptAll, syncFast } = require('./shared/model-integrity.cjs');
+const { acceptAll, syncFast, pruneTruncatedModels } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
 const { hintForMissingLib } = require('./shared/linux-lib-hint.cjs');
@@ -84,6 +84,12 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
   precreateOutputDirs(wrapped, childCwd);
 
   writeFileSync(file, wrapped, 'utf-8');
+
+  // A prior run killed mid-download can leave a truncated model at its final
+  // name; catch it here before this run tries to load the same one.
+  try {
+    pruneTruncatedModels();
+  } catch {}
 
   // Stat-only and advisory, since this is the unsandboxed local-run path.
   const changed = (() => {
@@ -177,6 +183,14 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
       clearTimeout(timer);
       // A lesson that never unloads its model leaves the worker behind.
       killGroup('SIGKILL');
+      // A SIGKILL'd run never runs its own JS-level cleanup, so its QVAC
+      // worker can outlive it; a moment later lets the OS reap `child` first.
+      const reapTimer = setTimeout(() => {
+        try {
+          require('./shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers();
+        } catch {}
+      }, 500);
+      if (typeof reapTimer.unref === 'function') reapTimer.unref();
       rm(dir, { recursive: true, force: true }).catch(() => {});
       const note = (() => {
         try {

@@ -260,11 +260,12 @@ async function pruneIncompleteDownloads() {
   return { removed, freedBytes };
 }
 
-async function removeAllModels() {
+async function removeAllModels(excludeNames) {
   const items = await listModels();
   let totalFreed = 0;
   let totalRemoved = 0;
   for (const item of items) {
+    if (excludeNames?.has(item.name)) continue;
     try {
       const r = await removeModel(item.id);
       totalFreed += r.freedBytes;
@@ -276,14 +277,16 @@ async function removeAllModels() {
   return { removed: totalRemoved, freedBytes: totalFreed };
 }
 
-function catalogueEntryFromName(name) {
+// installedSizes overrides the static hint once the real size is known,
+// rather than showing an estimate for a file already sitting on disk.
+function catalogueEntryFromName(name, installedSizes) {
   const usage = loadUsageMap();
   const descriptions = loadDescriptionMap();
   const hints = hintsForName(name);
   return {
     name,
     id: name,
-    sizeBytes: hints.sizeBytes,
+    sizeBytes: installedSizes?.get(name) ?? hints.sizeBytes,
     description: descriptions[name] ?? '',
     usedIn: usage[name] ?? [],
     family: familyForName(name),
@@ -295,12 +298,13 @@ function catalogueEntryFromName(name) {
 async function catalogue() {
   const usage = loadUsageMap();
   const installed = await listModels();
+  const installedSizes = new Map(installed.map((item) => [item.name, item.sizeBytes]));
   const names = new Set();
   for (const name of Object.keys(usage)) names.add(name);
   for (const name of Object.keys(CHAT_MODEL_HINTS)) names.add(name);
   for (const item of installed) names.add(item.name);
   return Array.from(names)
-    .map(catalogueEntryFromName)
+    .map((name) => catalogueEntryFromName(name, installedSizes))
     .sort((a, b) => {
       // Chat models first, then everything else, alphabetical within each group.
       if (a.family !== b.family) return a.family === 'chat' ? -1 : 1;
