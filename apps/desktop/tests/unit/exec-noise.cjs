@@ -127,6 +127,17 @@ test('exec-noise - drops model loader lines from a stream of mixed chunks', (t) 
   t.absent(out.includes('warmup'), 'warmup line is stripped');
 });
 
+// These sit flat next to the lesson's own output at the same weight, one per
+// blob, and say nothing a learner acts on.
+test('exec-noise - drops the SDK component loggers, but not what they warn about', (t) => {
+  t.is(isNoiseLine('[QVACRegistryClient] [INFO] Downloading blob directly { url: "..." }'), true);
+  t.is(isNoiseLine('[ModelManager] [DEBUG] cache hit'), true);
+  t.is(isNoiseLine('[QVACRegistryClient] [WARN] retrying blob download'), false, 'a warning is the run talking');
+  t.is(isNoiseLine('[QVACRegistryClient] [ERROR] blob missing'), false);
+  // A lesson printing its own bracketed tag keeps it.
+  t.is(isNoiseLine('[saved] /Users/x/Documents/Tether Academy/output/cat.png'), false);
+});
+
 test('exec-noise - leaves real output alone', (t) => {
   t.is(isNoiseLine('Error: spawn EPERM'), false, 'genuine errors must survive');
   t.is(isNoiseLine('modelId: abc'), false);

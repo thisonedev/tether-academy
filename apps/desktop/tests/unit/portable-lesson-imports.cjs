@@ -1,14 +1,19 @@
 'use strict';
 
 const test = require('brittle');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {
   qvacSdkToken,
   qvacSdkPluginToken,
   bareBuiltinToken,
   npmPackageToken,
+  courseAssetToken,
   isPortableToken,
   resolvePortableToken,
   substitutePortableImports,
+  substitutePortableAssets,
 } = require('../../shared/portable-lesson-imports.cjs');
 
 const resolvers = {
@@ -71,4 +76,38 @@ test('portable-lesson-imports - substitutePortableImports reports what it could 
   const code = `import x from "academy-portable:bare-builtin:not-a-real-package";`;
   const { unresolved } = substitutePortableImports(code, resolvers);
   t.alike(unresolved, ['academy-portable:bare-builtin:not-a-real-package']);
+});
+
+// The fixture half of the same problem: a lesson's input file lives in the
+// courses checkout, and on a peer run that checkout is the receiver's.
+test('portable-lesson-imports - substitutePortableAssets resolves against the receiver checkout', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-assets-'));
+  t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'examples', 'qvac', 'transcription', 'input'), { recursive: true });
+  const rel = 'examples/qvac/transcription/input/sample-16khz.wav';
+  fs.writeFileSync(path.join(dir, rel), 'x');
+
+  const code = `const p = ${JSON.stringify(courseAssetToken(rel))};`;
+  const { code: out, missing, refused } = substitutePortableAssets(code, { coursesDir: dir });
+  t.is(missing.length, 0);
+  t.is(refused.length, 0);
+  t.ok(out.includes(JSON.stringify(path.join(dir, rel)).slice(1, -1)));
+});
+
+test('portable-lesson-imports - substitutePortableAssets reports a fixture this device lacks', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-assets-'));
+  t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const rel = 'examples/qvac/fine-tuning/input/small_train_HF.jsonl';
+  const code = `const p = ${JSON.stringify(courseAssetToken(rel))};`;
+  const { code: out, missing } = substitutePortableAssets(code, { coursesDir: dir });
+  t.alike(missing, [rel]);
+  t.is(out, code, 'left untouched, so nothing spawns with a half-resolved path');
+});
+
+test('portable-lesson-imports - substitutePortableAssets refuses a path outside the checkout', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-assets-'));
+  t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const code = `const p = ${JSON.stringify(courseAssetToken('../../../etc/passwd'))};`;
+  const { refused } = substitutePortableAssets(code, { coursesDir: dir });
+  t.alike(refused, ['../../../etc/passwd']);
 });

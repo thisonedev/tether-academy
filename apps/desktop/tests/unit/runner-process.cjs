@@ -4,6 +4,7 @@
 // executes the rewritten source without a sandbox, so an escape from the courses directory reaches whatever the user account can see.
 
 const test = require('brittle');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -68,7 +69,7 @@ test('buildLesson - portable mode does not double-import @qvac/sdk names', (t) =
     'loadModel(); Client;',
   ].join('\n');
   const built = buildLesson({ source, cwd: COURSES, runtime: 'node', portable: true });
-  t.is((built.match(/\bloadModel\b/g) || []).length, 2, 'declared once, used once');
+  t.is((built.match(/loadModel as __academySdk_loadModel/g) || []).length, 1, 'imported once');
   t.is(built.split('\n').filter((l) => l.includes(qvacSdkToken())).length, 1, 'one import line for @qvac/sdk');
 });
 
@@ -79,4 +80,37 @@ test('buildLesson - portable mode covers the bare runtime preamble too', (t) => 
   t.ok(built.includes(bareBuiltinToken('bare-fs')), 'dedupePreamble\'s fs import is also a token');
   t.absent(built.includes(__dirname), 'no path from this machine leaked in');
   t.absent(built.includes('node_modules'), 'no node_modules path leaked in');
+});
+
+// A run that prints nothing while it waits should still say what it waits on.
+test('buildLesson - a slow SDK call names itself while it runs', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'academy-trace-'));
+  t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  fs.writeFileSync(
+    path.join(dir, 'sdk.mjs'),
+    'export const loadModel = async () => { await new Promise((r) => setTimeout(r, 500)); return "m1"; };\n'
+      + 'export const completion = () => ({ events: [] });\n'
+      + 'export const close = async () => {};\n',
+  );
+  const built = buildLesson({
+    source:
+      'import { loadModel, completion } from "@qvac/sdk";\n'
+      + 'async function main() { const m = await loadModel({ modelSrc: 1, ctx: 2 }); completion({ modelId: m }); }\n'
+      + 'main();\n',
+    cwd: COURSES,
+  }).replace(/^import \{[^}]*\} from ".*";$/m, (line) => line.replace(/from ".*";$/, 'from "./sdk.mjs";'));
+  fs.writeFileSync(path.join(dir, 'lesson.mjs'), built);
+
+  const child = spawn(process.execPath, [path.join(dir, 'lesson.mjs')], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
+  t.teardown(() => clearTimeout(timer));
+  let err = '';
+  child.stderr.on('data', (d) => (err += d));
+  await new Promise((resolve) => child.on('exit', resolve));
+  clearTimeout(timer);
+
+  t.ok(/^→ loadModel\(\{ modelSrc, ctx \}\)$/m.test(err), 'the open call names itself and its arguments');
+  t.ok(/^ {2}✓ loadModel \(0\.\d+s\)$/m.test(err), 'and closes with what it cost');
+  t.absent(/completion/.test(err), 'a call that returns at once is not worth a line');
 });

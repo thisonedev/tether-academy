@@ -10,6 +10,9 @@ export interface LessonProgress {
   detail: string;
   percent: number;
   completed: boolean;
+  /** Index of the line this came from, so the bar renders where it happened
+   *  rather than above output that arrived after it. */
+  at: number;
 }
 
 export interface ProgressLine {
@@ -48,7 +51,8 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
   let finetuneBatches = 0;
   let finetuneDone = false;
 
-  for (const { line } of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]?.line;
     if (typeof line !== 'string' || line.length === 0) continue;
 
     if (FINETUNE_DONE.test(line)) finetuneDone = true;
@@ -64,6 +68,7 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
         // Nothing follows a finished download until the run prints its own
         // progress, so say it landed rather than sitting at a full bar.
         completed: done >= 100,
+        at: i,
       };
       continue;
     }
@@ -80,6 +85,7 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
         detail: `step ${step}/${totalSteps} (epoch ${epoch}/${totalEpochs})`,
         percent: pct(step, totalSteps),
         completed: false,
+        at: i,
       };
       continue;
     }
@@ -93,6 +99,7 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
         detail: `${current}/${total}`,
         percent: pct(current, total),
         completed: false,
+        at: i,
       };
       continue;
     }
@@ -106,6 +113,7 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
         detail: `${current}/${total}`,
         percent: pct(current, total),
         completed: false,
+        at: i,
       };
     }
   }

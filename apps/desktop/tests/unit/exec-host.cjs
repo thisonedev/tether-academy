@@ -161,6 +161,28 @@ test('exec-host - a security scan that cannot run does not force a prompt on its
   t.is(host.listDeviceRequests().length, 0, 'a run needing no device/network access still runs unprompted');
 });
 
+// A timed-out review used to report only that it timed out, which is the
+// one thing already obvious from the 30s wait.
+test('exec-host - a review that overran its deadline reports where the time went', async (t) => {
+  const { host, replies, audit } = fakeHost({
+    runSecurityScan: async () => {
+      throw new Error(
+        'The AI security review ran past its deadline (model load 12.1s, no first token after 17.9s).',
+      );
+    },
+  });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  await settle();
+
+  const stage = replies.find((r) => r.kind === 'chunk' && /Code review timed out/.test(r.data ?? ''));
+  t.ok(stage, 'the run says the review timed out');
+  t.ok(/model load 12.1s/.test(stage.data), 'and how long the model took to load');
+  t.ok(/no first token after 17.9s/.test(stage.data), 'and that no token ever came');
+  t.ok(audit.some((a) => a.type === 'peer:exec:security-scan-failed'), 'the full message is kept locally');
+});
+
 // `code` is buildLesson()'s wrapped output; scan and preview should see the
 // underlying lesson source instead, though `code` is still what spawns.
 test('exec-host - the security scan and the human-facing preview use the raw source, not the wrapped code', async (t) => {
@@ -222,6 +244,38 @@ test('exec-host - denied device access refuses the run rather than running it mu
   t.ok(/microphone/.test(err.message), 'the refusal names the device');
   t.absent(host.hasRun(PEER), 'and the slot is released');
   t.absent(replies.some((r) => r.kind === 'started'), 'nothing was ever spawned');
+});
+
+// startQVACProvider is the delegated-inference lessons' loopback server; a
+// bare fetch of localhost reads as egress and asks for `all` on its own.
+const LOOPBACK_CODE = 'const stop = await startQVACProvider({ port: 8080 });';
+
+// bwrap has no loopback-only mode, so a localhost lesson gets full egress
+// there. That used to refuse the run outright.
+test('exec-host - a localhost run under bwrap prompts with the scope it would get', async (t) => {
+  const { host, replies, audit } = fakeHost({ getPlatform: () => 'linux' });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: LOOPBACK_CODE, mode: 'inline' });
+  await settle();
+
+  t.absent(replies.some((r) => r.kind === 'error'), 'the run is not refused for it');
+  const [pending] = host.listDeviceRequests();
+  t.ok(pending, 'a human is asked');
+  t.is(pending.networkScope, 'all', 'and told approving grants full network access');
+  t.ok(audit.some((a) => a.type === 'peer:exec:network-widened'), 'the widening is on the record');
+});
+
+test('exec-host - a localhost run on a sandbox that can hold it says nothing about scope', async (t) => {
+  const { host } = fakeHost({ getPlatform: () => 'darwin' });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: LOOPBACK_CODE, mode: 'inline' });
+  await settle();
+
+  const [pending] = host.listDeviceRequests();
+  t.ok(pending, 'the prompt still happens, since the run reaches off the process');
+  t.is(pending.networkScope, undefined, 'with no widening to disclose');
 });
 
 // Revocation drops the pairing; this is the second gate, the one the run itself has to pass.
@@ -433,4 +487,73 @@ test('exec-host - a review that keeps failing is switched off for later runs', a
   await run();
   await run();
   t.is(calls, 2, 'and not attempted again once it has failed its limit');
+
+  // The pause has to lift on its own; before this it held until the app restarted.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 11 * 60_000;
+  t.teardown(() => { Date.now = realNow; });
+  await run();
+  t.is(calls, 3, 'and tried once more after the cooldown runs out');
+});
+
+// chat.cjs answers `matched` without loading a model when the code is a file
+// this device ships, so the row has to say so: no review produced that line.
+test('exec-host - code the host already ships closes the stage without a verdict', async (t) => {
+  const { host, replies } = fakeHost({
+    runSecurityScan: async () => ({
+      modelName: null,
+      matched: true,
+      truncated: false,
+      result: { verdict: 'clean', concerns: [] },
+    }),
+  });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  for (let i = 0; i < 12; i++) await settle();
+  host.cancel(PEER);
+  await settle();
+
+  const row = replies.find((r) => r.kind === 'chunk' && /✓/.test(r.data ?? '') && /lesson|reviewed/i.test(r.data));
+  t.ok(row, 'the stage closes');
+  t.ok(/matches a lesson on this device/.test(row.data), 'saying the file was recognised');
+  t.absent(/Code reviewed/.test(row.data), 'not claiming a review produced it');
+});
+
+// The wire verdict is the model's word, and 'clean' told the reader nothing
+// about what the review had done.
+test('exec-host - the stage row states the verdict in the reader\'s terms', async (t) => {
+  const { host, replies } = fakeHost();
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  for (let i = 0; i < 12; i++) await settle();
+  host.cancel(PEER);
+  await settle();
+
+  const row = replies.find((r) => r.kind === 'chunk' && /Code reviewed:/.test(r.data ?? ''));
+  t.ok(row, 'the review closes its stage');
+  t.ok(/nothing flagged/.test(row.data), 'and says what it found');
+  t.absent(/clean/.test(row.data), 'without the wire value');
+});
+
+// Without a device or network ask there is no consent prompt to carry them, and
+// the concerns used to stop there.
+test('exec-host - a suspicious verdict reaches the reader on a run that prompts for nothing', async (t) => {
+  const { host, replies, audit } = fakeHost({
+    runSecurityScan: async () => ({
+      modelName: null,
+      result: { verdict: 'suspicious', concerns: [{ summary: 'reads an unrelated path', snippet: 'x' }] },
+    }),
+  });
+  t.teardown(() => host.stopAll());
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  for (let i = 0; i < 12; i++) await settle();
+  host.cancel(PEER);
+  await settle();
+
+  const printed = replies.filter((r) => r.kind === 'chunk' && /reads an unrelated path/.test(r.data ?? ''));
+  t.is(printed.length, 1, 'the concern is printed');
+  t.ok(audit.some((a) => a.type === 'peer:exec:security-concerns'), 'and recorded');
 });

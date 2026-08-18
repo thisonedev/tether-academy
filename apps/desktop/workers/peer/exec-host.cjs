@@ -35,7 +35,10 @@ const {
 const { syncFast, scan, removeAddedSince, verifyModelsAsync, pruneTruncatedModels, findTruncatedModels, cacheBytes, acceptAll } = require('../../shared/model-integrity.cjs');
 // Cache entries are prefixed with the SDK's content hash, same convention as model-integrity.cjs.
 const CACHE_HASH_PREFIX = /^[0-9a-f]{16}_/;
-const { substitutePortableImports } = require('../../shared/portable-lesson-imports.cjs');
+const {
+  substitutePortableImports,
+  substitutePortableAssets,
+} = require('../../shared/portable-lesson-imports.cjs');
 // Runs under Bare (workers/entry.cjs), so it can't require electron/chat.cjs
 // directly; ctx.runSecurityScan bridges to it over RPC instead.
 
@@ -48,6 +51,12 @@ function resolvePortableBuiltin(pkg) {
   return require.resolve(pkg);
 }
 
+// The same directory the sandbox grants the child read access to, so a fixture
+// the lesson can name is one the run can actually open.
+function courseAssetRoot() {
+  return require('../sandbox/capabilities.cjs').defaultTemplateVars().coursesDir;
+}
+
 // --require'd into a node-runtime child so it does not claim a Dock icon.
 const DOCK_HIDE_SHIM = path.resolve(__dirname, '..', '..', 'electron', 'dock-hide-shim.cjs');
 
@@ -58,10 +67,16 @@ const IDENTITY_WAIT_MS = 10_000;
 // The scan loads its own model before it can look at the code; a run has no
 // child yet at this point, so a hung load would otherwise wedge it forever.
 const SECURITY_SCAN_TIMEOUT_MS = 30_000;
+// Only covers an RPC that never answers at all; the scan aborts itself first.
+const SCAN_RACE_GRACE_MS = 2_000;
 // Hardware that cannot finish the review inside its timeout pays the timeout
 // and the CPU on every run and never gets a verdict, so stop asking after this
 // many consecutive failures. A single success clears it.
 const SECURITY_SCAN_FAILURE_LIMIT = 2;
+// Past that limit the review takes a break and tries again later. The usual
+// cause is a host busy with something else, and a permanent stop meant the
+// first two slow runs of a session cost every run after them.
+const SECURITY_SCAN_COOLDOWN_MS = 10 * 60_000;
 // Native inference ignores SIGTERM, hence the grace before SIGKILL.
 const SIGKILL_GRACE_MS = 3_000;
 // SIGKILL can't reap a child stuck in an uninterruptible kernel wait (e.g. a
@@ -101,10 +116,6 @@ const PEER_ERROR_TEXT = {
     + 'course allowlist, and a run cannot install its own tooling.',
   'package-prepare-failed':
     'Peer exec refused: this device could not prepare the tooling the run asked for.',
-  'network-unenforceable': (meta) =>
-    "Peer exec refused: this device's sandbox cannot hold a run to "
-    + `${meta.network ?? 'the requested'} network access.`
-    + (meta.networkScope ? ` It would get ${meta.networkScope}.` : ''),
   'consent-denied': (meta) => {
     const asked = [...(meta.devices ?? []), ...(meta.network ? ['network'] : [])];
     return `Peer exec refused: ${asked.join(', ') || 'the access it asked for'} `
@@ -119,6 +130,9 @@ const PEER_ERROR_TEXT = {
     `Peer exec refused: the ${meta.runtime ?? 'requested'} runtime is not available on this device.`,
   'portable-import-unresolved': (meta) =>
     `Peer exec refused: this device is missing ${(meta.unresolved ?? []).join(', ') || 'a required package'}.`,
+  'course-asset-missing': (meta) =>
+    `Peer exec refused: this device's course checkout has no ${(meta.assets ?? []).join(', ') || 'input file the lesson names'}.`,
+  'course-asset-escape': 'Peer exec refused: the run named an input file outside the courses directory.',
   'sandbox-unavailable': 'Peer exec refused: the OS sandbox is not available on this device.',
   'spawn-failed': 'Peer exec failed: the run could not be started on this device.',
   sigtrap: 'Peer exec aborted: process trapped under the OS sandbox (SIGTRAP). '
@@ -133,6 +147,7 @@ const WIRE_SAFE_META = [
   'fileName',
   'devicePublicKey',
   'packages',
+  'assets',
   'devices',
   'network',
   'networkScope',
@@ -143,6 +158,32 @@ const WIRE_SAFE_META = [
   'sandboxMode',
   'sandboxed',
 ];
+
+// chat.cjs puts the phase split in parentheses; anything else is not a
+// measurement and is left off the stage line rather than guessed at.
+function scanSplit(detail) {
+  const inner = /\(([^)]*)\)\s*\.?$/.exec(String(detail));
+  return inner ? inner[1] : 'no timing reported';
+}
+
+// The wire verdicts belong to the model's prompt contract. On a stage row they
+// describe the review rather than name its return value.
+const VERDICT_TEXT = {
+  clean: 'nothing flagged',
+  suspicious: 'worth a look',
+  malicious: 'harmful',
+};
+
+function verdictText(verdict) {
+  return VERDICT_TEXT[verdict] ?? verdict;
+}
+
+// One line, no trailing newline or stack: this goes on a stage row.
+function scanReason(detail) {
+  const first = String(detail).split('\n')[0].trim();
+  if (first.length === 0) return 'no reason reported';
+  return first.length > 120 ? `${first.slice(0, 119)}\u2026` : first;
+}
 
 function peerErrorText(code, meta) {
   const entry = PEER_ERROR_TEXT[code];
@@ -222,6 +263,7 @@ function previewCode(code) {
  * @param {() => string | null} [ctx.getUserData]
  * @param {() => string | null} [ctx.getSecretScheme]
  * @param {(discoveryKeyHex: string) => string | null} [ctx.getRevokedDeviceKey]
+ * @param {() => NodeJS.Platform} [ctx.getPlatform]
  * @param {(discoveryKeyHex: string, timeoutMs: number) => Promise<{ ok: boolean, reason: string | null }>} [ctx.awaitDeviceVerified]
  * @param {(payload: { code: string, lessonKey: null, lessonReference: string | null, modelHint: undefined, timeoutMs: number }) => Promise<{ modelName: string | null, result: { verdict: string, concerns: Array<{ summary: string, snippet: string }> } }>} [ctx.runSecurityScan]
  */
@@ -236,6 +278,9 @@ function createExecHost(ctx) {
     getUserData = () => null,
     getSecretScheme = () => null,
     getRevokedDeviceKey = () => null,
+    // Only the network scope reads this; a test drives the bwrap widening
+    // from a machine that is not running bwrap.
+    getPlatform = () => process.platform,
     // No transport means nothing can prove who is on the wire, so nothing runs.
     awaitDeviceVerified = async () => ({ ok: false, reason: 'no-handshake' }),
     // index.cjs overrides this with the real RPC bridge; unconfigured, it
@@ -248,6 +293,14 @@ function createExecHost(ctx) {
   // Consecutive review failures on this device. Per host rather than module
   // scope so one host's bad hardware can't switch the review off elsewhere.
   let securityScanFailures = 0;
+  // When the pause above lifts and the review is worth another try.
+  let securityScanPausedUntil = 0;
+  const noteScanFailure = () => {
+    securityScanFailures += 1;
+    if (securityScanFailures >= SECURITY_SCAN_FAILURE_LIMIT) {
+      securityScanPausedUntil = Date.now() + SECURITY_SCAN_COOLDOWN_MS;
+    }
+  };
 
   // discoveryKey -> in-flight run, set from the moment a request is accepted
   // (including while parked on a device answer), so one peer holds one slot.
@@ -442,17 +495,18 @@ function createExecHost(ctx) {
    * Park the run on a human. One prompt covers everything asked for;
    * `concerns`/`sourcePreview` are attached whenever present so approving is never blind.
    * @param {string} discoveryKeyHex
-   * @param {{ devices: string[], network: string | null, declared?: { network?: string, device?: string[] }, concerns?: string[], sourcePreview?: string }} asks
+   * @param {{ devices: string[], network: string | null, networkScope?: string | null, declared?: { network?: string, device?: string[] }, concerns?: string[], sourcePreview?: string }} asks
    * @param {string | null} label
    */
   function requestConsent(discoveryKeyHex, asks, label) {
     const requestId = crypto.randomUUID();
-    const { devices, network, declared, concerns, sourcePreview } = asks;
+    const { devices, network, networkScope, declared, concerns, sourcePreview } = asks;
     const entry = {
       requestId,
       discoveryKey: discoveryKeyHex,
       devices,
       network,
+      ...(networkScope ? { networkScope } : {}),
       label: label ?? null,
       userData: getPeerUserData(discoveryKeyHex) ?? null,
       requestedAt: Date.now(),
@@ -697,6 +751,7 @@ function createExecHost(ctx) {
         data: `→ ${label}\n`,
       });
     };
+    // Every closer reads `<Subject> <past participle>`, so the rail scans as one list.
     const phaseDone = (label) => {
       const secs = phaseAt ? (Date.now() - phaseAt) / 1000 : 0;
       sendReply(discoveryKeyHex, {
@@ -705,6 +760,12 @@ function createExecHost(ctx) {
         stream: 'stderr',
         data: `  ✓ ${label}${secs >= 1 ? ` (${secs.toFixed(1)}s)` : ''}\n`,
       });
+    };
+    // A stage the host skipped never opened, so the previous stage's start time
+    // is not its duration; clearing the mark drops the timing from the line.
+    const phaseSkipped = (label) => {
+      phaseAt = 0;
+      phaseDone(label);
     };
 
     // A guest pipelining a request on channel open can reach here ahead of
@@ -758,7 +819,7 @@ function createExecHost(ctx) {
         finishRun(discoveryKeyHex, run);
         return;
       }
-      phase(`Preparing ${wanted.join(', ')}...`);
+      phase(`Preparing packages (${wanted.join(', ')})...`);
       const warm = sandbox.warmPackages(sandbox.npmCacheDir(), wanted);
       if (!warm.ok) {
         fail(
@@ -770,7 +831,7 @@ function createExecHost(ctx) {
         finishRun(discoveryKeyHex, run);
         return;
       }
-      phaseDone('Packages ready');
+      phaseDone('Packages prepared');
       appendAudit('peer:exec:mcp-warmed', { discoveryKey: discoveryKeyHex, packages: wanted });
     }
 
@@ -802,18 +863,26 @@ function createExecHost(ctx) {
     const displaySource =
       typeof declared.rawSource === 'string' && declared.rawSource.length > 0 ? declared.rawSource : code;
 
+    // A cooldown that has run out earns the review another attempt, so a busy
+    // hour on this host doesn't cost every run after it.
+    if (securityScanFailures >= SECURITY_SCAN_FAILURE_LIMIT && Date.now() >= securityScanPausedUntil) {
+      securityScanFailures = 0;
+    }
+
     // 'unavailable' (no model, scan errored) stays distinct from 'suspicious':
     // it never turns a run needing no device/network access into one that does.
     let securityVerdict = 'clean';
     let securityConcerns = [];
+    let securityTruncated = false;
     if (securityScanFailures >= SECURITY_SCAN_FAILURE_LIMIT) {
       // Past the limit, so the prompt goes up without an AI opinion behind it.
+      const mins = Math.max(1, Math.ceil((securityScanPausedUntil - Date.now()) / 60_000));
       securityVerdict = 'unavailable';
       securityConcerns = [
-        'AI security review is switched off on this device after repeatedly failing to finish. '
-        + 'Review the code yourself before approving.',
+        `AI security review is paused on this device for another ${mins} minute(s) after repeatedly `
+        + 'failing to finish. Review the code yourself before approving.',
       ];
-      phaseDone('AI review skipped on this device');
+      phaseSkipped('Code review paused on this device');
     } else try {
       phase('Reviewing the code...');
       const scanned = await Promise.race([
@@ -829,7 +898,10 @@ function createExecHost(ctx) {
           timeoutMs: SECURITY_SCAN_TIMEOUT_MS,
         }),
         new Promise((resolve) => {
-          const timer = setTimeout(() => resolve(null), SECURITY_SCAN_TIMEOUT_MS);
+          // Later than the scan's own deadline on purpose: when the review is
+          // the thing that ran long, its rejection names where the time went,
+          // and winning this race here would throw that away.
+          const timer = setTimeout(() => resolve(null), SECURITY_SCAN_TIMEOUT_MS + SCAN_RACE_GRACE_MS);
           if (typeof timer.unref === 'function') timer.unref();
           // No child yet at this phase, so cancel has nothing to signal;
           // wire it here so Stop doesn't have to wait out the full timeout.
@@ -844,25 +916,54 @@ function createExecHost(ctx) {
         securityScanFailures = 0;
         securityVerdict = scanned.result.verdict;
         securityConcerns = scanned.result.concerns.map((c) => c.summary);
-        phaseDone(`Reviewed: ${securityVerdict}`);
+        securityTruncated = scanned.truncated === true;
+        // A verdict on part of a file is not a verdict on the file, so the
+        // stage line says which one this is.
+        if (securityTruncated) {
+          securityConcerns.push(
+            'The code was too long for the review model on this device, so only its first part was reviewed.',
+          );
+        }
+        phaseDone(
+          // No model ran: the host recognised the file as one of its own.
+          scanned.matched === true
+            ? 'Code matches a lesson on this device'
+            : `Code reviewed: ${verdictText(securityVerdict)}${securityTruncated ? ', partial' : ''}`,
+        );
       } else {
-        if (!run.cancelled) securityScanFailures += 1;
+        if (!run.cancelled) noteScanFailure();
         securityVerdict = 'unavailable';
         securityConcerns = [
           run.cancelled
             ? 'Cancelled while the AI security review was still loading its model.'
             : 'AI security review timed out on this device. Review the code yourself before approving.',
         ];
-        phaseDone(run.cancelled ? 'Review cancelled' : 'Review timed out');
+        phaseDone(run.cancelled ? 'Code review cancelled' : 'Code review timed out');
       }
     } catch (err) {
       run.denyScanWait = null;
-      securityScanFailures += 1;
+      noteScanFailure();
       securityVerdict = 'unavailable';
+      const detail = err instanceof Error ? err.message : String(err);
+      const overran = /past its deadline/.test(detail);
       securityConcerns = [
-        'AI security review unavailable on this device. Review the code yourself before approving.',
+        `AI security review ${overran ? 'timed out' : 'unavailable'} on this device: ${scanReason(detail)} `
+        + 'Review the code yourself before approving.',
       ];
-      phaseDone('Review unavailable');
+      appendAudit('peer:exec:security-scan-failed', {
+        discoveryKey: discoveryKeyHex,
+        runId: run.runId,
+        detail,
+      });
+      // The split rides the stage line: the reader watching a run is the one
+      // who wants to know whether the deadline went on loading or generating.
+      // Anything else names its own cause, which used to reach the audit log
+      // only, leaving a bare 'unavailable' on screen with nothing to act on.
+      phaseDone(
+        overran
+          ? `Code review timed out: ${scanSplit(detail)}`
+          : `Code review unavailable: ${scanReason(detail)}`,
+      );
     }
 
     if (securityVerdict === 'malicious') {
@@ -881,18 +982,18 @@ function createExecHost(ctx) {
       return;
     }
 
-    // A loopback ask under bwrap comes out as full egress, wider than what
-    // was approved, so refuse rather than silently widen it.
-    const netScope = sandbox.enforcedNetworkScope(netMode);
-    if (netScope !== netMode) {
-      fail(
-        discoveryKeyHex,
-        'network-unenforceable',
-        `sandbox enforces ${netScope} for a requested ${netMode}`,
-        { runId: run.runId, mode, fileName, network: netMode, networkScope: netScope },
-      );
-      finishRun(discoveryKeyHex, run);
-      return;
+    // A loopback ask under bwrap comes out as full egress. That no longer
+    // refuses the run, but the prompt discloses it: approving a localhost
+    // lesson here approves everything the network stack can reach.
+    const netScope = sandbox.enforcedNetworkScope(netMode, getPlatform());
+    const widenedScope = netScope === netMode ? null : netScope;
+    if (widenedScope) {
+      appendAudit('peer:exec:network-widened', {
+        discoveryKey: discoveryKeyHex,
+        runId: run.runId,
+        requested: netMode,
+        enforced: netScope,
+      });
     }
 
     // A cancel that arrived during the scan above would otherwise still
@@ -903,16 +1004,45 @@ function createExecHost(ctx) {
       return;
     }
 
-    const grants = [];
     // 'suspicious' no longer forces a prompt on its own; the model has shown
     // that verdict to be unreliable. Only 'malicious' above hard-refuses.
-    if (wantedDevices.length > 0 || netMode !== 'none') {
+    const willPrompt = wantedDevices.length > 0 || netMode !== 'none';
+
+    // Without a prompt to ride on, everything the review found was dropped
+    // here: a flagged compute-only lesson ran with its concerns unread. They
+    // go to the transcript and the audit log now.
+    if (!willPrompt && securityConcerns.length > 0) {
+      for (const concern of securityConcerns) {
+        sendReply(discoveryKeyHex, {
+          kind: 'chunk',
+          runId: run.runId,
+          stream: 'stderr',
+          data: `    ! ${concern}\n`,
+        });
+      }
+    }
+    if (securityVerdict === 'suspicious' || securityTruncated) {
+      appendAudit('peer:exec:security-concerns', {
+        discoveryKey: discoveryKeyHex,
+        runId: run.runId,
+        verdict: securityVerdict,
+        truncated: securityTruncated,
+        prompted: willPrompt,
+        concerns: securityConcerns,
+        sourcePreview: previewCode(displaySource),
+      });
+    }
+
+    const grants = [];
+    if (willPrompt) {
       run.phase = 'awaiting-consent';
+      phase('Awaiting permissions approval...');
       const consent = requestConsent(
         discoveryKeyHex,
         {
           devices: wantedDevices,
           network: netReason,
+          networkScope: widenedScope,
           declared: {
             network: msg.declared?.network,
             device: msg.declared?.device,
@@ -927,6 +1057,7 @@ function createExecHost(ctx) {
       run.denyConsent = null;
       run.phase = 'starting';
       if (!approved) {
+        // Leave the stage open; the run's failure message below explains why.
         fail(
           discoveryKeyHex,
           reason === 'cancelled' ? 'cancelled-awaiting-consent' : 'consent-denied',
@@ -936,6 +1067,7 @@ function createExecHost(ctx) {
         finishRun(discoveryKeyHex, run);
         return;
       }
+      phaseDone('Permissions approved');
       grants.push(...wantedDevices);
       if (netMode === 'localhost') grants.push('network-loopback');
       else if (netMode === 'all') grants.push('network');
@@ -1028,6 +1160,20 @@ function createExecHost(ctx) {
       return;
     }
     code = portableResult.code;
+
+    const assetResult = substitutePortableAssets(code, { coursesDir: courseAssetRoot() });
+    if (assetResult.refused.length > 0 || assetResult.missing.length > 0) {
+      const bad = assetResult.refused.length > 0 ? assetResult.refused : assetResult.missing;
+      fail(
+        discoveryKeyHex,
+        assetResult.refused.length > 0 ? 'course-asset-escape' : 'course-asset-missing',
+        `${assetResult.refused.length > 0 ? 'outside the courses directory' : 'not on this device'}: ${bad.join(', ')}`,
+        { runId: run.runId, mode, fileName, label, assets: bad },
+      );
+      finishRun(discoveryKeyHex, run);
+      return;
+    }
+    code = assetResult.code;
 
     // The host picks the workspace, not the peer: a `cwd` in the request would
     // let a remote choose where writes land.

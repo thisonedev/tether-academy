@@ -4,12 +4,14 @@
 export const QVAC_THEME_NAME = 'qvac-dark';
 
 const C = {
-  bg: '282c34',
+  // The app's own canvas, so the code well sits at the same temperature as the
+  // chrome around it. One Dark's #282c34 is blue-grey and read cold here.
+  bg: '090f0c',
   fg: 'abb2bf',
   cursor: '528bff',
   selection: '3e4451',
-  lineHighlight: '2c313a',
-  widgetBg: '21252b',
+  lineHighlight: '0e1411',
+  widgetBg: '050a07',
   widgetBorder: '181a1f',
   comment: '5c6370',
   keyword: 'c678dd',
@@ -23,6 +25,11 @@ const C = {
   invalidBg: 'e05252',
   invalidFg: 'ffffff',
 };
+
+// The console paints itself with this so output shares the editor's surface
+// instead of sitting in a differently coloured box below it. Derived, so the
+// two cannot drift apart.
+export const QVAC_EDITOR_BACKGROUND = `#${C.bg}`;
 
 export const QVAC_DARK_TOKEN_RULES = [
   { token: '', foreground: C.fg },

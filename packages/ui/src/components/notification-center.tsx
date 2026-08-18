@@ -135,6 +135,12 @@ function DeviceConsentRow({
           )}
           {!hasAccessAsk && ' is waiting to run on this device. '}
           It stays blocked until you answer, and nothing is recorded or sent unless you allow it.
+          {request.networkScope ? (
+            <span className="mt-1 block text-canvas-foreground">
+              This device&apos;s sandbox cannot hold a run to localhost, so allowing this gives it{' '}
+              <span className="font-medium">{request.networkScope}</span> network access.
+            </span>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button

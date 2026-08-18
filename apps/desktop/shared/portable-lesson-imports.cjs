@@ -81,6 +81,13 @@ function npmPackageToken(spec) {
   return `${TOKEN_PREFIX}npm-package:${spec}`;
 }
 
+// buildLesson makes a lesson's courses-relative fixture path absolute, which
+// names the wrong filesystem on a peer run, so portable mode emits this and
+// the host resolves it. `rel` is forward-slashed whatever platform built it.
+function courseAssetToken(rel) {
+  return `${TOKEN_PREFIX}course-asset:${rel}`;
+}
+
 /**
  * @param {string} spec
  * @returns {boolean}
@@ -153,6 +160,40 @@ function substitutePortableImports(code, resolvers) {
   return { code: out, unresolved };
 }
 
+const ASSET_TOKEN_RE = new RegExp(`(['"])${TOKEN_PREFIX}course-asset:([^'"]+)\\1`, 'g');
+
+/**
+ * Resolves every course-asset token in `code` against this machine's courses
+ * directory.
+ * @param {string} code
+ * @param {{ coursesDir: string }} opts
+ * @returns {{ code: string, missing: string[], refused: string[] }}
+ *   `missing`: named a file this device does not have. `refused`: pointed
+ *   outside the courses directory, which no lesson has cause to do.
+ */
+function substitutePortableAssets(code, { coursesDir }) {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.resolve(coursesDir);
+  const missing = [];
+  const refused = [];
+  const out = code.replace(ASSET_TOKEN_RE, (match, quote, rel) => {
+    const abs = path.resolve(root, rel);
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      refused.push(rel);
+      return match;
+    }
+    // Checked here rather than left to the run: the SDK's own error names a
+    // path from a filesystem the reader is not looking at.
+    if (!fs.existsSync(abs)) {
+      missing.push(rel);
+      return match;
+    }
+    return `${quote}${abs}${quote}`;
+  });
+  return { code: out, missing, refused };
+}
+
 module.exports = {
   TOKEN_PREFIX,
   BARE_BUILTINS,
@@ -164,7 +205,9 @@ module.exports = {
   qvacSdkPluginToken,
   bareBuiltinToken,
   npmPackageToken,
+  courseAssetToken,
   isPortableToken,
   resolvePortableToken,
   substitutePortableImports,
+  substitutePortableAssets,
 };

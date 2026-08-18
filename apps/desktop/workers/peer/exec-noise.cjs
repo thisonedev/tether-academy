@@ -58,6 +58,11 @@ const NOISE_LINE = [
   /^warning: consult docs\/build\.md for compilation instructions$/i,
   // CPU-path tensor repacking, one line per tensor on a large model.
   /^repack: /i,
+  // The SDK's component loggers, e.g. `[QVACRegistryClient] [INFO] Downloading
+  // blob directly { ... }`. Bookkeeping for work already on screen: the stage
+  // line names the call and the bar shows the download. WARN and ERROR are
+  // left alone, since those are the run telling you something.
+  /^\[[A-Za-z][\w.-]*\]\s*\[(INFO|DEBUG|TRACE|VERBOSE)\]/,
 ];
 
 // Above this, a partial line is forwarded verbatim rather than held until the

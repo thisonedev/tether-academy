@@ -4,10 +4,17 @@
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { createThinkingFilter } = require('./chat-thinking-filter.cjs');
-const { buildSystemPrompt, buildVerifySystemPrompt, buildSecuritySystemPrompt } = require('./chat-context.cjs');
+const {
+  buildSystemPrompt,
+  buildVerifySystemPrompt,
+  buildSecuritySystemPrompt,
+  buildCompactSecurityPrompt,
+} = require('./chat-context.cjs');
 const { refreshDocs, getCachedDocs } = require('./chat-docs.cjs');
 const { createMarkdownStripper } = require('./chat-strip-markdown.cjs');
 const { splitParagraphs } = require('./chat-paragraph-splitter.cjs');
+const { isKnownLessonCode } = require('./lesson-match.cjs');
+const { normalizeLessonCode } = require('@academy/validation/lesson-code');
 
 console.log('[chat] module loaded, build = 2026-08-11-adopt-from-error-message');
 
@@ -21,6 +28,10 @@ const CHAT_PRESETS = {
   'Qwen3-4B-Q4_K_M.gguf': 'QWEN3_4B_INST_Q4_K_M',
   'Qwen3-8B-Q4_K_M.gguf': 'QWEN3_8B_INST_Q4_K_M',
 };
+
+// What loadModel asks the addon for, and what every prompt here is sized
+// against. See approxContextWindow for why the request is trusted.
+const MODEL_CTX_SIZE = 4096;
 
 function isChatPreset(name) {
   return Object.prototype.hasOwnProperty.call(CHAT_PRESETS, name);
@@ -177,11 +188,9 @@ async function ensureLoaded(filename) {
   }
   emitLoadProgress({ modelName: filename, loaded: 0, total: 0 });
   let modelId;
-  // We pass 4096 even for the 0.6B so the assistant can hold a longer
-  // lesson reference plus a short answer. If the running addon ignores the
-  // value (the 4B preset reports 1024 in early builds), the host still
-  // builds a prompt that fits the worst-case window.
-  const ctxSize = 4096;
+  // Every prompt in this file is budgeted against this number, so the two read
+  // it from the same constant instead of agreeing by hand.
+  const ctxSize = MODEL_CTX_SIZE;
   try {
     modelId = await sdk.loadModel({
       modelSrc,
@@ -279,14 +288,12 @@ function stripTurnRecap(text) {
 }
 
 function approxContextWindow(filename) {
-  // Earlier llama.cpp builds cap at 1024 unless `modelConfig.ctx_size` is
-  // honored. The 0.6B preset keeps the 1024 default and the lesson
-  // reference has to fit alongside the question. The Qwen3-4B and 8B
-  // presets sometimes honor the 4096 we send, sometimes don't, so treat
-  // both as 1024 by default and let the user re-prompt if it overflows.
+  // The addon honours the ctx_size ensureLoaded asks for. Measured against the
+  // 0.6B, 1.7B and 4B presets: each answered a 3.8k-token prompt, and 4.8k
+  // overflowed at exactly `max context tokens 4096`. Nothing in the SDK reports
+  // the window back, so the value we set is the only one to go on.
   if (!filename) return 1024;
-  if (filename === 'Qwen3-0.6B-Q4_0.gguf') return 1024;
-  return 2048;
+  return MODEL_CTX_SIZE;
 }
 
 // Pick a model in priority order: explicit hint from the renderer, anything
@@ -589,10 +596,19 @@ function onVerifyResult(callback) {
 }
 
 const SECURITY_VERDICTS = new Set(['clean', 'suspicious', 'malicious']);
+// The wire value the model is prompted to return when it found nothing. Named
+// here so the checks below read as intent instead of a bare string compare.
+const PASSING_VERDICT = 'clean';
 const MAX_SECURITY_CONCERNS = 10;
 // Ceiling on the review's generation. MAX_SECURITY_CONCERNS summaries plus the
 // verdict fit well inside this; the rest was only ever unused headroom.
 const SECURITY_PREDICT_CAP = 384;
+// Floor for the same, so a small window buys code coverage while the verdict
+// keeps enough room to come back parseable.
+const SECURITY_PREDICT_FLOOR = 160;
+// The chat template wraps every message with role markers the token estimate
+// above cannot see. Reserved so a prompt sized to the window still fits it.
+const SECURITY_TEMPLATE_OVERHEAD = 64;
 
 // A shape mismatch returns null rather than coercing to "clean", so a parse
 // failure never looks like a real verdict.
@@ -608,6 +624,10 @@ function parseSecurityResponse(text) {
     return null;
   }
   if (!parsed || typeof parsed !== 'object' || !SECURITY_VERDICTS.has(parsed.verdict)) return null;
+  // The prompt asks for an empty list on a passing verdict and the model
+  // answers with "nothing concerning here" anyway, which then printed as a
+  // warning next to a run nobody was being warned about.
+  if (parsed.verdict === PASSING_VERDICT) return { verdict: parsed.verdict, concerns: [] };
   const rawConcerns = Array.isArray(parsed.concerns) ? parsed.concerns : [];
   const concerns = rawConcerns
     .filter((c) => c && typeof c === 'object' && typeof c.summary === 'string')
@@ -622,32 +642,78 @@ function parseSecurityResponse(text) {
 // One completion call, parsed to a verdict. Wrapped by securityScan() below,
 // and called directly by peer exec-host.cjs via the worker-client.cjs RPC bridge.
 async function runSecurityScan({ code, lessonKey, lessonReference, modelHint, timeoutMs, signal }) {
+  // Ahead of the model, and ahead of loading one: a file this device already
+  // ships has nothing for a review to find, and this answers in microseconds.
+  if (isKnownLessonCode(code)) {
+    return { modelName: null, matched: true, truncated: false, result: { verdict: PASSING_VERDICT, concerns: [] } };
+  }
+
   const sdk = require('@qvac/sdk');
   if (typeof sdk.completion !== 'function') {
     throw new Error('@qvac/sdk does not export completion in this build');
   }
 
+  // Which phase eats the deadline has never been measured on the host that
+  // misses it, and the fixes differ: a slow load wants a smaller model, a slow
+  // prompt wants less code, slow generation wants a lower predict cap.
+  const startedAt = Date.now();
   const modelName = await resolveModel(modelHint);
+  const loadedAt = Date.now();
   const ctxWindow = approxContextWindow(modelName);
   // A verdict is a short JSON object, so half the context was budget the model
   // could spend but never needed. On a CPU-only host that alone was minutes of
   // generation, which is why the review never landed inside its timeout.
-  const predictBudget = Math.min(SECURITY_PREDICT_CAP, Math.max(300, Math.floor(ctxWindow / 2)));
+  const fits = Math.max(256, ctxWindow - SECURITY_TEMPLATE_OVERHEAD);
 
-  const lessonBudget = Math.max(64, Math.floor((ctxWindow - predictBudget) / 4));
+  // One window holds all of it, so the parts are budgeted against each other:
+  // an independent floor on the code used to push the total past the window and
+  // the model read a clipped prompt. Code first, reference on what is left.
+  const codeTokens = approxTokens(code);
+  let buildPrompt = buildSecuritySystemPrompt;
+  let predictBudget = Math.max(
+    SECURITY_PREDICT_FLOOR,
+    Math.min(SECURITY_PREDICT_CAP, Math.floor(fits / 3)),
+  );
+  const roomForCode = () => Math.max(0, fits - predictBudget - approxTokens(buildPrompt(lessonKey, null)));
+
+  // Both steps trade something real away, so they only happen when the file
+  // would otherwise be cut: a longer answer holds more concerns, and the full
+  // instructions describe what to look for in more detail than the short ones.
+  if (roomForCode() < codeTokens) predictBudget = SECURITY_PREDICT_FLOOR;
+  if (roomForCode() < codeTokens) buildPrompt = buildCompactSecurityPrompt;
+
+  const basePrompt = buildPrompt(lessonKey, null);
+  const spare = roomForCode();
+  const codeBudget = Math.min(codeTokens, spare);
+  // The reference sits under a header the slice below still has to pay for.
+  // Measuring it here keeps a later prompt edit from overrunning the window.
+  const lessonOverhead = Math.max(
+    0,
+    approxTokens(buildPrompt(lessonKey, { content: 'x' })) - approxTokens(basePrompt),
+  );
+  const lessonBudget = Math.max(0, spare - codeBudget - lessonOverhead);
+
   const lessonContext =
-    typeof lessonReference === 'string' && lessonReference.length > 0
+    lessonBudget > 0 && typeof lessonReference === 'string' && lessonReference.length > 0
       ? { content: lessonReference.slice(0, lessonBudget * 4) }
       : null;
 
-  const systemPrompt = buildSecuritySystemPrompt(lessonKey, lessonContext);
-  const promptTokens = approxTokens(systemPrompt);
-  const codeBudget = Math.max(200, ctxWindow - promptTokens - predictBudget);
+  const systemPrompt = buildPrompt(lessonKey, lessonContext);
   const codeCapped = code.slice(0, codeBudget * 4);
+  // Silence here read as a whole file to the model, so a verdict on the first
+  // half of a lesson came back as confidently clean as one on all of it.
+  const truncated = codeCapped.length < code.length;
+  const codeMessage = truncated
+    ? `STUDENT CODE (first ${codeCapped.length} of ${code.length} bytes; the rest did not fit and was NOT reviewed):\n${codeCapped}`
+    : `STUDENT CODE:\n${codeCapped}`;
 
+  // Every preset here is a Qwen3, which reasons by default and spent the whole
+  // predict budget inside <think> before reaching the JSON, leaving the filter
+  // nothing to strip and the parser nothing to read. `/no_think` is Qwen3's own
+  // switch for a direct answer; a model that doesn't know it reads it as text.
   const history = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `STUDENT CODE:\n${codeCapped}` },
+    { role: 'user', content: `${codeMessage}\n/no_think` },
   ];
 
   const thinkingFilter = createThinkingFilter();
@@ -666,6 +732,8 @@ async function runSecurityScan({ code, lessonKey, lessonReference, modelHint, ti
     if (signal.aborted) controller.abort();
     else signal.addEventListener('abort', () => controller.abort(), { once: true });
   }
+  let firstDeltaAt = 0;
+  let deltas = 0;
   try {
     const result = sdk.completion({
       modelId: current.modelId,
@@ -680,6 +748,8 @@ async function runSecurityScan({ code, lessonKey, lessonReference, modelHint, ti
       if (!event || typeof event !== 'object') continue;
       const type = event.type;
       if ((type === 'contentDelta' || type === 'rawDelta') && typeof event.text === 'string' && event.text.length > 0) {
+        if (firstDeltaAt === 0) firstDeltaAt = Date.now();
+        deltas += 1;
         assembled += thinkingFilter.push(event.text);
       } else if (type === 'toolError' && typeof event.error === 'string') {
         throw new Error(`tool error: ${event.error}`);
@@ -688,17 +758,55 @@ async function runSecurityScan({ code, lessonKey, lessonReference, modelHint, ti
   } finally {
     if (deadline) clearTimeout(deadline);
   }
+
+  const split = () => {
+    const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
+    const parts = [`model load ${secs(loadedAt - startedAt)}`];
+    if (firstDeltaAt === 0) {
+      parts.push(`no first token after ${secs(Date.now() - loadedAt)}`);
+    } else {
+      parts.push(`first token ${secs(firstDeltaAt - loadedAt)}`);
+      parts.push(`${deltas} chunks in ${secs(Date.now() - firstDeltaAt)}`);
+    }
+    return parts.join(', ');
+  };
+
   // Half a verdict is not a verdict: parsing a truncated response could read
   // as clean, so an aborted review has to fail rather than answer.
   if (controller.signal.aborted) {
-    throw new Error('The AI security review ran past its deadline.');
+    throw new Error(`The AI security review ran past its deadline (${split()}).`);
   }
+  const coverage = truncated ? `, saw ${codeCapped.length}/${code.length} bytes of code` : '';
+  console.log(`[security] reviewed with ${modelName}: ${split()}${coverage}`);
   assembled += thinkingFilter.flush();
   const parsed = parseSecurityResponse(assembled);
   if (!parsed) {
     throw new Error('The AI security reviewer returned an unexpected response.');
   }
-  return { modelName, result: parsed };
+  return { modelName, matched: false, truncated, result: evidenced(parsed, codeCapped) };
+}
+
+// Shortest quote worth treating as evidence. Below this a model naming a
+// common token ("await", "fs") would corroborate anything.
+const MIN_CONCERN_QUOTE = 12;
+
+// A model this small reads the prompt's own watch list back as its finding,
+// which refused benign lessons in the reviewer's own words. Each concern is
+// asked to quote the code it means, so a quote absent from that code is not
+// evidence, and a verdict left with no evidence is not a verdict.
+function evidenced(parsed, code) {
+  if (parsed.verdict === PASSING_VERDICT) return parsed;
+  const haystack = normalizeLessonCode(code);
+  const concerns = parsed.concerns.filter((concern) => {
+    const quote = normalizeLessonCode(concern.snippet);
+    return quote.length >= MIN_CONCERN_QUOTE && haystack.includes(quote);
+  });
+  if (concerns.length > 0) return { verdict: parsed.verdict, concerns };
+  console.log(
+    `[security] dropped an unevidenced "${parsed.verdict}" verdict:`,
+    parsed.concerns.map((c) => c.summary.slice(0, 80)),
+  );
+  return { verdict: PASSING_VERDICT, concerns: [] };
 }
 
 // IPC-facing wrapper mirroring verify(): returns immediately with a

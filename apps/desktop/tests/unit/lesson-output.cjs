@@ -101,6 +101,17 @@ test('lesson-output - fixture reads are made absolute', (t) => {
   );
 });
 
+// Baking this checkout's path into a peer build is the bug being fixed here.
+test('lesson-output - a portable build leaves fixtures as tokens', (t) => {
+  const built = buildLesson({
+    source: 'const p = "./examples/qvac/image-generation/input/sketch.png";\n',
+    cwd: COURSES,
+    portable: true,
+  });
+  t.ok(built.includes('academy-portable:course-asset:examples/qvac/image-generation/input/sketch.png'));
+  t.absent(built.includes(path.join(COURSES, 'examples/qvac/image-generation/input/sketch.png')));
+});
+
 test('lesson-output - SDK-owned output dirs are pre-created on the host', (t) => {
   const dir = tmp(t);
   precreateOutputDirs('{ outputParametersDir: "output/finetune/", checkpointSaveDir: "output/finetune/checkpoints/" }', dir);

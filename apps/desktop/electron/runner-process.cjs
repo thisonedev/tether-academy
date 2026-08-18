@@ -15,6 +15,7 @@ const {
   qvacSdkPluginToken,
   bareBuiltinToken,
   npmPackageToken,
+  courseAssetToken,
 } = require('../shared/portable-lesson-imports.cjs');
 
 const parentRequire = createRequire(__filename);
@@ -403,7 +404,7 @@ function hookLessonExit(src) {
   return `${src.slice(0, match.index)}__academyFinish(${expr});${src.slice(end)}`;
 }
 
-function resolveFixturePaths(src, coursesDir) {
+function resolveFixturePaths(src, coursesDir, portable) {
   // path.join collapses `..` silently, so the resolved path is checked against coursesDir.
   const root = path.resolve(coursesDir);
   const rootWithSep = root + path.sep;
@@ -412,6 +413,11 @@ function resolveFixturePaths(src, coursesDir) {
     const abs = path.resolve(root, clean);
     if (abs !== root && !abs.startsWith(rootWithSep)) {
       throw new Error(`buildLesson: refused path outside coursesDir: ${rel}`);
+    }
+    // A peer run opens the file on the other machine, where this checkout's
+    // path means nothing, so the host resolves the token against its own.
+    if (portable) {
+      return `${quote}${courseAssetToken(path.relative(root, abs).split(path.sep).join('/'))}${quote}`;
     }
     return `${quote}${abs}${quote}`;
   });
@@ -497,6 +503,72 @@ function routeWritesThroughDedupe(src) {
   return src.replace(/\b(?:fs\s*\.\s*)?writeFileSync\s*\(/g, '__academyWriteFile(');
 }
 
+// A lesson parked in loadModel for two minutes prints nothing and reads as a
+// hang. The wrap already hands the lesson its SDK bindings, so these are the
+// timed ones, reported in the same `→`/`✓` lines the host uses for its stages.
+const tracePreamble = `
+// A call that returns inside this window is not the one anyone is waiting on,
+// so it prints nothing at all.
+const __ACADEMY_TRACE_AFTER_MS = 200;
+// Keys, counts and lengths only: enough to tell two calls apart, without
+// putting a prompt or a document in the output.
+function __academyDescribeArg(v) {
+  if (v === null || v === undefined) return String(v);
+  if (typeof v === "string") return JSON.stringify(v.length > 32 ? v.slice(0, 32) + "…" : v);
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return "[" + v.length + " items]";
+  if (typeof v === "object") {
+    const keys = Object.keys(v);
+    return "{ " + keys.slice(0, 4).join(", ") + (keys.length > 4 ? ", …" : "") + " }";
+  }
+  return typeof v;
+}
+function __academyTrace(bindings) {
+  const out = {};
+  for (const name of Object.keys(bindings)) {
+    const value = bindings[name];
+    // Constants pass through, and a class needs \`new\`, which a plain
+    // function wrapper would break.
+    const isClass = typeof value === "function" && /^class[\\s{]/.test(Function.prototype.toString.call(value));
+    if (typeof value !== "function" || isClass) {
+      out[name] = value;
+      continue;
+    }
+    const traced = function (...args) {
+      const startedAt = Date.now();
+      let announced = false;
+      const timer = setTimeout(() => {
+        announced = true;
+        console.error("→ " + name + "(" + args.map(__academyDescribeArg).join(", ") + ")");
+      }, __ACADEMY_TRACE_AFTER_MS);
+      if (typeof timer.unref === "function") timer.unref();
+      const settled = () => {
+        clearTimeout(timer);
+        if (!announced) return;
+        console.error("  ✓ " + name + " (" + ((Date.now() - startedAt) / 1000).toFixed(1) + "s)");
+      };
+      let result;
+      try {
+        result = value.apply(this, args);
+      } catch (err) {
+        settled();
+        throw err;
+      }
+      // A streaming call returns its handle at once; the tick says the call
+      // came back, not that the stream is drained.
+      if (result && typeof result.then === "function") {
+        return result.then((v) => { settled(); return v; }, (err) => { settled(); throw err; });
+      }
+      settled();
+      return result;
+    };
+    try { Object.assign(traced, value); } catch {}
+    out[name] = traced;
+  }
+  return out;
+}
+`;
+
 /**
  * What Bare doesn't hand a snippet for free: a `process` global and an SDK with
  * its plugins loaded. Skipped when the snippet binds `process` itself, which
@@ -538,19 +610,24 @@ function barePreamble(source, portable) {
 function buildLesson({ source, cwd, runtime = 'node', mockImports = {}, mockNote, portable = false }) {
   const { src: unmockedSource, bindingsBySpec } = stripMockedImports(source, mockImports);
   const resolvedSource = routeWritesThroughDedupe(
-    resolveFixturePaths(resolveAllImports(unmockedSource, runtime, portable), cwd),
+    resolveFixturePaths(resolveAllImports(unmockedSource, runtime, portable), cwd, portable),
   );
   const importedNames = extractImportedNames(unmockedSource);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
   const sdkPath = portable ? qvacSdkToken() : parentRequire.resolve('@qvac/sdk');
-  const importLine = `import { ${namesForImport.join(', ')} } from ${JSON.stringify(sdkPath)};\n`;
+  const aliased = namesForImport.map((n) => `${n} as __academySdk_${n}`).join(', ');
+  const importLine = `import { ${aliased} } from ${JSON.stringify(sdkPath)};\n`;
+  // Same names the lesson wrote, so nothing below this line knows the difference.
+  const traceBinding = `${tracePreamble}const { ${namesForImport.join(', ')} } = __academyTrace({ ${namesForImport
+    .map((n) => `${n}: __academySdk_${n}`)
+    .join(', ')} });\n`;
   const hooked = hookLessonExit(stripForNode(resolvedSource));
   const runtimePreamble = runtime === 'bare' ? barePreamble(source, portable) : '';
   // stdout, not stderr: the lesson's own console.log lines are on stdout, and
   // the two streams don't interleave in true chronological order once captured.
   const noteLine = mockNote ? `console.log(${JSON.stringify('▸ ' + mockNote)});\n` : '';
   const mockPre = mockPreamble(mockImports, bindingsBySpec);
-  return `${runtimePreamble}${importLine}${dedupePreamble(runtime, portable)}${noteLine}${mockPre}${hooked}\n`;
+  return `${runtimePreamble}${importLine}${traceBinding}${dedupePreamble(runtime, portable)}${noteLine}${mockPre}${hooked}\n`;
 }
 
 module.exports = {

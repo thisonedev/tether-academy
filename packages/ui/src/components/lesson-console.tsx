@@ -5,7 +5,9 @@ import { ArrowUp, Check, ChevronDown, Loader2, Settings, Square, X } from 'lucid
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAiBotModel } from './ai-bot-models.js';
-import { parseProgress } from './lesson-progress.js';
+import { type LessonProgress, parseProgress } from './lesson-progress.js';
+import { formatSeconds, type RunSegment, type StageSegment, splitStages } from './lesson-stages.js';
+import { QVAC_EDITOR_BACKGROUND } from './qvac-theme.js';
 import type { OutputLine } from './lesson-workspace.js';
 
 export interface LessonConsoleLessonContext {
@@ -142,16 +144,25 @@ function ShuffleWord({ active, className = '' }: { active: boolean; className?: 
   );
 }
 
-// Gutter dot + connecting line threading AI-side entries into one turn.
-// User messages skip this, keeping only their background bubble.
-function TimelineRow({ children }: { children: React.ReactNode }) {
+// Gutter dot + connector rail. User bubbles skip this. Dot color: grey=in flight, green=ok, red=fail.
+type TimelineState = 'thinking' | 'success' | 'failure' | 'neutral';
+
+const TIMELINE_DOT: Record<TimelineState, string> = {
+  thinking: 'bg-canvas-muted-foreground animate-pulse',
+  success: 'bg-emerald-500',
+  failure: 'bg-red-500',
+  neutral: 'bg-canvas-muted-foreground',
+};
+
+function TimelineRow({ state, children }: { state: TimelineState; children: React.ReactNode }) {
   return (
     <div className="flex gap-3">
       <div className="relative flex w-3 shrink-0 justify-center">
-        <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-canvas-muted-foreground/40" />
-        <span className="absolute inset-x-0 top-3.5 bottom-0 left-1/2 w-px -translate-x-1/2 bg-canvas-border" />
+        {/* Rail first, dot second: keeps the colored dot on top of the line. */}
+        <span className="absolute inset-y-0 top-1.5 left-1/2 w-px -translate-x-1/2 bg-canvas-border" />
+        <span className={`relative z-10 mt-1.5 size-1.5 shrink-0 rounded-full ${TIMELINE_DOT[state]}`} />
       </div>
-      <div className="min-w-0 flex-1 pb-0.5">{children}</div>
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }
@@ -165,40 +176,61 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
     el.scrollTop = el.scrollHeight;
   }, [entries]);
 
+  // Whatever is still going, named once for the pinned line below. Keeping it
+  // out of the scroller is the point: it used to sit after the last output and
+  // walk down the panel as more arrived.
+  const busy = entries.some(
+    (e) => (e.kind === 'run' && e.status === 'running') || (e.kind === 'chat-assistant' && e.streaming),
+  );
+
   return (
+    <div className="flex min-h-0 flex-1 flex-col border-t border-canvas-border">
     <div
       ref={scrollRef}
-      className="min-h-0 flex-1 space-y-3 overflow-y-auto border-t border-canvas-border bg-canvas-muted p-3 text-sm"
+      className="min-h-0 flex-1 space-y-0 overflow-y-auto p-3 text-sm"
+      style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}
     >
       {entries.length === 0 ? <EmptyState /> : null}
       {entries.map((entry) => {
         if (entry.kind === 'chat-user') return <UserBubble key={entry.id} content={entry.content} />;
         if (entry.kind === 'chat-assistant') {
+          // The pinned line below already covers an answer with nothing in it
+          // yet, so it gets no row of its own until it has something to say.
+          if (entry.streaming && entry.content.length === 0) return null;
           return (
-            <TimelineRow key={entry.id}>
-              {entry.streaming && entry.content.length === 0 ? (
-                <ThinkingIndicator />
-              ) : (
-                <AssistantBubble content={entry.content} />
-              )}
+            <TimelineRow key={entry.id} state={entry.streaming ? 'thinking' : 'success'}>
+              <AssistantBubble content={entry.content} />
             </TimelineRow>
           );
         }
         if (entry.kind === 'run') {
           return (
-            <TimelineRow key={entry.id}>
+            <TimelineRow
+              key={entry.id}
+              state={entry.status === 'running' ? 'thinking' : entry.status === 'ok' ? 'success' : 'failure'}
+            >
               <RunCard entry={entry} />
             </TimelineRow>
           );
         }
         return (
-          <TimelineRow key={entry.id}>
+          <TimelineRow key={entry.id} state={checkState(entry)}>
             <div className="space-y-2">
               <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
             </div>
           </TimelineRow>
         );
       })}
+    </div>
+    {busy ? (
+      <p
+        className="flex items-center gap-2 px-4 py-2 font-mono text-xs text-canvas-muted-foreground"
+        style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}
+      >
+        <Loader2 className="size-3 animate-spin" />
+        <ShuffleWord active />
+      </p>
+    ) : null}
     </div>
   );
 }
@@ -392,7 +424,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         : undefined;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-sm">
+    <div className="w-full min-w-0">
       <div
         className="flex h-9 items-center gap-1.5 rounded-md border border-canvas-border bg-canvas px-2"
         title={disabledReason}
@@ -549,18 +581,9 @@ function EntryCard({
   );
 }
 
-function ThinkingIndicator() {
-  return (
-    <div className="flex items-center gap-1.5 font-mono text-xs text-canvas-muted-foreground">
-      <Loader2 className="size-3 animate-spin" />
-      <ShuffleWord active />
-    </div>
-  );
-}
-
 function UserBubble({ content }: { content: string }) {
   return (
-    <div className="max-w-full overflow-hidden rounded-lg bg-canvas-border px-3 py-2">
+    <div className="my-3 max-w-full overflow-hidden rounded-md border border-canvas-border/60 bg-canvas-muted/40 px-3 py-2">
       <p className="whitespace-pre-wrap font-mono text-xs text-canvas-foreground">{content}</p>
     </div>
   );
@@ -591,6 +614,18 @@ const VERDICT_REST: Record<MatchStatus, string> = {
 };
 
 const PASSING_VERDICTS = new Set<MatchStatus>(['match', 'complete', 'different-but-valid']);
+
+// A failing structural check or AI verdict fails the entry; missing AI review only passes if every structural check did.
+function checkState(entry: Extract<ConsoleEntry, { kind: 'check' }>): TimelineState {
+  if (entry.ai === 'loading') return 'thinking';
+  const structuralPassed = entry.structural.every((r) => r.passed);
+  if (entry.ai === 'error') return 'failure';
+  if (entry.ai === 'done') {
+    const verdictPassed = entry.aiVerdict ? PASSING_VERDICTS.has(entry.aiVerdict) : false;
+    return structuralPassed && verdictPassed ? 'success' : 'failure';
+  }
+  return structuralPassed ? 'success' : 'failure';
+}
 
 function CheckCard({
   entry,
@@ -667,16 +702,13 @@ function CheckCard({
 
 // No "View code" here: the editor is right next to it. That's for the
 // receiving device instead (notification-center.tsx, devices-panel.tsx).
+// No spinner on the row: the pinned line below already owns the one spinner
+// on screen, and a second for the same run reads as a second thing running.
 function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
   return (
-    <EntryCard
-      label={entry.deviceLabel ? `run · ${entry.deviceLabel}` : 'run'}
-      icon={entry.status === 'running' ? <Loader2 className="size-2.5 animate-spin" /> : undefined}
-    >
-      <div className="max-h-72 overflow-auto rounded-md border border-canvas-border font-mono text-xs">
-        <OutputView lines={entry.lines} isAnimating={entry.status === 'running'} />
-      </div>
-    </EntryCard>
+    <div className="font-mono text-xs">
+      <OutputView lines={entry.lines} isAnimating={entry.status === 'running'} />
+    </div>
   );
 }
 
@@ -804,9 +836,30 @@ function SavedPreview({ file }: { file: string }) {
 function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {
   const savedFiles = savedFilesFrom(allLines);
   const progress = parseProgress(allLines);
+  const segments = splitStages(allLines);
+  const firstLines = segments.find((s) => s.kind === 'lines');
+  // Each host stage becomes an opener and (when the stage closes) a closer.
+  const body = segments.map((segment, i) => {
+    if (segment.kind === 'stage') {
+      // biome-ignore lint/suspicious/noArrayIndexKey: position in the run is the identity
+      return <StageTranscript key={`stage-${i}`} stage={segment} />;
+    }
+    return (
+      <SegmentLines
+        // biome-ignore lint/suspicious/noArrayIndexKey: position in the run is the identity
+        key={`lines-${i}`}
+        lines={allLines}
+        segment={segment}
+        progress={progress}
+        // Only the run's opening output can be a preamble, so a later segment
+        // does not dim its own first paragraph too.
+        dimPreamble={segment === firstLines}
+      />
+    );
+  });
 
   return (
-    <div className="space-y-1 p-4 text-canvas-muted-foreground">
+    <div className="space-y-1 text-canvas-muted-foreground">
       {allLines.length === 0 && !isAnimating ? (
         <>
           <p className="text-emerald-400">$ Run your code to see results</p>
@@ -816,25 +869,113 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
           </p>
         </>
       ) : null}
-      {progress ? (
-        <div className="mb-2 rounded border border-canvas-border bg-canvas/50 p-2">
-          <div className="mb-1 flex items-center justify-between font-mono text-xs">
-            <span className="text-emerald-400">
-              {progress.completed ? `${progress.label} complete` : `${progress.label}: ${progress.detail}`}
-            </span>
-            <span className="text-canvas-muted-foreground">{progress.percent}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-canvas-muted">
-            <div
-              className="h-full bg-emerald-500 transition-all duration-300 ease-out"
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
-        </div>
+      {body}
+      {savedFiles.length > 0 ? <SavedFilesBar files={savedFiles} /> : null}
+    </div>
+  );
+}
+
+// Re-emits a host phase as its `→ Open...` and `  ✓ Close (1.2s)` lines.
+// A `note` (a `✓` with no opener) shows only the close; a still-open stage
+// shows only the opener. The closer pads 2ch in from the opener.
+function StageTranscript({ stage }: { stage: StageSegment }) {
+  const showOpener = stage.state !== 'note';
+  const showCloser = stage.state !== 'open';
+  return (
+    <>
+      {showOpener ? <p className="text-canvas-foreground/80">→ {stage.openLabel}</p> : null}
+      {showCloser ? (
+        <p className="pl-[2ch] text-canvas-foreground/80">
+          ✓ {stage.closeLabel}
+          {stage.seconds !== null ? ` (${stage.seconds.toFixed(1)}s)` : ''}
+        </p>
       ) : null}
+    </>
+  );
+}
+
+// A run longer than this is a wall of text in a panel a few hundred pixels
+// tall, so the tail stays on screen and the rest folds behind one click.
+const FOLD_AFTER = 200;
+
+// Output printed while a stage was open, rendered under that stage's row. The
+// progress bar renders inside the segment that produced it, so reading a run
+// top to bottom does not mean scrolling back up for the bar.
+function SegmentLines({
+  lines,
+  segment,
+  progress,
+  dimPreamble,
+}: {
+  lines: OutputLine[];
+  segment: Extract<RunSegment, { kind: 'lines' }>;
+  progress: LessonProgress | null;
+  dimPreamble: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const end = segment.from + segment.count;
+
+  // Download ticks render as the bar rather than as lines, so the fold counts
+  // what is on screen instead of what the run printed.
+  const shown: number[] = [];
+  for (let i = segment.from; i < end; i++) {
+    if (!DOWNLOAD_TICK_LINE.test(lines[i].line)) shown.push(i);
+  }
+  const foldable = Math.max(0, shown.length - FOLD_AFTER);
+  const start = foldable === 0 || expanded ? segment.from : shown[foldable];
+
+  const own = progress && progress.at >= segment.from && progress.at < end ? progress : null;
+  // A bar whose ticks are folded away still belongs on screen, so it leads the
+  // visible lines rather than disappearing with them.
+  const barLeads = own !== null && own.at < start;
+  return (
+    <div className="my-1.5">
+      {foldable > 0 ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="font-mono text-[11px] text-canvas-muted-foreground transition-colors hover:text-canvas-foreground"
+        >
+          {expanded ? `▴ Hide ${foldable} earlier lines` : `▾ ${foldable} earlier lines`}
+        </button>
+      ) : null}
+      {barLeads && own ? <ProgressBar progress={own} /> : null}
+      {own && !barLeads ? (
+        <>
+          <OutputLines lines={lines.slice(start, own.at + 1)} dimPreamble={dimPreamble} />
+          <ProgressBar progress={own} />
+          <OutputLines lines={lines.slice(own.at + 1, end)} dimPreamble={false} />
+        </>
+      ) : (
+        <OutputLines lines={lines.slice(start, end)} dimPreamble={dimPreamble} />
+      )}
+    </div>
+  );
+}
+
+function ProgressBar({ progress }: { progress: LessonProgress }) {
+  return (
+    <div className="my-2">
+      <div className="mb-1 flex items-center justify-between font-mono text-xs">
+        <span className="text-emerald-400">
+          {progress.completed ? `${progress.label} complete` : `${progress.label}: ${progress.detail}`}
+        </span>
+        <span className="text-canvas-muted-foreground">{progress.percent}%</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-canvas-muted">
+        <div
+          className="h-full bg-emerald-500 transition-all duration-300 ease-out"
+          style={{ width: `${progress.percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function OutputLines({ lines: allLines, dimPreamble }: { lines: OutputLine[]; dimPreamble: boolean }) {
+  return (
+    <>
       {(() => {
-        // The bar above already reports these, so printing them too just fills
-        // the console with one line per tick. parseProgress still sees them.
         const lines = allLines.filter((e) => !DOWNLOAD_TICK_LINE.test(e.line));
         // Falls back to line-by-line when finetune progress lines are present.
         const hasFinetuneProgress = lines.some((e) => e.stream === 'stdout' && /^▸\s+epoch=/.test(e.line));
@@ -887,7 +1028,7 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
               return paragraphs.map((para, i) => {
                 // Lessons open with a preamble before their real output; it
                 // stays dimmed, but only the very first one across the run.
-                const isPrefix = stdoutSeen++ === 0 && paragraphs.length + g > 1;
+                const isPrefix = dimPreamble && stdoutSeen++ === 0 && paragraphs.length + g > 1;
                 return (
                   <p key={`out-${g}-${i}`} className={isPrefix ? dim : 'whitespace-pre-wrap'}>
                     {para}
@@ -898,12 +1039,6 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
           </>
         );
       })()}
-      {isAnimating ? (
-        <p className="text-canvas-muted-foreground">
-          <ShuffleWord active={isAnimating} className="animate-pulse" />
-        </p>
-      ) : null}
-      {savedFiles.length > 0 ? <SavedFilesBar files={savedFiles} /> : null}
-    </div>
+    </>
   );
 }
