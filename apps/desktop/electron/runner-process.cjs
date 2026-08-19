@@ -17,6 +17,7 @@ const {
   npmPackageToken,
   courseAssetToken,
 } = require('../shared/portable-lesson-imports.cjs');
+const { LESSON_DONE_MARKER } = require('../shared/lesson-done.cjs');
 
 const parentRequire = createRequire(__filename);
 
@@ -398,7 +399,10 @@ function hookLessonExit(src) {
   let match = null;
   ENTRY_CALL.lastIndex = 0;
   for (let m = ENTRY_CALL.exec(src); m; m = ENTRY_CALL.exec(src)) match = m;
-  if (!match) return src;
+  // A lesson written as top-level await has no entry call to wrap. Module
+  // evaluation runs statements in order, so a finish appended after the body
+  // waits on everything above it.
+  if (!match) return `${src}\n__academyFinish(Promise.resolve());\n`;
 
   const callAt = match.index + match[0].indexOf('main');
   const end = statementEnd(src, callAt);
@@ -460,6 +464,9 @@ function __academyExit(code) {
   try { process.stderr.write("", flushed); } catch { flushed(); }
 }
 function __academyEnd(code) {
+  // The host cannot tell a lesson still computing from one whose worker is
+  // holding the process open after the work ended, so say which this is.
+  try { process.stderr.write(${JSON.stringify(LESSON_DONE_MARKER)}); } catch {}
   Promise.resolve().then(() => close()).catch(() => {}).then(() => __academyExit(code));
 }
 function __academyFinish(p) {

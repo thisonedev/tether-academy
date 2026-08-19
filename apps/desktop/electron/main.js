@@ -229,7 +229,9 @@ let currentRun = null;
 const COURSES_DIR = path.join(app.getAppPath(), '..', '..', 'packages', 'courses');
 
 // How long a peer run may go without saying anything before the guest gives up.
-const PEER_EXEC_IDLE_MS = 5 * 60_000;
+// Matches the local runner's window, since the same lesson on the same machine
+// should not be judged dead sooner just because a peer sent it.
+const PEER_EXEC_IDLE_MS = 10 * 60_000;
 
 handle('academy:run', async (parsed, evt) => {
   return runAcademy(parsed, evt);

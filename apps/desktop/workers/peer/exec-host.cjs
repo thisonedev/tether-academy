@@ -16,6 +16,7 @@ const { isWindows } = require('which-runtime');
 const sandbox = require('../sandbox');
 const { ensureBareExecutable } = require('../../shared/bare-bin.cjs');
 const { createNoiseFilter } = require('./exec-noise.cjs');
+const { takeLessonDone } = require('../../shared/lesson-done.cjs');
 const { isAllowed: rateAllow, GLOBAL_KEY } = require('./rate-limit.cjs');
 const {
   detectDeviceNeeds,
@@ -1375,6 +1376,8 @@ function createExecHost(ctx) {
     };
     const onFinalIdle = () => {
       if (!isAlive(child) || run.cancelled || run.phase !== 'running') return;
+      // Nothing has said the lesson finished, so the quiet is work in progress.
+      if (!run.lessonDone) return;
       const bytes = readCacheBytes();
       if (bytes !== idleCacheBytes) {
         idleCacheBytes = bytes;
@@ -1451,13 +1454,20 @@ function createExecHost(ctx) {
     const childStderr = child.stderr;
     childStdout.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
-      armFinalIdle();
+      if (run.lessonDone) armFinalIdle();
       sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stdout', data: chunk.toString('utf8') });
     });
     childStderr.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
-      armFinalIdle();
-      const data = stderrFilter.push(chunk.toString('utf8'));
+      if (run.lessonDone) armFinalIdle();
+      // The lesson says when its own flow ended. Before that, quiet means a
+      // model is still working.
+      const { text: cleaned, done } = takeLessonDone(chunk.toString('utf8'));
+      if (done) {
+        run.lessonDone = true;
+        armFinalIdle();
+      }
+      const data = stderrFilter.push(cleaned);
       if (data) sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stderr', data });
     });
     child.on('error', (err) => {

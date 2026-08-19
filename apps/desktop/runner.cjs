@@ -7,10 +7,10 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const path = require('node:path');
 
-// Cold music-lesson runs pull ~3.3 GB of ACE-Step models (DiT alone is ~1.45 GB),
-// so on slow connections the load alone can take minutes. 10 minutes leaves
-// headroom for that without making intentional aborts feel laggy.
-const MAX_RUNTIME_MS = 10 * 60 * 1000;
+// Measured from the last thing the run printed. A video render on a slow
+// machine outlasts any fixed cap, and reports a step at a time while it works,
+// so the useful question is how long it has been quiet.
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 // Native inference ignores SIGTERM (see exec-host.cjs's SIGKILL_GRACE_MS), so
 // Stop needs a follow-up SIGKILL after this grace window.
@@ -153,10 +153,15 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
       }
       resolve(value);
     };
-    const timer = setTimeout(() => {
-      killed = true;
-      killGroup('SIGTERM');
-    }, MAX_RUNTIME_MS);
+    let timer = null;
+    const armIdle = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        killed = true;
+        killGroup('SIGTERM');
+      }, IDLE_TIMEOUT_MS);
+    };
+    armIdle();
     // Strips the same model-loader/sandbox chatter the peer path strips.
     const stderrFilter = createNoiseFilter();
     // Strips <think>...</think> reasoning traces from model output.
@@ -170,6 +175,7 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
       else s = collapseIndent(thinkingFilter.push(s));
       if (!s) return;
       output.append(stream, s);
+      armIdle();
       if (onChunk) onChunk({ stream, data: s });
     };
     child.stdout.on('data', handleChunk('stdout'));
@@ -223,7 +229,7 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
       if (killed)
         settle({
           ok: false,
-          output: `${fullOutput}\n[runner] killed after ${MAX_RUNTIME_MS / 1000}s`,
+          output: `${fullOutput}\n[runner] no output for ${IDLE_TIMEOUT_MS / 60_000}m; ended the run`,
         });
       else settle({ ok: code === 0, output: fullOutput });
     });
