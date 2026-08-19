@@ -23,6 +23,7 @@ interface FrontMatter {
   hints?: string[];
   expectedOutput?: string[];
   platforms?: LessonData['platforms'];
+  pairedMode?: boolean;
   argv?: LessonArgvSlot[];
   questions?: LessonQuestion[];
 }
@@ -217,6 +218,7 @@ export default async function Layout({
       hints: fm.hints ?? [],
       expectedOutput: fm.expectedOutput ?? [],
       platforms: fm.platforms ?? ['node'],
+      pairedMode: fm.pairedMode !== false,
       sourceExample: fm.sourceExample,
       prevUrl,
       nextUrl,

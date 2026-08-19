@@ -80,6 +80,9 @@ export interface LessonData {
   currentLesson?: CurriculumLesson;
   readOnly?: boolean;
   argv?: LessonArgvSlot[];
+  /** False for a lesson that only works on the machine running it, e.g. one
+   *  that serves a port a paired device could never reach. Defaults to true. */
+  pairedMode?: boolean;
 }
 
 const RUN_MODES = ['simulated', 'this-device', 'remote'] as const;
@@ -718,6 +721,18 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     }
 
     if (runMode === 'remote') {
+      if (data.pairedMode === false) {
+        finalizeRunEntry(
+          [
+            {
+              stream: 'stdout',
+              line: '[paired] This lesson serves a port on the machine it runs on, which a paired device cannot reach. Switch the picker to This device.',
+            },
+          ],
+          'ok',
+        );
+        return;
+      }
       if (realRemotePeers.length === 0) {
         const lines: OutputLine[] = localIsOnlyHost
           ? [
@@ -988,6 +1003,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     data.expectedOutput,
     data.tests,
     data.readOnly,
+    data.pairedMode,
     resolveArgv,
     isDesktop,
     check,
@@ -1105,6 +1121,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             checkDisabled={data.tests.length === 0 || latestCheck?.ai === 'loading'}
             onReset={reset}
             platforms={data.platforms}
+            pairedMode={data.pairedMode}
             readOnly={data.readOnly}
             hints={data.hints}
             answer={data.answer}
@@ -1205,6 +1222,7 @@ function Runner({
   checkDisabled,
   onReset,
   platforms,
+  pairedMode = true,
   readOnly = false,
   hints,
   answer,
@@ -1240,6 +1258,7 @@ function Runner({
   checkDisabled: boolean;
   onReset: () => void;
   platforms: LessonData['platforms'];
+  pairedMode?: boolean;
   readOnly?: boolean;
   hints: string[];
   answer: string;
@@ -1401,13 +1420,15 @@ function Runner({
             <option value="simulated">Simulated</option>
             <option
               value="remote"
-              disabled={remotePeers.length === 0}
+              disabled={pairedMode === false || remotePeers.length === 0}
               title={
-                localIsOnlyHost
-                  ? 'This device is the host in every pair. Hosts accept runs from guests, not the other way around.'
-                  : selfPairCount > 0
-                    ? 'Only paired device is this device. Launch an isolated host with `pnpm dev:host` to enable this mode.'
-                    : 'No paired devices. Pair one in Settings > Devices.'
+                pairedMode === false
+                  ? 'This lesson serves a port on the machine it runs on, which a paired device cannot reach. Run it here.'
+                  : localIsOnlyHost
+                    ? 'This device is the host in every pair. Hosts accept runs from guests, not the other way around.'
+                    : selfPairCount > 0
+                      ? 'Only paired device is this device. Launch an isolated host with `pnpm dev:host` to enable this mode.'
+                      : 'No paired devices. Pair one in Settings > Devices.'
               }
             >
               Paired device
