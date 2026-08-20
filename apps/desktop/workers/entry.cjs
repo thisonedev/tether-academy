@@ -68,6 +68,12 @@ function runSecurityScanViaMain(payload) {
   return requestFromMain(CMD.SECURITY_SCAN, payload);
 }
 
+// Same reason as the scan above: fetching a model needs https, which Bare
+// does not have.
+function fetchModelsViaMain(payload) {
+  return requestFromMain(CMD.FETCH_MODELS, payload);
+}
+
 // One subscription per process; a second listener would push every peer event to main twice.
 let eventsBound = false;
 
@@ -83,6 +89,7 @@ respond(CMD.INIT, async (args) => {
     revokedDevices: args.revokedDevices ?? null,
     auditPath: args.auditPath ?? null,
     runSecurityScan: runSecurityScanViaMain,
+    fetchModels: fetchModelsViaMain,
   });
   if (!eventsBound) {
     eventsBound = true;

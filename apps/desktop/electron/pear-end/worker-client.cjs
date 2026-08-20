@@ -97,6 +97,18 @@ function buildMainRouter() {
       return toJson({ ok: false, error: { message: err?.message || String(err) } });
     }
   });
+  // Same reason as the scan above: the worker runs under Bare, which has no
+  // https, so the direct model fetch happens here.
+  router.respond(CMD.FETCH_MODELS, async (_req, data) => {
+    try {
+      const { ensureModels } = require('../../shared/model-fetch.cjs');
+      const { names } = fromJson(data) || {};
+      const result = await ensureModels(Array.isArray(names) ? names : []);
+      return toJson({ ok: true, result });
+    } catch (err) {
+      return toJson({ ok: false, error: { message: err?.message || String(err) } });
+    }
+  });
   return router;
 }
 

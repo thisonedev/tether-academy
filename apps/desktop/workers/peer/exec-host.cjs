@@ -17,7 +17,6 @@ const sandbox = require('../sandbox');
 const { ensureBareExecutable } = require('../../shared/bare-bin.cjs');
 const { createNoiseFilter } = require('./exec-noise.cjs');
 const { takeLessonDone } = require('../../shared/lesson-done.cjs');
-const { ensureModels } = require('../../shared/model-fetch.cjs');
 const { isAllowed: rateAllow, GLOBAL_KEY } = require('./rate-limit.cjs');
 const {
   detectDeviceNeeds,
@@ -268,6 +267,7 @@ function previewCode(code) {
  * @param {() => NodeJS.Platform} [ctx.getPlatform]
  * @param {(discoveryKeyHex: string, timeoutMs: number) => Promise<{ ok: boolean, reason: string | null }>} [ctx.awaitDeviceVerified]
  * @param {(payload: { code: string, lessonKey: null, lessonReference: string | null, modelHint: undefined, timeoutMs: number }) => Promise<{ modelName: string | null, result: { verdict: string, concerns: Array<{ summary: string, snippet: string }> } }>} [ctx.runSecurityScan]
+ * @param {(payload: { names: string[] }) => Promise<{ fetched: string[] } | null>} [ctx.fetchModels]
  */
 function createExecHost(ctx) {
   const {
@@ -1108,14 +1108,11 @@ function createExecHost(ctx) {
       if (wantedIds.length > 0) phase(`Checking cached models (${wantedIds.length})...`);
       // Anything missing that the registry can serve directly comes down here,
       // rather than the run sitting on a bar that never moves.
-      if (wantedModels.length > 0) {
-        const got = await ensureModels(wantedModels, {
-          onEvent: (e) => {
-            if (e.phase === 'start') phase(`Fetching ${e.name}...`);
-            if (e.phase === 'done') phaseDone(`Fetched ${e.name}`);
-          },
-        }).catch(() => null);
-        if (got?.fetched.length) {
+      // Bare has no https, so main does the fetching; see workers/entry.cjs.
+      if (wantedModels.length > 0 && typeof ctx.fetchModels === 'function') {
+        const got = await ctx.fetchModels({ names: wantedModels }).catch(() => null);
+        if (got?.fetched?.length) {
+          phaseDone(`Fetched ${got.fetched.join(', ')}`);
           appendAudit('peer:exec:model-fetched', {
             discoveryKey: discoveryKeyHex,
             models: got.fetched,

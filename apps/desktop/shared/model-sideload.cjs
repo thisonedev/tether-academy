@@ -5,7 +5,6 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
-const https = require('https');
 const os = require('os');
 const path = require('path');
 
@@ -73,6 +72,9 @@ function readRegistry(file = REGISTRY_PATH) {
 }
 
 function get(url, redirectsLeft = 5) {
+  // Required here, not at module load: the Bare worker has no https, and it
+  // imports this file for the cache-name helpers alone.
+  const https = require('https');
   return new Promise((resolve, reject) => {
     https
       .get(url, { headers: { 'user-agent': 'tether-academy' } }, (res) => {

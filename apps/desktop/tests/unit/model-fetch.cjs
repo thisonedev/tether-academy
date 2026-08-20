@@ -69,3 +69,15 @@ test('model-fetch - an unknown name is ignored rather than thrown', async (t) =>
   t.alike(result.fetched, []);
   t.alike(result.failed, []);
 });
+
+// exec-host runs under Bare, which has no https. Requiring it at module load
+// took the peer worker down with MODULE_NOT_FOUND on every start.
+test('model-fetch - the module loads without https available', (t) => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'shared', 'model-sideload.cjs'),
+    'utf8',
+  );
+  const top = src.slice(0, src.indexOf('function get('));
+  t.absent(/^const https = require/m.test(top), 'https is not required at module scope');
+  t.ok(/require\('https'\)/.test(src), 'it is required where the request happens');
+});
