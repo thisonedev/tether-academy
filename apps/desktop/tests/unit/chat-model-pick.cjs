@@ -37,3 +37,10 @@ test('chat-presets - a recommendation can be asked for without a lesson', (t) =>
   t.execution(() => v.parseIpc(v.modelLessonKeySchema, { chapter: 'rag', lesson: 'reindex' }, 'recommend'));
   t.exception(() => v.parseIpc(v.modelLessonKeySchema, { chapter: 'rag' }, 'recommend'));
 });
+
+// Reversing the map is only correct while it stays ordered smallest first.
+test('chat-presets - the default pick prefers the largest, not the first listed', (t) => {
+  const names = Object.keys(CHAT_PRESETS);
+  t.is(names[0], 'Qwen3-0.6B-Q4_0.gguf', 'the map is smallest first');
+  t.is(names[names.length - 1], 'Qwen3-8B-Q4_K_M.gguf', 'so largest first means reversing it');
+});

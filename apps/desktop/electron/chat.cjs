@@ -259,15 +259,23 @@ function newRequestId() {
   return `chat-${crypto.randomUUID()}`;
 }
 
-// Prefer the smallest chat model that's already on disk. The renderer can
-// override with an explicit hint when the picker has a specific recommendation.
+/** Whether the file this preset loads is on disk. */
+async function isChatModelInstalled(filename) {
+  const { catalogue } = require('./models.cjs');
+  const entry = (await catalogue()).find((e) => e.name === filename && e.family === 'chat');
+  return Boolean(entry?.installed);
+}
+
+// Prefer the largest chat model on disk. CHAT_PRESETS runs smallest first, so
+// reverse it. catalogue() keys on the cache file, which keeps the two registry
+// entries that share a display name apart.
 async function pickDefaultChatModel() {
-  const { listModels } = require('./models.cjs');
-  const installed = await listModels();
-  const completeNames = new Set(installed.filter((m) => m.complete).map((m) => m.name));
-  // Presets are listed smallest first in CHAT_PRESETS, so the first match wins.
-  for (const filename of Object.keys(CHAT_PRESETS)) {
-    if (completeNames.has(filename)) return filename;
+  const { catalogue } = require('./models.cjs');
+  const installed = new Set(
+    (await catalogue()).filter((e) => e.family === 'chat' && e.installed).map((e) => e.name),
+  );
+  for (const filename of Object.keys(CHAT_PRESETS).reverse()) {
+    if (installed.has(filename)) return filename;
   }
   return null;
 }
@@ -889,6 +897,7 @@ module.exports = {
   onLoadProgress,
   unload,
   pickDefaultChatModel,
+  isChatModelInstalled,
   isChatPreset,
   docsStatus: () => docsStatusFromCache(),
   docsRefresh: async () => {

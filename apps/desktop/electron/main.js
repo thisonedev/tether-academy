@@ -568,8 +568,11 @@ handle('academy:chat:configured-model', async () => {
   if (chat.currentModel()) return chat.currentModel();
   const store = await pearEnd.store();
   const existing = await store.get('ai.chat.model');
-  // Validate on every read: a preset can go away (as Llama-3.2-1B did), so never hand back a stale name.
-  if (existing && chat.isChatPreset(existing)) return existing;
+  // A preset can go away (as Llama-3.2-1B did) and a chosen model can be
+  // deleted afterwards, so check the name and the file before handing it back.
+  if (existing && chat.isChatPreset(existing) && (await chat.isChatModelInstalled(existing))) {
+    return existing;
+  }
   const picked = await chat.pickDefaultChatModel();
   if (picked && picked !== existing) {
     await store.set('ai.chat.model', picked);
