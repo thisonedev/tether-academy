@@ -16,7 +16,7 @@ async function main() {
 
   // 3: drain progressStream, then Promise.all([run.audio, run.stats])
 
-  // 4: wrap audio.pcm in a WAV header (createWav is prefilled below) and write to "output/music-gen/audiogen-output.wav"
+  // 4: wrap audio.pcm in a WAV header (createWav is prefilled below) and write to "output/music-generation/audiogen-output.wav"
 
   await unloadModel({ modelId });
 }

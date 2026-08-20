@@ -39,7 +39,7 @@ for await (const progress of run.progressStream) {
 
 const [audio, stats] = await Promise.all([run.audio, run.stats]);
 const wav = createWav(audio.pcm, audio.sampleRate, audio.channels, audio.bitsPerSample);
-writeFileSync("output/music-gen/audiogen-output.wav", wav);
+writeFileSync("output/music-generation/audiogen-output.wav", wav);
 
 const samplesPerChannel =
   audio.pcm.byteLength / (audio.bitsPerSample / 8) / audio.channels;
@@ -48,7 +48,7 @@ console.log(
     `${audio.sampleRate} Hz (${audio.channels} channels)`,
 );
 if (stats) console.log(`▸ Stats: ${JSON.stringify(stats)}`);
-console.log(`▸ Saved output/music-gen/audiogen-output.wav`);
+console.log(`▸ Saved output/music-generation/audiogen-output.wav`);
 
 await unloadModel({ modelId });
 console.log("▸ Model unloaded");

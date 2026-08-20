@@ -21,7 +21,7 @@ hints:
   - "result.buffer is a plain number array. Wrap it with Int16Array.from() before treating it as Int16Array. Then wrap the 44-byte WAV header (RIFF / WAVE / fmt / data) around it and write with fs.writeFileSync to disk."
 expectedOutput:
   - "▸ TTS complete. Total samples:"
-  - "▸ Saved parler-output.wav"
+  - "▸ Saved output/text-to-speech/parler-output.wav"
   - "▸ Model unloaded"
 questions:
   - id: what-emotion-adds
@@ -125,7 +125,7 @@ function createWav(pcm: Int16Array, sampleRate: number): Uint8Array {
 }
 
 const wav = createWav(audioBuffer, 44100);
-fs.writeFileSync("parler-output.wav", wav);
+fs.writeFileSync("output/text-to-speech/parler-output.wav", wav);
 ```
 
 The header encodes the chunk size, the sample rate, the channel count, and the bit depth. The PCM bytes go straight after; no transformation, no resampling.

@@ -26,8 +26,8 @@ const audioBuffer = Int16Array.from(await result.buffer);
 console.log(`▸ TTS complete. Total samples: ${audioBuffer.length}`);
 
 const wav = createWav(audioBuffer, PARLER_SAMPLE_RATE);
-fs.writeFileSync("parler-output.wav", wav);
-console.log("▸ Saved parler-output.wav");
+fs.writeFileSync("output/text-to-speech/parler-output.wav", wav);
+console.log("▸ Saved output/text-to-speech/parler-output.wav");
 
 await unloadModel({ modelId });
 console.log("▸ Model unloaded");
