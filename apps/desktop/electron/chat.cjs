@@ -23,6 +23,7 @@ console.log('[chat] module loaded, build = 2026-08-11-adopt-from-error-message')
 // with MODEL_TYPE_REQUIRED.
 // Llama-3.2-1B-Instruct-Q4_0.gguf is excluded: that's a delegated-inference lesson download, not an AI-bot model.
 const { CHAT_PRESETS } = require('../shared/chat-presets.cjs');
+const { ensureModels } = require('../shared/model-fetch.cjs');
 
 // What loadModel asks the addon for, and what every prompt here is sized
 // against. See approxContextWindow for why the request is trusted.
@@ -182,6 +183,15 @@ async function ensureLoaded(filename) {
     throw new Error('@qvac/sdk does not export loadModel in this build');
   }
   emitLoadProgress({ modelName: filename, loaded: 0, total: 0 });
+  // See shared/model-fetch.cjs: takes the registry's named source when the
+  // model is missing.
+  await ensureModels([CHAT_PRESETS[filename]], {
+    onEvent: (e) => {
+      if (e.phase === 'progress') {
+        emitLoadProgress({ modelName: filename, loaded: e.downloaded, total: e.total });
+      }
+    },
+  }).catch(() => {});
   let modelId;
   // Every prompt in this file is budgeted against this number, so the two read
   // it from the same constant instead of agreeing by hand.

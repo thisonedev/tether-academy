@@ -17,6 +17,7 @@ const sandbox = require('../sandbox');
 const { ensureBareExecutable } = require('../../shared/bare-bin.cjs');
 const { createNoiseFilter } = require('./exec-noise.cjs');
 const { takeLessonDone } = require('../../shared/lesson-done.cjs');
+const { ensureModels } = require('../../shared/model-fetch.cjs');
 const { isAllowed: rateAllow, GLOBAL_KEY } = require('./rate-limit.cjs');
 const {
   detectDeviceNeeds,
@@ -1105,6 +1106,22 @@ function createExecHost(ctx) {
       // A large cached model's hash can take a while under a throttled host;
       // let Stop reach it instead of leaving the run unkillable until it finishes.
       if (wantedIds.length > 0) phase(`Checking cached models (${wantedIds.length})...`);
+      // Anything missing that the registry can serve directly comes down here,
+      // rather than the run sitting on a bar that never moves.
+      if (wantedModels.length > 0) {
+        const got = await ensureModels(wantedModels, {
+          onEvent: (e) => {
+            if (e.phase === 'start') phase(`Fetching ${e.name}...`);
+            if (e.phase === 'done') phaseDone(`Fetched ${e.name}`);
+          },
+        }).catch(() => null);
+        if (got?.fetched.length) {
+          appendAudit('peer:exec:model-fetched', {
+            discoveryKey: discoveryKeyHex,
+            models: got.fetched,
+          });
+        }
+      }
       const result = await verifyModelsAsync(wantedIds, undefined, undefined, () => run.cancelled);
       // Scoped to this run's models: an unrelated file changing elsewhere in
       // the cache (another lesson's download) should not block this one.

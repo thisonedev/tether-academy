@@ -362,6 +362,8 @@ async function runAcademy(parsed, evt) {
     });
   }
 
+  await ensureLessonModels(parsed.source, sendChunk);
+
   const run = runExample({
     ...parsed,
     onChunk: sendChunk,
@@ -370,6 +372,27 @@ async function runAcademy(parsed, evt) {
   return run.promise.finally(() => {
     if (currentRun === run) currentRun = null;
   });
+}
+
+// Registry constants the lesson names, fetched before the run starts.
+async function ensureLessonModels(source, sendChunk) {
+  try {
+    const { referencedModels } = require('../workers/peer/exec-network.cjs');
+    const { ensureModels } = require('../shared/model-fetch.cjs');
+    const wanted = referencedModels(source ?? '');
+    if (wanted.length === 0) return;
+    let announced = false;
+    await ensureModels(wanted, {
+      onEvent: (e) => {
+        if (e.phase === 'start' && !announced) {
+          announced = true;
+          sendChunk({ stream: 'stderr', data: '[runner] fetching a model this lesson needs\n' });
+        }
+      },
+    });
+  } catch (err) {
+    console.warn('[tether-academy-desktop] ensureLessonModels:', err?.message ?? err);
+  }
 }
 
 // Confined to the lesson folder: the renderer must not point Finder anywhere.

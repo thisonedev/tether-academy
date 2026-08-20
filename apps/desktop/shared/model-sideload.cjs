@@ -123,7 +123,7 @@ async function sideloadModel(name, opts = {}) {
     });
     res.on('error', reject);
     out.on('error', reject);
-    out.on('finish', resolve);
+    out.on('finish', () => resolve());
     res.pipe(out);
   }).catch((err) => {
     fs.rmSync(partial, { force: true });
