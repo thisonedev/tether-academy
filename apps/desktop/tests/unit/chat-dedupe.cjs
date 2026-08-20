@@ -9,6 +9,10 @@ const path = require('node:path');
 
 const test = require('brittle');
 
+// These fixtures use invented hash prefixes, so the real cache file reads as
+// missing and a load would fetch it for real. This suite is about dedupe.
+process.env.ACADEMY_NO_DIRECT_FETCH = '1';
+
 // Sandbox the models root by rebinding os.homedir() to point at a tmp dir.
 // chat.cjs and models.cjs both call os.homedir() at lookup time.
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-dedupe-test-'));

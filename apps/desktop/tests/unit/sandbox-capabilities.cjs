@@ -104,6 +104,23 @@ test('capabilities - a frozen path is denied for creation too', { skip: process.
   t.ok(profile.includes('(deny file-write-create (vnode-type SYMLINK))'), 'and no links anywhere');
 });
 
+// The kernel matches canonical paths. A freeze on a directory the run has not
+// created yet still has to name /private/tmp, or the rule binds to nothing the
+// moment the run creates it.
+test('capabilities - a frozen path that does not exist yet still canonicalises', { skip: process.platform !== 'darwin' }, (t) => {
+  const missing = path.join('/tmp', `frozen-${process.pid}`, 'nested');
+  t.absent(fs.existsSync(missing), 'the path is not on disk');
+
+  const rules = macAllowRules(
+    expandDeep({ ...CAPABILITIES.qvac, fs: { ...CAPABILITIES.qvac.fs, readOnly: [missing] } },
+      defaultTemplateVars()),
+    { warnings: [] },
+  ).join('\n');
+
+  t.ok(rules.includes(`(subpath "/private${missing}")`), 'the deny names the canonical path');
+  t.absent(rules.includes(`(subpath "${missing}")`), 'and not the symlinked one');
+});
+
 // os.tmpdir() is a per-user directory on macOS but shared /tmp on Linux, so writes are scoped to the run directory, not the whole thing.
 test('capabilities - writes are scoped to one run, not all of /tmp', (t) => {
   const qvac = CAPABILITIES.qvac;

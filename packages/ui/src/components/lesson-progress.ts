@@ -22,8 +22,12 @@ export interface ProgressLine {
 
 // `▸ Downloading 40% (512/1024 MB)`
 const DOWNLOAD = /▸\s*Downloading\s+(\d+(?:\.\d+)?)%\s*\(([\d.]+)\/([\d.]+)\s*(\w+)\)/;
-// `▸ step 3/16`, printed per diffusion step by the image lessons.
+// `▸ step 3/16`, printed per diffusion step by the image and video lessons.
 const IMAGE_STEP = /▸\s*step\s+(\d+)\/(\d+)/;
+// Both print the same step line, so the SDK call traced above it says which
+// one is running.
+const VIDEO_CALL = /^→\s*video\s*\(/;
+const IMAGE_CALL = /^→\s*diffusion\s*\(/;
 // `▸ decoding: 3/16`, the music lesson's stage stream.
 const STAGE_STEP = /▸\s*([A-Za-z][\w -]*?):\s*(\d+)\/(\d+)\s*$/;
 // `▸ epoch=1 step=5 batch=3/16`, the finetune trainer's tick.
@@ -49,6 +53,7 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
   // The trainer skips a tick on the last step, so the bar needs the completion
   // line to reach 100 rather than stalling just short of it.
   let finetuneBatches = 0;
+  let making: 'image' | 'video' = 'image';
   let finetuneDone = false;
 
   for (let i = 0; i < lines.length; i++) {
@@ -56,6 +61,9 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
     if (typeof line !== 'string' || line.length === 0) continue;
 
     if (FINETUNE_DONE.test(line)) finetuneDone = true;
+
+    if (VIDEO_CALL.test(line)) making = 'video';
+    else if (IMAGE_CALL.test(line)) making = 'image';
 
     const download = DOWNLOAD.exec(line);
     if (download) {
@@ -95,7 +103,7 @@ export function parseProgress(lines: ProgressLine[]): LessonProgress | null {
       const current = Number(step[1]);
       const total = Number(step[2]);
       latest = {
-        label: 'Creating an image',
+        label: making === 'video' ? 'Creating a video' : 'Creating an image',
         detail: `${current}/${total}`,
         percent: pct(current, total),
         completed: false,

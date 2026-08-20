@@ -107,8 +107,20 @@ export function SettingsPage() {
       setModels([]);
       return;
     }
-    const list = await window.academy.models.list();
+    // The catalogue carries each chat model's own install state, so a delete
+    // that only refreshed the file list left the row looking untouched.
+    const [list, cat] = await Promise.all([
+      window.academy.models.list(),
+      window.academy.models.catalogue().catch(() => null),
+    ]);
     setModels(list);
+    if (cat) {
+      setChatCatalogue(
+        AI_BOT_MODEL_NAMES.map((name) => cat.find((entry) => entry.name === name)).filter(
+          (entry): entry is AcademyModelCatalogueEntry => entry != null,
+        ),
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -257,20 +269,29 @@ export function SettingsPage() {
     setRemove({ pending: null, busy: false, error: null });
   }, []);
 
-  // Chat catalogue entries are keyed by display name; downloaded models carry
-  // the on-disk id (hash-prefixed for single files) that `models.remove` needs.
+  // Two entries share the name Qwen3-4B-Q4_K_M.gguf, so removing by name could
+  // take the lesson copy. The cache file names the one to delete.
   const modelIdByName = useMemo(() => {
     const map = new Map<string, string>();
     (models ?? []).forEach((m) => map.set(m.name, m.id));
+    (chatCatalogue ?? []).forEach((entry) => {
+      // Only a file actually on disk has anything to delete.
+      if (entry.cacheFile && entry.installed) map.set(entry.name, entry.cacheFile);
+      else if (entry.installed === false) map.delete(entry.name);
+    });
     return map;
-  }, [models]);
+  }, [models, chatCatalogue]);
 
-  // A download in progress already occupies its final filename, so the checkmark needs completeness too.
+  // A download in progress already occupies its final filename, so the checkmark
+  // needs completeness too, and for chat models only the host can resolve it.
   const modelCompleteByName = useMemo(() => {
     const map = new Map<string, boolean>();
     (models ?? []).forEach((m) => map.set(m.name, m.complete));
+    (chatCatalogue ?? []).forEach((entry) => {
+      if (typeof entry.installed === 'boolean') map.set(entry.name, entry.installed);
+    });
     return map;
-  }, [models]);
+  }, [models, chatCatalogue]);
 
   if (!hydrated || isDesktop === null) {
     return (
@@ -436,7 +457,7 @@ export function SettingsPage() {
                           label={entry.name}
                           onSelect={() => void configureChatModel(entry.name)}
                         />
-                        {downloadedId ? (
+                        {downloadedId && !active ? (
                           <RemoveIconButton
                             id={downloadedId}
                             label={entry.name}

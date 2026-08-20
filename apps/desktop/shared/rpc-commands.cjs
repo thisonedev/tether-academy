@@ -29,4 +29,5 @@ module.exports = {
   EXEC_EXIT: 103,
   EXEC_ERROR: 104,
   SECURITY_SCAN: 105,
+  FETCH_MODELS: 106,
 };

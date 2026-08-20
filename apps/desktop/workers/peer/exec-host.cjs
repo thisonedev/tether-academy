@@ -16,6 +16,7 @@ const { isWindows } = require('which-runtime');
 const sandbox = require('../sandbox');
 const { ensureBareExecutable } = require('../../shared/bare-bin.cjs');
 const { createNoiseFilter } = require('./exec-noise.cjs');
+const { takeLessonDone } = require('../../shared/lesson-done.cjs');
 const { isAllowed: rateAllow, GLOBAL_KEY } = require('./rate-limit.cjs');
 const {
   detectDeviceNeeds,
@@ -266,6 +267,7 @@ function previewCode(code) {
  * @param {() => NodeJS.Platform} [ctx.getPlatform]
  * @param {(discoveryKeyHex: string, timeoutMs: number) => Promise<{ ok: boolean, reason: string | null }>} [ctx.awaitDeviceVerified]
  * @param {(payload: { code: string, lessonKey: null, lessonReference: string | null, modelHint: undefined, timeoutMs: number }) => Promise<{ modelName: string | null, result: { verdict: string, concerns: Array<{ summary: string, snippet: string }> } }>} [ctx.runSecurityScan]
+ * @param {(payload: { names: string[] }) => Promise<{ fetched: string[] } | null>} [ctx.fetchModels]
  */
 function createExecHost(ctx) {
   const {
@@ -1104,6 +1106,19 @@ function createExecHost(ctx) {
       // A large cached model's hash can take a while under a throttled host;
       // let Stop reach it instead of leaving the run unkillable until it finishes.
       if (wantedIds.length > 0) phase(`Checking cached models (${wantedIds.length})...`);
+      // Anything missing that the registry can serve directly comes down here,
+      // rather than the run sitting on a bar that never moves.
+      // Bare has no https, so main does the fetching; see workers/entry.cjs.
+      if (wantedModels.length > 0 && typeof ctx.fetchModels === 'function') {
+        const got = await ctx.fetchModels({ names: wantedModels }).catch(() => null);
+        if (got?.fetched?.length) {
+          phaseDone(`Fetched ${got.fetched.join(', ')}`);
+          appendAudit('peer:exec:model-fetched', {
+            discoveryKey: discoveryKeyHex,
+            models: got.fetched,
+          });
+        }
+      }
       const result = await verifyModelsAsync(wantedIds, undefined, undefined, () => run.cancelled);
       // Scoped to this run's models: an unrelated file changing elsewhere in
       // the cache (another lesson's download) should not block this one.
@@ -1375,6 +1390,8 @@ function createExecHost(ctx) {
     };
     const onFinalIdle = () => {
       if (!isAlive(child) || run.cancelled || run.phase !== 'running') return;
+      // Nothing has said the lesson finished, so the quiet is work in progress.
+      if (!run.lessonDone) return;
       const bytes = readCacheBytes();
       if (bytes !== idleCacheBytes) {
         idleCacheBytes = bytes;
@@ -1451,13 +1468,20 @@ function createExecHost(ctx) {
     const childStderr = child.stderr;
     childStdout.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
-      armFinalIdle();
+      if (run.lessonDone) armFinalIdle();
       sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stdout', data: chunk.toString('utf8') });
     });
     childStderr.on('data', (chunk) => {
       if (firstChunkAt === 0) firstChunkAt = Date.now();
-      armFinalIdle();
-      const data = stderrFilter.push(chunk.toString('utf8'));
+      if (run.lessonDone) armFinalIdle();
+      // The lesson says when its own flow ended. Before that, quiet means a
+      // model is still working.
+      const { text: cleaned, done } = takeLessonDone(chunk.toString('utf8'));
+      if (done) {
+        run.lessonDone = true;
+        armFinalIdle();
+      }
+      const data = stderrFilter.push(cleaned);
       if (data) sendReply(discoveryKeyHex, { kind: 'chunk', runId: run.runId, stream: 'stderr', data });
     });
     child.on('error', (err) => {

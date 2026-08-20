@@ -48,6 +48,12 @@ export const lessonFrontmatter = frontmatterSchema.extend({
   tests: z.array(lessonTest).optional(),
   questions: z.array(lessonQuestion).optional(),
   platforms: z.array(z.enum(['node', 'web', 'mobile', 'desktop'])).optional(),
+  // False for a lesson that only works on the machine running it, e.g. one
+  // that serves a port a paired device could never reach. Defaults to true.
+  pairedMode: z.boolean().optional(),
+  // What this lesson costs to run, when that is more than the rest: a large
+  // download, a long render. Shown before the student starts it.
+  requirements: z.array(z.string()).optional(),
   // argv slots the runner resolves before executing the lesson's snippet.
   argv: z.array(lessonArgvSlot).optional(),
   // Hints for the consent prompt, unioned with the host's own detectors (the real trust boundary); network is ordered none < localhost < all.

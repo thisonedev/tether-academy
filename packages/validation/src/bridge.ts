@@ -71,6 +71,10 @@ export interface AcademyModelCatalogueEntry {
   minRamBytes: number;
   /** 'preferred' when GPU noticeably speeds it up, 'optional' otherwise. */
   gpu: 'preferred' | 'optional' | 'none';
+  /** Cache filename the loader opens, which two entries sharing `name` do not. */
+  cacheFile?: string | null;
+  /** Whether that exact file is on disk and complete. */
+  installed?: boolean;
 }
 
 export interface AcademyModelRecommendation {
@@ -79,7 +83,12 @@ export interface AcademyModelRecommendation {
   /** All catalogue entries, in the order: fits > tight > too-big, then by minRam ascending. */
   ranked: AcademyModelCatalogueEntry[];
   /** Why the pick was made; surfaced in the UI. */
-  reason: 'lesson-requires' | 'hardware-fits-best' | 'no-chat-models' | 'no-hardware-info';
+  reason:
+    | 'lesson-requires'
+    | 'largest-installed'
+    | 'hardware-fits-best'
+    | 'no-chat-models'
+    | 'no-hardware-info';
 }
 
 export interface AcademyModelsAPI {

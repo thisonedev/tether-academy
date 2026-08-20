@@ -326,10 +326,10 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
     }
     let cancelled = false;
     (async () => {
-      const [current, configured, installed] = await Promise.all([
+      const [current, configured, suggestion] = await Promise.all([
         window.academy!.chat!.currentModel().catch(() => null),
         window.academy!.chat!.configuredModel().catch(() => null),
-        window.academy!.models?.list().catch(() => []) ?? Promise.resolve([]),
+        window.academy!.models?.recommend(null).catch(() => null) ?? Promise.resolve(null),
       ]);
       if (cancelled) return;
       if (current) {
@@ -337,12 +337,17 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         setModelLoading(false);
         return;
       }
-      if (!configured || !installed.some((m) => m.name === configured && m.complete)) {
+      // The configured model can be one this device never finished downloading,
+      // and the main process is the only side that can tell, since two registry
+      // entries share a file name. Its pick is whatever is already on disk.
+      const onDisk = new Set((suggestion?.ranked ?? []).filter((e) => e.installed).map((e) => e.name));
+      const wanted = configured && onDisk.has(configured) ? configured : (suggestion?.pick ?? null);
+      if (!wanted) {
         setModelLoading(false);
         return;
       }
       try {
-        const loaded = await window.academy!.chat!.load(configured);
+        const loaded = await window.academy!.chat!.load(wanted);
         if (!cancelled) setModelName(loaded.modelName);
       } catch (err) {
         if (!cancelled) {
@@ -374,9 +379,13 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
   const refreshInstalledChatModels = useCallback(async () => {
     if (typeof window === 'undefined' || !window.academy?.models) return;
     try {
-      const models = await window.academy.models.list();
-      // A download in progress already exists at its final filename; only offer models that are actually done.
-      const installedNames = models.filter((m) => isAiBotModel(m.name) && m.complete).map((m) => m.name);
+      // The catalogue resolves each preset to its own file. The file list is
+      // keyed by display name, which offered a chat model whose copy was still
+      // downloading.
+      const entries = await window.academy.models.catalogue();
+      const installedNames = entries
+        .filter((e) => e.family === 'chat' && e.installed && isAiBotModel(e.name))
+        .map((e) => e.name);
       setInstalledAiBotModels(installedNames.sort(byParamCount));
     } catch {
     }

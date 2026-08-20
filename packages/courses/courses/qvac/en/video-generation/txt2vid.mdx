@@ -2,6 +2,9 @@
 title: "Build a video from text"
 sourceExample: "packages/sdk/examples/diffusion-txt2vid.ts"
 platforms: ['node']
+requirements:
+  - "Requires about 15 GB of free disk space for the model weights"
+  - "Renders 30 steps, 11 to 13 minutes on a fast CPU and longer on older hardware"
 tests:
   - id: calls-video
     description: 'Calls video() with mode txt2vid'
@@ -86,7 +89,7 @@ Once `await result.outputs` resolves, write `outputs[0]` to a `.avi` file with `
 const outputs = await result.outputs;
 const firstClip = outputs[0];
 if (!firstClip) throw new Error("No video returned from video()");
-fs.writeFileSync("output/video-gen/bird.avi", firstClip);
+fs.writeFileSync("output/video-generation/bird.avi", firstClip);
 console.log(`Generated ${outputs.length} video`);
 ```
 

@@ -229,7 +229,9 @@ let currentRun = null;
 const COURSES_DIR = path.join(app.getAppPath(), '..', '..', 'packages', 'courses');
 
 // How long a peer run may go without saying anything before the guest gives up.
-const PEER_EXEC_IDLE_MS = 5 * 60_000;
+// Matches the local runner's window, since the same lesson on the same machine
+// should not be judged dead sooner just because a peer sent it.
+const PEER_EXEC_IDLE_MS = 10 * 60_000;
 
 handle('academy:run', async (parsed, evt) => {
   return runAcademy(parsed, evt);
@@ -360,6 +362,8 @@ async function runAcademy(parsed, evt) {
     });
   }
 
+  await ensureLessonModels(parsed.source, sendChunk);
+
   const run = runExample({
     ...parsed,
     onChunk: sendChunk,
@@ -368,6 +372,27 @@ async function runAcademy(parsed, evt) {
   return run.promise.finally(() => {
     if (currentRun === run) currentRun = null;
   });
+}
+
+// Registry constants the lesson names, fetched before the run starts.
+async function ensureLessonModels(source, sendChunk) {
+  try {
+    const { referencedModels } = require('../workers/peer/exec-network.cjs');
+    const { ensureModels } = require('../shared/model-fetch.cjs');
+    const wanted = referencedModels(source ?? '');
+    if (wanted.length === 0) return;
+    let announced = false;
+    await ensureModels(wanted, {
+      onEvent: (e) => {
+        if (e.phase === 'start' && !announced) {
+          announced = true;
+          sendChunk({ stream: 'stderr', data: '[runner] fetching a model this lesson needs\n' });
+        }
+      },
+    });
+  } catch (err) {
+    console.warn('[tether-academy-desktop] ensureLessonModels:', err?.message ?? err);
+  }
 }
 
 // Confined to the lesson folder: the renderer must not point Finder anywhere.
@@ -500,7 +525,7 @@ handle('academy:models:remove', async (id) => {
   const items = await listModels();
   const target = items.find((it) => it.id === id);
   if (target && target.name === (await configuredChatModelName())) {
-    throw new Error('This is the AI bot\'s active model. Change it in Settings before removing.');
+    throw new Error('The AI bot is set to use this model. Select a different one first.');
   }
   // Unload first so ensureLoaded()'s "already loaded" shortcut doesn't hand out a deleted model forever.
   const result = await removeModel(id);
@@ -543,8 +568,11 @@ handle('academy:chat:configured-model', async () => {
   if (chat.currentModel()) return chat.currentModel();
   const store = await pearEnd.store();
   const existing = await store.get('ai.chat.model');
-  // Validate on every read: a preset can go away (as Llama-3.2-1B did), so never hand back a stale name.
-  if (existing && chat.isChatPreset(existing)) return existing;
+  // A preset can go away (as Llama-3.2-1B did) and a chosen model can be
+  // deleted afterwards, so check the name and the file before handing it back.
+  if (existing && chat.isChatPreset(existing) && (await chat.isChatModelInstalled(existing))) {
+    return existing;
+  }
   const picked = await chat.pickDefaultChatModel();
   if (picked && picked !== existing) {
     await store.set('ai.chat.model', picked);

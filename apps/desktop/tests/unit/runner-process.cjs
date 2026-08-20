@@ -118,3 +118,34 @@ test('buildLesson - a slow SDK call names itself while it runs', async (t) => {
   t.absent(/embed/.test(err), 'a call that returns at once is not worth a line');
   t.absent(/loadModel/.test(err), 'and the call every lesson makes is never worth one');
 });
+
+// Carrying `type X` into the injected import and the trace binding emitted
+// `const { type X } = ...`, which is a SyntaxError.
+test('buildLesson - a type-only specifier stays out of the runtime binding', (t) => {
+  const built = buildLesson({
+    source:
+      'import { loadModel, type RagEmbeddedDoc } from "@qvac/sdk";\n'
+      + 'const docs = [] as RagEmbeddedDoc[];\n'
+      + 'main();\n',
+    cwd: COURSES,
+    runtime: 'bare',
+  });
+  t.absent(/type RagEmbeddedDoc/.test(built), 'the type name is gone from the generated code');
+  t.ok(built.includes('loadModel as __academySdk_loadModel'), 'the value import survives');
+});
+
+// 20 of the 76 lessons are written as top-level await with no entry call.
+// Without a finish appended after the body, nothing told the host the lesson
+// ended and the run sat open until something else stopped it.
+test('buildLesson - a top-level-await lesson still reports that it finished', (t) => {
+  const built = buildLesson({
+    source: 'const id = await loadModel({});\nawait unloadModel({ id });\n',
+    cwd: COURSES,
+    runtime: 'node',
+  });
+  t.ok(built.includes('__academyFinish(Promise.resolve());'), 'the body is followed by a finish');
+  t.ok(
+    built.indexOf('__academyFinish(Promise.resolve());') > built.indexOf('await unloadModel'),
+    'placed after the lesson, so it waits on it',
+  );
+});

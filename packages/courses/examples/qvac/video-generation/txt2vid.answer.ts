@@ -22,10 +22,14 @@ async function main() {
     fps: 16,
   });
 
+  for await (const { step, totalSteps } of result.progressStream) {
+    console.log(`▸ step ${step}/${totalSteps}`);
+  }
+
   const outputs = await result.outputs;
   const firstClip = outputs[0];
   if (!firstClip) throw new Error("No video returned from video()");
-  fs.writeFileSync("output/video-gen/bird.avi", firstClip);
+  fs.writeFileSync("output/video-generation/bird.avi", firstClip);
   console.log(`Generated ${outputs.length} video`);
 
   await unloadModel({ modelId: videoId });

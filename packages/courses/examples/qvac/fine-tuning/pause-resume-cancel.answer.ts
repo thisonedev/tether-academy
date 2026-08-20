@@ -11,8 +11,8 @@ async function main() {
     lrMin: 1e-8,
     loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
     assistantLossOnly: true,
-    checkpointSaveDir: "output/finetune/checkpoints/",
-    outputParametersDir: "output/finetune/",
+    checkpointSaveDir: "output/fine-tuning/checkpoints/",
+    outputParametersDir: "output/fine-tuning/",
   };
 
   const finetuneParams = { modelId, options: baseOptions };

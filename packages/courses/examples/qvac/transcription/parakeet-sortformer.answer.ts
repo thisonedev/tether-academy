@@ -11,6 +11,16 @@ import { join } from "node:path";
 
 const audioFilePath = "./examples/qvac/transcription/input/diarization-sample-16k.wav";
 
+// Sortformer stamps each turn as hh:mm:ss.mmm, and the slicing below counts
+// in seconds.
+function toSeconds(stamp: string): number {
+  return stamp
+    .replace(/s$/, "")
+    .split(":")
+    .map(Number)
+    .reduce((total, part) => total * 60 + part, 0);
+}
+
 function readPcm(wavPath: string): Buffer {
   const buf = readFileSync(wavPath);
   const dataOffset = buf.indexOf("data") + 4;
@@ -62,9 +72,9 @@ async function main() {
 
   const segments = diarization
     .split("\n")
-    .map((line) => line.match(/Speaker (\d+): ([\d.]+)s - ([\d.]+)s/))
+    .map((line) => line.match(/Speaker (\d+): ([\d:.]+s?) - ([\d:.]+s?)/))
     .filter((m): m is RegExpMatchArray => m !== null)
-    .map((m) => ({ speaker: +m[1]!, start: +m[2]!, end: +m[3]! }))
+    .map((m) => ({ speaker: +m[1]!, start: toSeconds(m[2]!), end: toSeconds(m[3]!) }))
     .sort((a, b) => a.start - b.start);
 
   const tdtModelId = await loadModel({

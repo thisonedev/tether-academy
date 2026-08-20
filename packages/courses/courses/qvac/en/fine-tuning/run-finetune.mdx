@@ -69,7 +69,7 @@ const handle = finetune({
     lrMin: 1e-8,
     loraModules: "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
     assistantLossOnly: true,
-    outputParametersDir: "output/finetune/",
+    outputParametersDir: "output/fine-tuning/",
   },
 });
 ```
@@ -91,7 +91,7 @@ const result = await handle.result;
 console.log("▸ Result status:", result.status);
 ```
 
-The data files at `./examples/qvac/fine-tuning/input/small_train_HF.jsonl` live next to this lesson's code. The output adapters go to `output/finetune/` (the desktop app is the runtime, generated files live there).
+The data files at `./examples/qvac/fine-tuning/input/small_train_HF.jsonl` live next to this lesson's code. The output adapters go to `output/fine-tuning/` (the desktop app is the runtime, generated files live there).
 
 ## Keep the learning rate above zero
 

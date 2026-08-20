@@ -329,9 +329,12 @@ export const chatRequestIdSchema = z.string().min(1).max(128);
 
 export const chatLoadSchema = z.string().min(1).max(256);
 
+// Null is the documented way to ask without a lesson in mind, which is what
+// the console sends when it wants the best model already on disk.
 export const modelLessonKeySchema = z
   .object({
     chapter: z.string().min(1).max(64),
     lesson: z.string().min(1).max(128),
   })
-  .strict();
+  .strict()
+  .nullable();

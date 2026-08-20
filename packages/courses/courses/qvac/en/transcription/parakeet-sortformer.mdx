@@ -13,7 +13,7 @@ tests:
     description: "Parses 'Speaker N: start - end' lines from the Sortformer output"
     pattern: "Speaker\\s+\\d+|match\\s*\\(\\s*[/\\\\]Speaker"
 hints:
-  - "Sortformer outputs a text block where each line is 'Speaker N: <start>s - <end>s'. Parse the lines into segments."
+  - "Sortformer outputs a text block where each line is `Speaker N: hh:mm:ss.mmm - hh:mm:ss.mmm`. Parse the lines into segments, converting each stamp to seconds."
   - "After the diarization pass, unload Sortformer and load TDT. TDT does the actual transcription per segment."
   - "Slice the audio per segment by reading the WAV PCM and writing a per-segment WAV. The slicing helpers (readPcm, writeWavSlice) live in the prefilled scaffold."
 expectedOutput:
@@ -26,7 +26,7 @@ questions:
       - text: "A confidence score for how many speakers are in the file."
         correct: false
         feedback: "Re-read the format Sortformer's output lines follow."
-      - text: "One speaker turn as text: 'Speaker N: <start>s - <end>s', with no transcribed words yet."
+      - text: "One speaker turn as text: `Speaker N: hh:mm:ss.mmm - hh:mm:ss.mmm`, with no transcribed words yet."
         correct: true
       - text: "A fully transcribed sentence already attributed to a speaker."
         correct: false
@@ -47,10 +47,10 @@ questions:
 When a single audio file has more than one speaker, we want a transcript that says who said what. Sortformer diarizes the audio into speaker-attributed segments, then TDT transcribes each segment into text.
 
 The process runs in two passes:
-- Sortformer returns a text block where each line is `Speaker N: <start>s - <end>s`.
+- Sortformer returns a text block where each line is `Speaker N: hh:mm:ss.mmm - hh:mm:ss.mmm`.
 - TDT transcribes each segment and we attach the text to the speaker metadata.
 
-Each `Speaker N: <start>s - <end>s` line becomes a `{ speaker, start, end }` object. The Sortformer-to-TDT chain starts with the diarization pass. The first pass would look like the following:
+Each `Speaker N: hh:mm:ss.mmm - hh:mm:ss.mmm` line becomes a `{ speaker, start, end }` object, with both stamps converted to seconds for the slicing below. The Sortformer-to-TDT chain starts with the diarization pass. The first pass would look like the following:
 
 ```ts
 const sfModelId = await loadModel({
@@ -64,11 +64,19 @@ const diarization = await transcribe({
 });
 await unloadModel({ modelId: sfModelId });
 
+function toSeconds(stamp: string): number {
+  return stamp
+    .replace(/s$/, "")
+    .split(":")
+    .map(Number)
+    .reduce((total, part) => total * 60 + part, 0);
+}
+
 const segments = diarization
   .split("\n")
-  .map((line) => line.match(/Speaker (\d+): ([\d.]+)s - ([\d.]+)s/))
+  .map((line) => line.match(/Speaker (\d+): ([\d:.]+s?) - ([\d:.]+s?)/))
   .filter((m): m is RegExpMatchArray => m !== null)
-  .map((m) => ({ speaker: +m[1]!, start: +m[2]!, end: +m[3]! }))
+  .map((m) => ({ speaker: +m[1]!, start: toSeconds(m[2]!), end: toSeconds(m[3]!) }))
   .sort((a, b) => a.start - b.start);
 ```
 

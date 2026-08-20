@@ -28,7 +28,7 @@ async function main() {
   const outputs = await result.outputs;
   const firstImage = outputs[0];
   if (!firstImage) throw new Error("No image returned from diffusion");
-  fs.writeFileSync("output/image-gen/cat.png", firstImage);
+  fs.writeFileSync("output/image-generation/cat.png", firstImage);
 
   console.log(`Generated ${outputs.length} image`);
   await unloadModel({ modelId });

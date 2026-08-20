@@ -22,12 +22,8 @@ console.log('[chat] module loaded, build = 2026-08-11-adopt-from-error-message')
 // SDK can route loadModel to the right engine. Passing a bare filename fails
 // with MODEL_TYPE_REQUIRED.
 // Llama-3.2-1B-Instruct-Q4_0.gguf is excluded: that's a delegated-inference lesson download, not an AI-bot model.
-const CHAT_PRESETS = {
-  'Qwen3-0.6B-Q4_0.gguf': 'QWEN3_600M_INST_Q4',
-  'Qwen3-1.7B-Q4_0.gguf': 'QWEN3_1_7B_INST_Q4',
-  'Qwen3-4B-Q4_K_M.gguf': 'QWEN3_4B_INST_Q4_K_M',
-  'Qwen3-8B-Q4_K_M.gguf': 'QWEN3_8B_INST_Q4_K_M',
-};
+const { CHAT_PRESETS } = require('../shared/chat-presets.cjs');
+const { ensureModels } = require('../shared/model-fetch.cjs');
 
 // What loadModel asks the addon for, and what every prompt here is sized
 // against. See approxContextWindow for why the request is trusted.
@@ -187,6 +183,15 @@ async function ensureLoaded(filename) {
     throw new Error('@qvac/sdk does not export loadModel in this build');
   }
   emitLoadProgress({ modelName: filename, loaded: 0, total: 0 });
+  // See shared/model-fetch.cjs: takes the registry's named source when the
+  // model is missing.
+  await ensureModels([CHAT_PRESETS[filename]], {
+    onEvent: (e) => {
+      if (e.phase === 'progress') {
+        emitLoadProgress({ modelName: filename, loaded: e.downloaded, total: e.total });
+      }
+    },
+  }).catch(() => {});
   let modelId;
   // Every prompt in this file is budgeted against this number, so the two read
   // it from the same constant instead of agreeing by hand.
@@ -254,15 +259,23 @@ function newRequestId() {
   return `chat-${crypto.randomUUID()}`;
 }
 
-// Prefer the smallest chat model that's already on disk. The renderer can
-// override with an explicit hint when the picker has a specific recommendation.
+/** Whether the file this preset loads is on disk. */
+async function isChatModelInstalled(filename) {
+  const { catalogue } = require('./models.cjs');
+  const entry = (await catalogue()).find((e) => e.name === filename && e.family === 'chat');
+  return Boolean(entry?.installed);
+}
+
+// Prefer the largest chat model on disk. CHAT_PRESETS runs smallest first, so
+// reverse it. catalogue() keys on the cache file, which keeps the two registry
+// entries that share a display name apart.
 async function pickDefaultChatModel() {
-  const { listModels } = require('./models.cjs');
-  const installed = await listModels();
-  const completeNames = new Set(installed.filter((m) => m.complete).map((m) => m.name));
-  // Presets are listed smallest first in CHAT_PRESETS, so the first match wins.
-  for (const filename of Object.keys(CHAT_PRESETS)) {
-    if (completeNames.has(filename)) return filename;
+  const { catalogue } = require('./models.cjs');
+  const installed = new Set(
+    (await catalogue()).filter((e) => e.family === 'chat' && e.installed).map((e) => e.name),
+  );
+  for (const filename of Object.keys(CHAT_PRESETS).reverse()) {
+    if (installed.has(filename)) return filename;
   }
   return null;
 }
@@ -884,6 +897,7 @@ module.exports = {
   onLoadProgress,
   unload,
   pickDefaultChatModel,
+  isChatModelInstalled,
   isChatPreset,
   docsStatus: () => docsStatusFromCache(),
   docsRefresh: async () => {
