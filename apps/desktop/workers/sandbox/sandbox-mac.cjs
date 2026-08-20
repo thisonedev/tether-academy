@@ -39,10 +39,9 @@ function sbString(s) {
   return JSON.stringify(s);
 }
 
-// The kernel matches canonical paths, so a rule naming an uncanonical one
-// never applies. A path that does not exist yet still has to resolve: /tmp is
-// a symlink to /private/tmp, and a deny left under /tmp binds to nothing once
-// the run creates the directory.
+// /tmp is a symlink to /private/tmp and the kernel matches canonical paths,
+// so a deny left under /tmp binds to nothing once the run creates it. A path
+// that does not exist yet still has to resolve.
 function realpathSafe(p) {
   try {
     return fs.realpathSync(p);

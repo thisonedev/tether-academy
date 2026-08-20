@@ -1,7 +1,6 @@
 // What a lesson prints when its own entry call settles, before the SDK
-// teardown that can keep the process alive afterwards. The host waits for this
-// because a model load or a video render says nothing for minutes, and silence
-// on its own reads the same as a finished run.
+// teardown that can outlive it. A model load says nothing for minutes, so
+// silence alone reads the same as a finished run.
 'use strict';
 
 const LESSON_DONE_MARKER = '[academy:lesson-done]\n';
