@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import Link from 'next/link';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CurriculumStrip } from './curriculum-strip.js';
@@ -83,6 +84,8 @@ export interface LessonData {
   /** False for a lesson that only works on the machine running it, e.g. one
    *  that serves a port a paired device could never reach. Defaults to true. */
   pairedMode?: boolean;
+  /** What this lesson costs to run, when that is more than the rest. */
+  requirements?: string[];
 }
 
 const RUN_MODES = ['simulated', 'this-device', 'remote'] as const;
@@ -200,6 +203,58 @@ declare global {
   interface Window {
     academy?: AcademyAPI;
   }
+}
+
+// Anchored to the badge and rendered at the body root: the toolbar and the
+// editor pane both clip, so a panel positioned inside either one gets cut off.
+function HeavyRunBadge({ requirements }: { requirements: string[] }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<{ top: number; right: number } | null>(null);
+
+  const show = () => {
+    const box = ref.current?.getBoundingClientRect();
+    if (box) setAt({ top: box.bottom + 6, right: window.innerWidth - box.right });
+    setOpen(true);
+  };
+
+  return (
+    <>
+      <span
+        ref={ref}
+        tabIndex={0}
+        onMouseEnter={show}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={show}
+        onBlur={() => setOpen(false)}
+        className="shrink-0 cursor-help rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-400 transition-colors hover:bg-amber-500/20"
+      >
+        heavy run
+      </span>
+      {open && at
+        ? createPortal(
+            <div
+              role="tooltip"
+              style={{ top: at.top, right: at.right }}
+              className="pointer-events-none fixed z-[100] w-72 rounded-lg border border-canvas-border bg-canvas p-3 font-sans shadow-xl"
+            >
+              <div className="text-xs font-semibold text-canvas-foreground">
+                This lesson needs a fast machine
+              </div>
+              <ul className="mt-2 space-y-1.5">
+                {requirements.map((line) => (
+                  <li key={line} className="flex gap-1.5 text-[11px] leading-relaxed text-canvas-muted-foreground">
+                    <span className="text-amber-400">&bull;</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
 }
 
 export function LessonWorkspace({ data, children }: { data: LessonData; children: ReactNode }) {
@@ -1122,6 +1177,7 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
             onReset={reset}
             platforms={data.platforms}
             pairedMode={data.pairedMode}
+            requirements={data.requirements}
             readOnly={data.readOnly}
             hints={data.hints}
             answer={data.answer}
@@ -1223,6 +1279,7 @@ function Runner({
   onReset,
   platforms,
   pairedMode = true,
+  requirements,
   readOnly = false,
   hints,
   answer,
@@ -1259,6 +1316,7 @@ function Runner({
   onReset: () => void;
   platforms: LessonData['platforms'];
   pairedMode?: boolean;
+  requirements?: string[];
   readOnly?: boolean;
   hints: string[];
   answer: string;
@@ -1366,6 +1424,9 @@ function Runner({
             <span className="rounded bg-canvas-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground">
               read-only
             </span>
+          ) : null}
+          {requirements && requirements.length > 0 ? (
+            <HeavyRunBadge requirements={requirements} />
           ) : null}
         </div>
         <div className="flex min-w-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
