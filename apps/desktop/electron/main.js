@@ -502,7 +502,7 @@ handle('academy:models:remove', async (id) => {
   const items = await listModels();
   const target = items.find((it) => it.id === id);
   if (target && target.name === (await configuredChatModelName())) {
-    throw new Error('This is the AI bot\'s active model. Change it in Settings before removing.');
+    throw new Error('The AI bot is set to use this model. Select a different one first.');
   }
   // Unload first so ensureLoaded()'s "already loaded" shortcut doesn't hand out a deleted model forever.
   const result = await removeModel(id);

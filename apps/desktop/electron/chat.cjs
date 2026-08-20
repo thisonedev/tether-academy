@@ -22,12 +22,7 @@ console.log('[chat] module loaded, build = 2026-08-11-adopt-from-error-message')
 // SDK can route loadModel to the right engine. Passing a bare filename fails
 // with MODEL_TYPE_REQUIRED.
 // Llama-3.2-1B-Instruct-Q4_0.gguf is excluded: that's a delegated-inference lesson download, not an AI-bot model.
-const CHAT_PRESETS = {
-  'Qwen3-0.6B-Q4_0.gguf': 'QWEN3_600M_INST_Q4',
-  'Qwen3-1.7B-Q4_0.gguf': 'QWEN3_1_7B_INST_Q4',
-  'Qwen3-4B-Q4_K_M.gguf': 'QWEN3_4B_INST_Q4_K_M',
-  'Qwen3-8B-Q4_K_M.gguf': 'QWEN3_8B_INST_Q4_K_M',
-};
+const { CHAT_PRESETS } = require('../shared/chat-presets.cjs');
 
 // What loadModel asks the addon for, and what every prompt here is sized
 // against. See approxContextWindow for why the request is trusted.
