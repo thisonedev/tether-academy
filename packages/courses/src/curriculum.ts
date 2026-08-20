@@ -33,20 +33,20 @@ export const COURSES: Course[] = [
     href: '/courses/wdk',
     planned: true,
   },
-  // {
-  //   slug: 'pears',
-  //   name: 'Pears',
-  //   description: 'A peer-to-peer platform for building mobile, desktop, and terminal apps.',
-  //   href: '/courses/pears',
-  //   planned: true,
-  // },
   {
-    slug: 'stable',
-    name: 'Stable',
-    description: 'The USDT-native Layer 1 built for stablecoin payments.',
-    href: '/courses/stable',
+    slug: 'pears',
+    name: 'Pears',
+    description: 'A peer-to-peer platform for building mobile, desktop, and terminal apps.',
+    href: '/courses/pears',
     planned: true,
   },
+  // {
+  //   slug: 'stable',
+  //   name: 'Stable',
+  //   description: 'The USDT-native Layer 1 built for stablecoin payments.',
+  //   href: '/courses/stable',
+  //   planned: true,
+  // },
 ];
 
 export const CURRICULUM: CurriculumChapter[] = [
