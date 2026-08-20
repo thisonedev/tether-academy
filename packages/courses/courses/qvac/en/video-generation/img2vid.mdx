@@ -2,6 +2,9 @@
 title: "Build a video from a still image"
 sourceExample: "packages/sdk/examples/diffusion-img2vid.ts"
 platforms: ['node']
+requirements:
+  - "Requires about 24 GB of free disk space for the model weights"
+  - "Renders 30 steps through a 14B model, about 95 minutes on a fast CPU and longer on older hardware"
 tests:
   - id: loads-i2v-model
     description: 'Loads Wan2_1 I2V with clipVisionModelSrc'
@@ -18,7 +21,7 @@ tests:
 hints:
   - "Use WAN2_1_I2V_14B_Q4_K_M as the main model, and pass clipVisionModelSrc: CLIP_VISION_H. That's the vision encoder that lets the model read the first frame."
   - "`init_image` is a Uint8Array of the still image. `strength` 0.85 keeps the first frame readable while letting motion happen, go lower and motion dies."
-  - "Same `outputs` type as `txt2vid`: a `Promise<Uint8Array[]>` of encoded video bytes. Save with `fs.writeFileSync('out.mp4', outputs[0])`; the container is decided by the file extension."
+  - "Same `outputs` type as `txt2vid`: a `Promise<Uint8Array[]>` of encoded video bytes. These bytes come back as AVI with Motion JPEG frames, so name the file to match: `fs.writeFileSync('out.avi', outputs[0])`."
 expectedOutput:
   - "Generated 1 video"
 questions:
@@ -103,7 +106,7 @@ const result = video({
 const outputs = await result.outputs;
 const firstClip = outputs[0];
 if (!firstClip) throw new Error("No video returned from video()");
-fs.writeFileSync("output/video-gen/portrait.mp4", firstClip);
+fs.writeFileSync("output/video-gen/portrait.avi", firstClip);
 console.log(`Generated ${outputs.length} video`);
 ```
 

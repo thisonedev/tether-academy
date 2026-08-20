@@ -2,6 +2,9 @@
 title: "Build a video from text"
 sourceExample: "packages/sdk/examples/diffusion-txt2vid.ts"
 platforms: ['node']
+requirements:
+  - "Requires about 15 GB of free disk space for the model weights"
+  - "Renders 30 steps, 11 to 13 minutes on a fast CPU and longer on older hardware"
 tests:
   - id: calls-video
     description: 'Calls video() with mode txt2vid'
