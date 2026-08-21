@@ -267,7 +267,6 @@ for await (const rawText of session) {
         if (!shuttingDown) playAudio(wavBuffer);
       } catch (err) {
         if (!isTeardown(err)) console.error("✖ Turn failed:", (err as Error).message);
-        break;
       }
     }
   }
