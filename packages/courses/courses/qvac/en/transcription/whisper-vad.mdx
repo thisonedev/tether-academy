@@ -55,11 +55,9 @@ const session = await transcribeStream({
   endOfTurnSilenceMs: 800,
 });
 
-void (async () => {
-  for await (const chunk of audioStream()) {
-    session.write(chunk);
-  }
-})();
+ffmpeg.stdout.on("data", (chunk: Buffer) => {
+  session.write(chunk);
+});
 ```
 
 Three event types on the same duplex stream, one `for await` + `switch` is the canonical consume pattern:
@@ -71,7 +69,10 @@ for await (const event of session) {
       console.log(`> ${event.text.trim()}`);
       break;
     case "vad":
-      console.log(`▸ [vad] speaking=${event.speaking} probability=${event.probability.toFixed(2)}`);
+      if (event.speaking !== lastSpeaking) {
+        console.log(`▸ [vad] speaking=${event.speaking} probability=${event.probability.toFixed(2)}`);
+        lastSpeaking = event.speaking;
+      }
       break;
     case "endOfTurn":
       console.log(`▸ [endOfTurn] silence ${event.silenceDurationMs}ms\n`);
@@ -81,5 +82,9 @@ for await (const event of session) {
 ```
 
 The `vad` event fires while the speaker is talking. The `endOfTurn` event fires after the speaker pauses for `endOfTurnSilenceMs` milliseconds. That silence window is the conversation-equivalent of "they're done; now I can answer."
+
+A `vad` event repeats on every frame the engine scores, so printing each one buries the transcript under near-identical rows. Tracking the previous value in `lastSpeaking` and printing only on a change keeps one row per transition.
+
+The mic keeps producing audio until you stop it, so `SIGINT` and `SIGTERM` handlers close the session and unload the model. Without them, the model is torn down under a `for await` that is still waiting, and the SDK reports that as a failed transcription.
 
 > Note: `endOfTurn` measures silence from the VAD; Parakeet's EOU token is a separate mechanism this lesson doesn't use. Pair the Whisper model with `VAD_SILERO_5_1_2` in `modelConfig.vadModelSrc` so the silence window is measured accurately.

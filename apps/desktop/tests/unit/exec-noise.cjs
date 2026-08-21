@@ -180,3 +180,46 @@ test('exec-noise - caps a newline-free stream at the line budget', (t) => {
   t.is(typeof MAX_PARTIAL_LINE, 'number', 'MAX_PARTIAL_LINE is exported for the run-path check');
   t.ok(MAX_PARTIAL_LINE > 0 && MAX_PARTIAL_LINE < 1024 * 1024, 'cap is a sensible 64 KiB');
 });
+
+// Stopping a mic lesson filled the output with repeats of these. They arrive
+// as plain console.error text, so only this line filter can drop them.
+test('exec-noise - unloaded-model teardown chatter is dropped, real failures are not', (t) => {
+  t.ok(isNoiseLine('Transcription failed: Model was unloaded'));
+  t.ok(isNoiseLine('Transcription failed: Model whisper-tiny-q4 was unloaded'));
+  t.ok(isNoiseLine('Translation failed: Model llama was unloaded'));
+  t.ok(isNoiseLine('TTS failed: Model supertonic was unloaded'));
+
+  t.absent(
+    isNoiseLine('Transcription failed: unsupported sample rate'),
+    'a failure a learner has to act on still reaches them',
+  );
+  t.absent(isNoiseLine('Model was unloaded'), 'a bare unload notice is not a failure line');
+});
+
+// The thrown form carries the SDK's error code ahead of the message, which the
+// logged-form pattern does not match.
+test('exec-noise - the code-prefixed teardown error is dropped too', (t) => {
+  t.ok(isNoiseLine('TRANSCRIPTION_FAILED: Transcription failed: Model was unloaded'));
+  t.absent(
+    isNoiseLine('TRANSCRIPTION_FAILED: Transcription failed: unsupported sample rate'),
+    'a coded error about something else still reaches the reader',
+  );
+});
+
+// A stopped mic lesson emitted thousands of these in one run.
+test('exec-noise - the bare teardown write failure is dropped', (t) => {
+  t.ok(isNoiseLine('broken pipe'));
+  t.absent(
+    isNoiseLine('ffmpeg failed: broken pipe while writing output'),
+    'a real error mentioning a broken pipe still reaches the reader',
+  );
+});
+
+// The addon prints this row twice in every run.
+test('exec-noise - the parakeet load banner is dropped', (t) => {
+  t.ok(isNoiseLine('[parakeet] Sortformer AOSC enabled (v2.1; spkcache_len=188 fifo_len=188)'));
+  t.absent(
+    isNoiseLine('[parakeet] failed to load the sortformer model'),
+    'a real parakeet failure still reaches the reader',
+  );
+});

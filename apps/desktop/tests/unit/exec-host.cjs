@@ -559,3 +559,35 @@ test('exec-host - a suspicious verdict reaches the reader on a run that prompts 
 });
 
 
+
+// The host used to recover a stale run only when it still had a live child,
+// so a run parked on a wait that never settled held the slot forever and every
+// later request came back "another exec is already running on this peer".
+test('exec-host - a stale run with no child still gives the slot back', async (t) => {
+  const { _setTestStaleRunMs } = require('../../workers/peer/exec-host.cjs');
+  const { host, replies } = fakeHost({
+    awaitDeviceVerified: () => new Promise(() => {}),
+  });
+  _setTestStaleRunMs(0);
+  t.teardown(() => {
+    _setTestStaleRunMs(null);
+    host.stopAll();
+  });
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(1)', mode: 'inline' });
+  await settle();
+  t.ok(host.hasRun(PEER), 'the parked run holds the slot');
+  t.absent(isAlive(null), 'and has no child to signal');
+  // A zero threshold still needs the run to be measurably older than it, and
+  // both requests otherwise fall inside the same millisecond.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  host.handleRequest(PEER, { kind: 'request', code: 'console.log(2)', mode: 'inline' });
+  for (let i = 0; i < 12; i++) await settle();
+
+  t.absent(
+    replies.some((r) => r.code === 'run-in-progress'),
+    'the next request is not refused',
+  );
+  t.ok(host.hasRun(PEER), 'the new run took the slot');
+});

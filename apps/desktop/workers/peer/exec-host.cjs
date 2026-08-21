@@ -648,14 +648,16 @@ function createExecHost(ctx) {
     const existing = runs.get(discoveryKeyHex);
     if (existing) {
       const age = Date.now() - existing.startedAt;
-      if (age > (_testStaleRunMs ?? STALE_RUN_MS) && isAlive(existing.child)) {
-        killGroup(existing.child, 'SIGKILL');
-        if (existing.killTimer) clearTimeout(existing.killTimer);
-        existing.killTimer = setTimeout(() => forceReap(discoveryKeyHex, existing), FORCE_REAP_MS);
-        if (typeof existing.killTimer.unref === 'function') existing.killTimer.unref();
-        // The kill above is what frees the slot; wait for it instead of
-        // refusing the request that arrived right as recovery started.
-        waitForSlotFree(discoveryKeyHex, FORCE_REAP_MS + 1_000).then((freed) => {
+      if (age > (_testStaleRunMs ?? STALE_RUN_MS)) {
+        // The slot is taken before any child exists, so a stale run may have
+        // none: parked on a wait that never settled, or dead without
+        // reporting. Recovering only live children wedged both cases forever.
+        if (!cancel(discoveryKeyHex, 'stale') && !isAlive(existing.child)) {
+          reportExit(discoveryKeyHex, existing, { code: null, signal: null, source: 'stale' });
+        }
+        // Recovery frees the slot, so wait for it rather than refuse. The
+        // budget covers terminate()'s SIGTERM, grace, SIGKILL, force reap.
+        waitForSlotFree(discoveryKeyHex, SIGKILL_GRACE_MS + FORCE_REAP_MS + 1_000).then((freed) => {
           if (freed) handleRequest(discoveryKeyHex, msg);
           else {
             sendReply(discoveryKeyHex, {

@@ -22,6 +22,13 @@ const BARE_BUILTINS = {
 
 const BARE_PACKAGE_NAMES = new Set(Object.values(BARE_BUILTINS));
 
+// Lesson-facing replacements for a Bare builtin, living in this app rather
+// than node_modules. Closed set, and the path comes from this file's own
+// location, so a peer picks a name from the list and never a path.
+const LESSON_SHIM_DIR = 'lesson-shims';
+const LESSON_SHIMS = { child_process: 'child-process' };
+const LESSON_SHIM_NAMES = new Set(Object.values(LESSON_SHIMS));
+
 // Registered together since which one a snippet needs isn't known until it
 // runs. Reached by path because the package's own `./<name>/plugin` exports
 // are import-only and a CJS resolve of them fails.
@@ -75,6 +82,16 @@ function bareBuiltinToken(packageName) {
   return `${TOKEN_PREFIX}bare-builtin:${packageName}`;
 }
 
+function lessonShimToken(shimName) {
+  return `${TOKEN_PREFIX}lesson-shim:${shimName}`;
+}
+
+// Absolute path to a shim on this machine; `shimName` must already be known.
+function lessonShimPath(shimName) {
+  const path = require('path');
+  return path.join(__dirname, LESSON_SHIM_DIR, `${shimName}.cjs`);
+}
+
 // `spec` carries any subpath (e.g. '@modelcontextprotocol/sdk/client/index.js'),
 // since require.resolve needs the exact entry point, not just the package name.
 function npmPackageToken(spec) {
@@ -118,6 +135,11 @@ function resolvePortableToken(spec, { resolveSdk, resolveBuiltin }) {
       const path = require('path');
       const sdkRoot = path.resolve(path.dirname(resolveSdk()), '..');
       return path.join(sdkRoot, BARE_PLUGIN_DIR, pluginName, 'plugin.js');
+    }
+    if (rest.startsWith('lesson-shim:')) {
+      const shimName = rest.slice('lesson-shim:'.length);
+      if (!LESSON_SHIM_NAMES.has(shimName)) return null;
+      return lessonShimPath(shimName);
     }
     if (rest.startsWith('bare-builtin:')) {
       const packageName = rest.slice('bare-builtin:'.length);
@@ -204,6 +226,9 @@ module.exports = {
   qvacSdkToken,
   qvacSdkPluginToken,
   bareBuiltinToken,
+  lessonShimToken,
+  lessonShimPath,
+  LESSON_SHIMS,
   npmPackageToken,
   courseAssetToken,
   isPortableToken,

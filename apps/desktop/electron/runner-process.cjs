@@ -16,6 +16,9 @@ const {
   bareBuiltinToken,
   npmPackageToken,
   courseAssetToken,
+  lessonShimToken,
+  lessonShimPath,
+  LESSON_SHIMS,
 } = require('../shared/portable-lesson-imports.cjs');
 const { LESSON_DONE_MARKER } = require('../shared/lesson-done.cjs');
 
@@ -206,7 +209,12 @@ async function decideMockImports(source, opts = {}) {
 // portable mode (peer-exec), a token instead, since the sender's own path
 // is wrong on the receiver. See shared/portable-lesson-imports.cjs.
 function bareBuiltinPath(spec, portable) {
-  const target = BARE_BUILTINS[spec.replace(/^node:/, '')];
+  const bare = spec.replace(/^node:/, '');
+  // A shim wins over the raw package: it is the same module plus the fixes
+  // that let a lesson keep the source example's own code.
+  const shim = LESSON_SHIMS[bare];
+  if (shim) return portable ? lessonShimToken(shim) : lessonShimPath(shim);
+  const target = BARE_BUILTINS[bare];
   if (!target) return null;
   if (portable) return bareBuiltinToken(target);
   try {
@@ -432,8 +440,18 @@ function resolveFixturePaths(src, coursesDir, portable) {
 }
 
 // Never clobber: add _1, _2 like a browser download, swapped in at the call site.
+const childrenAlivePreamble = (runtime, portable) => (runtime === 'bare'
+  ? `import { __academyLiveChildren as __academyLiveChildrenCount } from ${JSON.stringify(resolveImport('node:child_process', runtime, portable))};
+function __academyChildrenAlive() {
+  try { return __academyLiveChildrenCount() > 0; } catch { return false; }
+}
+`
+  : `function __academyChildrenAlive() { return false; }
+`);
+
 const dedupePreamble = (runtime, portable) => `import { writeFileSync as __academyWrite, existsSync as __academyExists, mkdirSync as __academyMkdir } from ${JSON.stringify(resolveImport('node:fs', runtime, portable))};
 import { dirname as __academyDirname, extname as __academyExt, join as __academyJoin, basename as __academyBase, resolve as __academyResolve } from ${JSON.stringify(resolveImport('node:path', runtime, portable))};
+${childrenAlivePreamble(runtime, portable)}
 function __academyFreePath(target) {
   const p = String(target);
   __academyMkdir(__academyDirname(p), { recursive: true });
@@ -464,6 +482,14 @@ function __academyExit(code) {
   try { process.stderr.write("", flushed); } catch { flushed(); }
 }
 function __academyEnd(code) {
+  // An event-driven lesson registers its handlers and returns, so the top
+  // level settling says nothing about whether it is done. Node keeps such a
+  // process alive on the open handle; wait on the lesson's own children for
+  // the same reason, or a microphone run ends before anyone speaks.
+  if (__academyChildrenAlive()) {
+    setTimeout(() => __academyEnd(code), 250);
+    return;
+  }
   // The host cannot tell a lesson still computing from one whose worker is
   // holding the process open after the work ended, so say which this is.
   try { process.stderr.write(${JSON.stringify(LESSON_DONE_MARKER)}); } catch {}

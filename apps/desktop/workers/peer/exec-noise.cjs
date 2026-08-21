@@ -63,6 +63,22 @@ const NOISE_LINE = [
   // line names the call and the bar shows the download. WARN and ERROR are
   // left alone, since those are the run telling you something.
   /^\[[A-Za-z][\w.-]*\]\s*\[(INFO|DEBUG|TRACE|VERBOSE)\]/,
+  // Stopping a mic lesson unloads the model with transcription calls still in
+  // flight, and the SDK worker prints these as plain console.error text, so the
+  // exception-side filter in runner-process.cjs never sees them. This drops
+  // only the unloaded-model wording; a real failure still shows.
+  /^(transcription|translation|tts|text-to-speech) failed:.*\bunloaded\b/i,
+  // Same thing thrown rather than logged, so it carries the SDK's error code:
+  // `TRANSCRIPTION_FAILED: Transcription failed: Model was unloaded`.
+  /^[A-Z][A-Z_]+: (transcription|translation|tts|text-to-speech) failed:.*\bunloaded\b/i,
+  // Killing a mic lesson closes the session under writes that are still in
+  // flight, and it repeats for as long as the microphone drains. Matched as a
+  // whole line, so a real error mentioning a broken pipe still gets through.
+  /^broken pipe$/i,
+  // Parakeet's streaming addon announces its own load-time config, and prints
+  // the same row twice in a run. The stage line already says a model is
+  // loading, so neither row carries anything a reader needs.
+  /^\[parakeet\] Sortformer AOSC enabled/i,
 ];
 
 // Above this, a partial line is forwarded verbatim rather than held until the

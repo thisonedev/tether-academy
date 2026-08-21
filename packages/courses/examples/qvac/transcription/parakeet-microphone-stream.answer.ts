@@ -4,18 +4,6 @@ import { platform } from "node:os";
 
 const SAMPLE_RATE = 16000;
 
-// Drop the SDK's teardown chatter from stderr.
-const realStderrWrite = process.stderr.write.bind(process.stderr);
-(process.stderr.write as unknown) = (chunk: string | Buffer, ...rest: unknown[]) => {
-  const s = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-  if (/SDK is shutting down|is shutting down soon/i.test(s)) return true;
-  if (/in-flight rpc|worker exited mid-request/i.test(s)) return true;
-  if (/model was unloaded|model.*unloaded/i.test(s)) return true;
-  if (/transcription failed|translation failed|tts failed|text-to-speech failed/i.test(s)) return true;
-  if (/stream aborted|stream.*aborted/i.test(s)) return true;
-  return realStderrWrite(chunk, ...(rest as []));
-};
-
 const ffmpegCheck = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" });
 if (ffmpegCheck.error || ffmpegCheck.status !== 0) {
   console.error("✖ ffmpeg not found on PATH. Install ffmpeg and retry.");

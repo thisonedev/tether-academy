@@ -7,18 +7,6 @@ import {
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 
-// Drop the SDK's teardown chatter from stderr.
-const realStderrWrite = process.stderr.write.bind(process.stderr);
-(process.stderr.write as unknown) = (chunk: string | Buffer, ...rest: unknown[]) => {
-  const s = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-  if (/SDK is shutting down|is shutting down soon/i.test(s)) return true;
-  if (/in-flight rpc|worker exited mid-request/i.test(s)) return true;
-  if (/model was unloaded|model.*unloaded/i.test(s)) return true;
-  if (/transcription failed|translation failed|tts failed|text-to-speech failed/i.test(s)) return true;
-  if (/stream aborted|stream.*aborted/i.test(s)) return true;
-  return realStderrWrite(chunk, ...(rest as []));
-};
-
 const SAMPLE_RATE = 16000;
 const BYTES_PER_S16_SAMPLE = 2;
 const STREAM_CHUNK_MS = 2000;
@@ -36,7 +24,7 @@ const SORTFORMER_V21_AOSC_LOAD_CONFIG = {
 } as const;
 
 const audioFilePath =
-  process.argv[2] ?? "./examples/qvac/transcription/input/sample-16khz.wav";
+  process.argv[2] ?? "./examples/qvac/transcription/input/diarization-sample-16k.wav";
 if (!fs.existsSync(audioFilePath)) {
   console.error(`✖ ${audioFilePath} does not exist`);
   console.error(`Usage: tsx <file>.ts <path-to-wav>`);
