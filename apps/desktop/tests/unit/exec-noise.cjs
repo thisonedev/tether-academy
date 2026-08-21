@@ -214,3 +214,12 @@ test('exec-noise - the bare teardown write failure is dropped', (t) => {
     'a real error mentioning a broken pipe still reaches the reader',
   );
 });
+
+// The addon prints this row twice in every run.
+test('exec-noise - the parakeet load banner is dropped', (t) => {
+  t.ok(isNoiseLine('[parakeet] Sortformer AOSC enabled (v2.1; spkcache_len=188 fifo_len=188)'));
+  t.absent(
+    isNoiseLine('[parakeet] failed to load the sortformer model'),
+    'a real parakeet failure still reaches the reader',
+  );
+});

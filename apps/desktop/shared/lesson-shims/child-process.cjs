@@ -44,6 +44,14 @@ function spawnSync(file, args, opts) {
     opts = args;
     args = [];
   }
+  // bare-subprocess never reads `timeout`, and the call blocks inside its
+  // native binding where no JS timer can reach it. Saying so beats returning
+  // as though the limit had been applied.
+  if (opts && opts.timeout != null) {
+    throw new Error(
+      'spawnSync does not support `timeout` on this runtime. Use spawn() with a timer that kills the child.',
+    );
+  }
   if (!opts || opts.input == null) return subprocess.spawnSync(file, args ?? [], opts);
 
   const { input, ...rest } = opts;

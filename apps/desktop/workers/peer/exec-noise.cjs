@@ -75,6 +75,10 @@ const NOISE_LINE = [
   // flight, and it repeats for as long as the microphone drains. Matched as a
   // whole line, so a real error mentioning a broken pipe still gets through.
   /^broken pipe$/i,
+  // Parakeet's streaming addon announces its own load-time config, and prints
+  // the same row twice in a run. The stage line already says a model is
+  // loading, so neither row carries anything a reader needs.
+  /^\[parakeet\] Sortformer AOSC enabled/i,
 ];
 
 // Above this, a partial line is forwarded verbatim rather than held until the
