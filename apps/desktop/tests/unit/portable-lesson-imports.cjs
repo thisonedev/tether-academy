@@ -111,3 +111,24 @@ test('portable-lesson-imports - substitutePortableAssets refuses a path outside 
   const { refused } = substitutePortableAssets(code, { coursesDir: dir });
   t.alike(refused, ['../../../etc/passwd']);
 });
+
+// child_process resolves to an app-local shim, so a peer sends a name from a
+// closed list and never a path of its own choosing.
+test('portable-lesson-imports - a lesson shim resolves only for a known name', (t) => {
+  const {
+    lessonShimToken,
+    resolvePortableToken: resolveToken,
+  } = require('../../shared/portable-lesson-imports.cjs');
+  const resolvers = { resolveSdk: () => '/sdk', resolveBuiltin: (p) => `/pkg/${p}` };
+
+  const ok = resolveToken(lessonShimToken('child-process'), resolvers);
+  t.ok(ok && ok.endsWith('lesson-shims/child-process.cjs'), 'a listed shim resolves');
+  t.ok(require('fs').existsSync(ok), 'and the file it names is really there');
+
+  t.is(resolveToken('academy-portable:lesson-shim:nope', resolvers), null, 'an unlisted name does not');
+  t.is(
+    resolveToken('academy-portable:lesson-shim:../../../../etc/passwd', resolvers),
+    null,
+    'and a traversal is refused rather than joined',
+  );
+});
