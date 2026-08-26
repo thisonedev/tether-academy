@@ -3,7 +3,9 @@
 // records its spawning PID; this kills any whose recorded parent is gone.
 'use strict';
 
-const { execFileSync } = require('child_process');
+const process = require('process');
+
+const { killPid, listProcesses } = require('./process-control.cjs');
 
 const SOCKET_PID_RE = /qvac-worker-(\d+)-/;
 
@@ -20,14 +22,11 @@ function parentAlive(pid) {
  * @returns {Array<{ pid: number, parentPid: number }>} workers that were killed
  */
 function reapOrphanedQvacWorkers() {
-  let out;
-  try {
-    out = execFileSync('ps', ['-eo', 'pid,args'], { encoding: 'utf8' });
-  } catch {
-    return [];
-  }
   const killed = [];
-  for (const line of out.split('\n')) {
+  for (const raw of listProcesses()) {
+    // Windows reports the module path with backslashes and names the socket as
+    // a \\.\pipe\ path, so both checks below run against forward slashes.
+    const line = raw.replace(/\\/g, '/');
     if (!line.includes('@qvac/sdk') || !line.includes('worker.js')) continue;
     const socketMatch = line.match(SOCKET_PID_RE);
     if (!socketMatch) continue;
@@ -36,10 +35,7 @@ function reapOrphanedQvacWorkers() {
     const pidMatch = line.trim().match(/^(\d+)/);
     if (!pidMatch) continue;
     const workerPid = Number(pidMatch[1]);
-    try {
-      process.kill(workerPid, 'SIGKILL');
-      killed.push({ pid: workerPid, parentPid });
-    } catch {}
+    if (killPid(workerPid, 'SIGKILL')) killed.push({ pid: workerPid, parentPid });
   }
   return killed;
 }

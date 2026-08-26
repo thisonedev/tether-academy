@@ -31,6 +31,7 @@ const { acceptAll, syncFast, pruneTruncatedModels } = require('./shared/model-in
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
 const { hintForMissingLib } = require('./electron/linux-lib-hint.cjs');
+const { killTree, spawnFlags } = require('./shared/process-control.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
@@ -125,20 +126,12 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
         QVAC_LOG_LEVEL: 'warn',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Own process group so killGroup reaches the QVAC worker it spawns.
-      detached: true,
+      // The spawn flags killGroup needs to reach the QVAC worker on this platform.
+      ...spawnFlags,
     },
   );
 
-  const killGroup = (signal) => {
-    try {
-      process.kill(-child.pid, signal);
-    } catch {
-      try {
-        child.kill(signal);
-      } catch {}
-    }
-  };
+  const killGroup = (signal) => killTree(child, signal);
 
   let stopRequested = false;
   // Same 1 MiB per-stream cap peer-exec uses. Hoisted out of the Promise
