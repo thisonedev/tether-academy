@@ -12,6 +12,11 @@ const { resolveMcpBins } = require('./mcp-bins.cjs');
 // A cold install pulls a whole dependency tree.
 const WARM_TIMEOUT_MS = 4 * 60_000;
 
+// npx on Windows is npx.cmd, which needs shell: true post-CVE-2024-27980 (see
+// warmPackage). That reopens cmd.exe reinterpretation on pkg, the one
+// argument here that isn't a fixed literal, so it must clear this first.
+const NPM_PACKAGE_NAME_RE = /^(@[a-z0-9-][a-z0-9._-]*\/)?[a-z0-9-][a-z0-9._-]*$/;
+
 /** npx unpacks into `_npx/<hash>/node_modules/<pkg>`; the hash is npm's own. */
 function isWarm(cacheDir, pkg) {
   return hashDirsFor(cacheDir, [pkg]).length > 0;
@@ -53,6 +58,9 @@ function hashDirsFor(cacheDir, packages) {
  */
 function warmPackage(cacheDir, pkg) {
   if (isWarm(cacheDir, pkg)) return { ok: true };
+  if (!NPM_PACKAGE_NAME_RE.test(pkg)) {
+    return { ok: false, error: `"${pkg}" is not a valid npm package name` };
+  }
   const { npx } = resolveMcpBins();
   if (!npx) return { ok: false, error: 'npx is not installed on this device' };
 
@@ -62,6 +70,7 @@ function warmPackage(cacheDir, pkg) {
     execFileSync(npx, ['--yes', '--package', pkg, '--', 'node', '-e', '0'], {
       stdio: ['ignore', 'ignore', 'pipe'],
       timeout: WARM_TIMEOUT_MS,
+      shell: process.platform === 'win32',
       env: {
         ...process.env,
         npm_config_cache: cacheDir,
@@ -92,4 +101,4 @@ function warmPackages(cacheDir, packages) {
   return { ok: failed.length === 0, failed };
 }
 
-module.exports = { isWarm, hashDirsFor, warmPackage, warmPackages, WARM_TIMEOUT_MS };
+module.exports = { isWarm, hashDirsFor, warmPackage, warmPackages, WARM_TIMEOUT_MS, NPM_PACKAGE_NAME_RE };
