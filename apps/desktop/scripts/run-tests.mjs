@@ -10,6 +10,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 // A crashed sandboxed run can leave its bwrap child execve'd into the bare
@@ -26,7 +27,10 @@ function reapOrphanedSandboxChildren() {
 }
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const brittle = path.join(desktopRoot, 'node_modules', '.bin', 'brittle-node');
+// The .bin/brittle-node shim is a .cmd/.ps1 pair on Windows, which spawn()
+// can't launch directly; brittle-node.js is the real script behind every
+// shim on every platform, so run it with this process's own node instead.
+const brittleNodeScript = createRequire(import.meta.url).resolve('brittle/brittle-node.js');
 
 const args = process.argv.slice(2);
 let filter = null;
@@ -60,7 +64,7 @@ function run(file) {
   return new Promise((resolve) => {
     // brittle-node resolves its arguments relative to cwd, not as absolute paths.
     const rel = path.relative(desktopRoot, file);
-    const child = spawn(brittle, [rel], { stdio: ['ignore', 'pipe', 'pipe'], cwd: desktopRoot });
+    const child = spawn(process.execPath, [brittleNodeScript, rel], { stdio: ['ignore', 'pipe', 'pipe'], cwd: desktopRoot });
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (out += d));
