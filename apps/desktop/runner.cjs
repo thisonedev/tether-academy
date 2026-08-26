@@ -185,9 +185,7 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
       // A SIGKILL'd run never runs its own JS-level cleanup, so its QVAC
       // worker can outlive it; a moment later lets the OS reap `child` first.
       const reapTimer = setTimeout(() => {
-        try {
-          require('./shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers();
-        } catch {}
+        require('./shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers().catch(() => {});
       }, 500);
       if (typeof reapTimer.unref === 'function') reapTimer.unref();
       rm(dir, { recursive: true, force: true }).catch(() => {});

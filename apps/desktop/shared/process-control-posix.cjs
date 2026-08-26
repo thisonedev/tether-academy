@@ -4,8 +4,11 @@
 // POSIX backend. Children spawn detached, so the process group id is the child
 // pid and one signal reaches an orphaned QVAC worker grandchild too.
 
-const { execFileSync } = require('child_process');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const process = require('process');
+
+const execFileAsync = promisify(execFile);
 
 const spawnFlags = { detached: true };
 
@@ -47,12 +50,14 @@ function killPid(pid, signal) {
 }
 
 /**
- * Every running process as a `pid command-line` line.
- * @returns {string[]}
+ * Every running process as a `pid command-line` line. Async so both backends
+ * share one contract; the Windows side pays for it, this one barely notices.
+ * @returns {Promise<string[]>}
  */
-function listProcesses() {
+async function listProcesses() {
   try {
-    return execFileSync('ps', ['-eo', 'pid,args'], { encoding: 'utf8' }).split('\n');
+    const { stdout } = await execFileAsync('ps', ['-eo', 'pid,args'], { encoding: 'utf8' });
+    return stdout.split('\n');
   } catch {
     return [];
   }

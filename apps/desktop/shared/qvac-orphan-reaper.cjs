@@ -19,11 +19,11 @@ function parentAlive(pid) {
 }
 
 /**
- * @returns {Array<{ pid: number, parentPid: number }>} workers that were killed
+ * @returns {Promise<Array<{ pid: number, parentPid: number }>>} workers that were killed
  */
-function reapOrphanedQvacWorkers() {
+async function reapOrphanedQvacWorkers() {
   const killed = [];
-  for (const raw of listProcesses()) {
+  for (const raw of await listProcesses()) {
     // Windows reports the module path with backslashes and names the socket as
     // a \\.\pipe\ path, so both checks below run against forward slashes.
     const line = raw.replace(/\\/g, '/');

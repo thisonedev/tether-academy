@@ -4,7 +4,10 @@
 // Windows backend. There is no process-group signal, so killTree shells out to
 // taskkill, and `detached` stays off because it would open a console window.
 
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
+const { promisify } = require('util');
+
+const execFileAsync = promisify(execFile);
 
 const spawnFlags = { detached: false, windowsHide: true };
 
@@ -53,12 +56,14 @@ function killPid(pid, _signal) {
 
 /**
  * Every running process as a `pid command-line` line. Uses CIM rather than
- * wmic, which Windows 11 24H2 removed.
- * @returns {string[]}
+ * wmic, which Windows 11 24H2 removed. Async: spawning powershell.exe here
+ * measured 4+ seconds (mostly its own startup), which would otherwise block
+ * the event loop for every caller that runs this after each exec.
+ * @returns {Promise<string[]>}
  */
-function listProcesses() {
+async function listProcesses() {
   try {
-    const out = execFileSync(
+    const { stdout } = await execFileAsync(
       'powershell',
       [
         '-NoProfile',
@@ -68,7 +73,7 @@ function listProcesses() {
       ],
       { encoding: 'utf8', windowsHide: true },
     );
-    return out.split(/\r?\n/);
+    return stdout.split(/\r?\n/);
   } catch {
     return [];
   }

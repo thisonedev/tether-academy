@@ -431,9 +431,7 @@ function createExecHost(ctx) {
     // can outlive it; a moment later gives the OS time to actually reap
     // run.child first, so the reaper sees its parent as dead.
     const reapTimer = setTimeout(() => {
-      try {
-        require('../../shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers();
-      } catch {}
+      require('../../shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers().catch(() => {});
     }, 500);
     if (typeof reapTimer.unref === 'function') reapTimer.unref();
     removeDir(run.fileDir);

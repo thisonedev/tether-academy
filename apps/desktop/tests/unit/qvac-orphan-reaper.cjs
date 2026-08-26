@@ -33,7 +33,7 @@ test('qvac-orphan-reaper - kills a worker whose recorded parent is dead', async 
   });
   await new Promise((resolve) => setTimeout(resolve, 500));
 
-  const killed = reapOrphanedQvacWorkers();
+  const killed = await reapOrphanedQvacWorkers();
   t.ok(killed.some((k) => k.pid === worker.pid), 'the fake orphan is in the killed list');
 
   await new Promise((resolve) => setTimeout(resolve, 300));
@@ -49,7 +49,7 @@ test('qvac-orphan-reaper - leaves a worker whose parent is alive', async (t) => 
   });
   await new Promise((resolve) => setTimeout(resolve, 500));
 
-  const killed = reapOrphanedQvacWorkers();
+  const killed = await reapOrphanedQvacWorkers();
   t.absent(killed.some((k) => k.pid === worker.pid), 'a worker with a live parent is not touched');
   t.ok(isAlive(worker.pid), 'it is still running');
 });
