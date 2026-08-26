@@ -5,10 +5,18 @@
 // pid and one signal reaches an orphaned QVAC worker grandchild too.
 
 const { execFile } = require('child_process');
-const { promisify } = require('util');
 const process = require('process');
 
-const execFileAsync = promisify(execFile);
+// Not util.promisify: Bare (the pear-end worker also loads this file) has no
+// 'util' module, and that require crashed the whole worker on start.
+function execFileAsync(cmd, args, opts) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, opts, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve({ stdout, stderr });
+    });
+  });
+}
 
 const spawnFlags = { detached: true };
 

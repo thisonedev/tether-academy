@@ -5,9 +5,17 @@
 // taskkill, and `detached` stays off because it would open a console window.
 
 const { execFile, execFileSync } = require('child_process');
-const { promisify } = require('util');
 
-const execFileAsync = promisify(execFile);
+// Not util.promisify: Bare (the pear-end worker also loads this file) has no
+// 'util' module, and that require crashed the whole worker on start.
+function execFileAsync(cmd, args, opts) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, opts, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve({ stdout, stderr });
+    });
+  });
+}
 
 const spawnFlags = { detached: false, windowsHide: true };
 
