@@ -19,6 +19,7 @@ const {
   lessonShimToken,
   lessonShimPath,
   LESSON_SHIMS,
+  fileSpecifier,
 } = require('../shared/portable-lesson-imports.cjs');
 const { LESSON_DONE_MARKER } = require('../shared/lesson-done.cjs');
 
@@ -213,12 +214,12 @@ function bareBuiltinPath(spec, portable) {
   // A shim wins over the raw package: it is the same module plus the fixes
   // that let a lesson keep the source example's own code.
   const shim = LESSON_SHIMS[bare];
-  if (shim) return portable ? lessonShimToken(shim) : lessonShimPath(shim);
+  if (shim) return portable ? lessonShimToken(shim) : fileSpecifier(lessonShimPath(shim));
   const target = BARE_BUILTINS[bare];
   if (!target) return null;
   if (portable) return bareBuiltinToken(target);
   try {
-    return parentRequire.resolve(target);
+    return fileSpecifier(parentRequire.resolve(target));
   } catch {
     return null;
   }
@@ -239,14 +240,14 @@ function resolveImport(spec, runtime, portable) {
   // stripForNode removes this original line); the generic branch below
   // would otherwise tokenize it too, redeclaring the same names.
   if (spec === '@qvac/sdk') {
-    return portable ? qvacSdkToken() : parentRequire.resolve(spec);
+    return portable ? qvacSdkToken() : fileSpecifier(parentRequire.resolve(spec));
   }
   // A real npm dependency of a lesson (e.g. an MCP client library), not a
   // builtin. In portable mode this machine's resolved path is meaningless on
   // the receiver, so hand off a token instead of the sender's own path.
   if (portable) return npmPackageToken(spec);
   try {
-    return parentRequire.resolve(spec);
+    return fileSpecifier(parentRequire.resolve(spec));
   } catch {
     return spec;
   }
@@ -270,7 +271,9 @@ function resolveAllImports(src, runtime, portable) {
     /(\bimport\s+(?:[\w*\s{},]+\s+from\s+)?|\bexport\s+(?:[\w*\s{},]+\s+from\s+)?)(['"])([^'"]+)\2/g,
     (match, head, quote, spec) => {
       const resolved = resolveImport(spec, runtime, portable);
-      return resolved === spec ? match : `${head}${quote}${resolved}${quote}`;
+      // JSON.stringify, not raw interpolation: a Windows path carries
+      // backslashes that a JS string literal would read as escapes.
+      return resolved === spec ? match : `${head}${JSON.stringify(resolved)}`;
     },
   );
 }
@@ -314,7 +317,9 @@ function mockPreamble(mockMap, bindingsBySpec) {
 }
 
 function stripForNode(src) {
-  const sdkPath = parentRequire.resolve('@qvac/sdk');
+  // resolveAllImports has already rewritten this specifier to its file:// form,
+  // so the pattern that strips it has to be that same form.
+  const sdkPath = fileSpecifier(parentRequire.resolve('@qvac/sdk'));
   const sdkPathRe = sdkPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // In portable mode resolveAllImports already rewrote the original @qvac/sdk
   // specifier to this token, not the sender's own path; strip that form too,
@@ -432,10 +437,12 @@ function resolveFixturePaths(src, coursesDir, portable) {
     }
     // A peer run opens the file on the other machine, where this checkout's
     // path means nothing, so the host resolves the token against its own.
+    // A fixture stays a filesystem path (the lesson hands it to fs), so unlike
+    // an import specifier only its escaping changes.
     if (portable) {
-      return `${quote}${courseAssetToken(path.relative(root, abs).split(path.sep).join('/'))}${quote}`;
+      return JSON.stringify(courseAssetToken(path.relative(root, abs).split(path.sep).join('/')));
     }
-    return `${quote}${abs}${quote}`;
+    return JSON.stringify(abs);
   });
 }
 
@@ -626,10 +633,12 @@ function barePreamble(source, portable) {
   for (const [i, plugin] of BARE_PLUGINS.entries()) {
     const name = `__academyPlugin${i}`;
     names.push(name);
-    const pluginPath = portable ? qvacSdkPluginToken(plugin) : path.join(sdkRoot, BARE_PLUGIN_DIR, plugin, 'plugin.js');
+    const pluginPath = portable
+      ? qvacSdkPluginToken(plugin)
+      : fileSpecifier(path.join(sdkRoot, BARE_PLUGIN_DIR, plugin, 'plugin.js'));
     lines.push(`import * as ${name} from ${JSON.stringify(pluginPath)};`);
   }
-  const sdkPath = portable ? qvacSdkToken() : parentRequire.resolve('@qvac/sdk');
+  const sdkPath = portable ? qvacSdkToken() : fileSpecifier(parentRequire.resolve('@qvac/sdk'));
   lines.push(
     `import { plugins as __academyPlugins } from ${JSON.stringify(sdkPath)};`,
     // Each module names its export differently, so take the objects.
@@ -655,7 +664,7 @@ function buildLesson({ source, cwd, runtime = 'node', mockImports = {}, mockNote
   );
   const importedNames = extractImportedNames(unmockedSource);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
-  const sdkPath = portable ? qvacSdkToken() : parentRequire.resolve('@qvac/sdk');
+  const sdkPath = portable ? qvacSdkToken() : fileSpecifier(parentRequire.resolve('@qvac/sdk'));
   const aliased = namesForImport.map((n) => `${n} as __academySdk_${n}`).join(', ');
   const importLine = `import { ${aliased} } from ${JSON.stringify(sdkPath)};\n`;
   // Same names the lesson wrote, so nothing below this line knows the difference.
