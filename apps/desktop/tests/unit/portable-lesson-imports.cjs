@@ -41,7 +41,8 @@ test('portable-lesson-imports - resolves a known builtin, refuses an unknown one
 
 test('portable-lesson-imports - resolves a known plugin, refuses an unknown one', (t) => {
   const resolved = resolvePortableToken(qvacSdkPluginToken('llamacpp-completion'), resolvers);
-  t.ok(resolved.endsWith('dist/server/bare/plugins/llamacpp-completion/plugin.js'));
+  // path.join, not a forward-slash literal: the real separator is \ on Windows.
+  t.ok(resolved.endsWith(path.join('dist', 'server', 'bare', 'plugins', 'llamacpp-completion', 'plugin.js')));
   t.is(resolvePortableToken(qvacSdkPluginToken('not-a-real-plugin'), resolvers), null);
 });
 
@@ -140,7 +141,7 @@ test('portable-lesson-imports - a lesson shim resolves only for a known name', (
   const resolvers = { resolveSdk: () => '/sdk', resolveBuiltin: (p) => `/pkg/${p}` };
 
   const ok = resolveToken(lessonShimToken('child-process'), resolvers);
-  t.ok(ok && ok.endsWith('lesson-shims/child-process.cjs'), 'a listed shim resolves');
+  t.ok(ok && ok.endsWith(path.join('lesson-shims', 'child-process.cjs')), 'a listed shim resolves');
   t.ok(require('fs').existsSync(ok), 'and the file it names is really there');
 
   t.is(resolveToken('academy-portable:lesson-shim:nope', resolvers), null, 'an unlisted name does not');

@@ -28,7 +28,11 @@ test('audit-store - append writes one JSON object per line, mode 0600', (t) => {
   t.is(lines.length, 2);
   t.alike(JSON.parse(lines[0]), { type: 'peer:pair', timestamp: 1, foo: 'bar' });
   t.alike(JSON.parse(lines[1]), { type: 'peer:drop', timestamp: 2 });
-  t.is(fs.statSync(file).mode & 0o777, 0o600, 'mode 0600');
+  // Windows mode bits carry no owner-only meaning; assertOwnerOnly() already
+  // skips the same check for the same reason (capabilities.cjs).
+  if (process.platform !== 'win32') {
+    t.is(fs.statSync(file).mode & 0o777, 0o600, 'mode 0600');
+  }
 });
 
 test('audit-store - readTail returns the most recent n entries', (t) => {

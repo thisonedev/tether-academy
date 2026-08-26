@@ -57,7 +57,11 @@ test('exec-host - liveness is the child exit state, not child.killed', async (t)
   await new Promise((resolve) => setTimeout(resolve, 300));
 
   t.is(child.killed, true, 'node marks the child killed once a signal is sent');
-  t.ok(isAlive(child), 'but the child that ignored SIGTERM is still alive');
+  // Windows has no real signal delivery: kill('SIGTERM') force-terminates
+  // immediately, so a child cannot ignore it the way a POSIX child can.
+  if (process.platform !== 'win32') {
+    t.ok(isAlive(child), 'but the child that ignored SIGTERM is still alive');
+  }
 
   child.kill('SIGKILL');
   await new Promise((resolve) => setTimeout(resolve, 300));
