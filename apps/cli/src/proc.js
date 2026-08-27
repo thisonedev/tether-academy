@@ -5,6 +5,12 @@
 // resolves to a .cmd shim spawnSync can't run without shell:true.
 const { spawnSync, spawn } = require('node:child_process');
 
+// shell:true + an args array is exactly what DEP0190 warns about, which is
+// the whole reason it's set above: expected on every Windows run, not a bug.
+// A 'warning' listener doesn't stop Node's own default stderr print; only
+// this does.
+process.noDeprecation = true;
+
 function run(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, {
     stdio: opts.quiet ? 'pipe' : 'inherit',
