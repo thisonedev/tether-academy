@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const process = require('process');
 
-const { appStateDir } = require('../workers/sandbox/capabilities.cjs');
+const { appStateDir, restrictToOwnerWindows } = require('../workers/sandbox/capabilities.cjs');
 
 const MANIFEST_FILE = 'model-integrity.json';
 const MANIFEST_VERSION = 1;
@@ -46,6 +46,7 @@ function writeManifest(stateDir, manifest) {
   fs.mkdirSync(stateDir, { recursive: true });
   const tmp = `${manifestPath(stateDir)}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2), { mode: 0o600 });
+  if (process.platform === 'win32') restrictToOwnerWindows(tmp);
   try {
     fs.renameSync(tmp, manifestPath(stateDir));
   } catch (err) {

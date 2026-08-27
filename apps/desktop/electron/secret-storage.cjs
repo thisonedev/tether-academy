@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { secretsDir } = require('../workers/sandbox/capabilities.cjs');
+const { secretsDir, restrictToOwnerWindows } = require('../workers/sandbox/capabilities.cjs');
 
 const LOCAL_KEY_FILE = 'identity-master.key';
 const AES_ALGO = 'aes-256-gcm';
@@ -51,10 +51,14 @@ function ensureLocalKey(userDataDir, opts = {}) {
   const legacy = readKey(legacyPath);
   const key = legacy ?? crypto.randomBytes(32);
   fs.writeFileSync(keyPath, key, { mode: 0o600 });
-  try {
-    fs.chmodSync(keyPath, 0o600);
-  } catch {
-    // Windows may ignore mode
+  if (process.platform === 'win32') {
+    restrictToOwnerWindows(keyPath);
+  } else {
+    try {
+      fs.chmodSync(keyPath, 0o600);
+    } catch {
+      // best-effort
+    }
   }
   if (legacy) {
     try {
