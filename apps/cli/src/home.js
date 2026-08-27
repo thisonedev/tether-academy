@@ -17,8 +17,11 @@ function versionsDir() {
   return path.join(home(), 'versions');
 }
 
+// Short, not full 40-char sha: pnpm's .pnpm store already nests peer-dep-hashed
+// directory names deep enough that the full sha here pushes real file paths
+// (e.g. bare-runtime's platform binary) past Windows' 260-char MAX_PATH.
 function versionDir(sha) {
-  return path.join(versionsDir(), sha);
+  return path.join(versionsDir(), sha.slice(0, 12));
 }
 
 function currentLink() {

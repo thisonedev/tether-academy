@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('./proc');
 const { runAction } = require('./electron-bridge');
-const { home, versionsDir, currentLink, backupsDir, repoUrl, branch, linkType } = require('./home');
+const { home, versionsDir, versionDir, currentLink, backupsDir, repoUrl, branch, linkType } = require('./home');
 const { UpdateLock, describeHolder } = require('./update-lock');
 
 const KEEP_VERSIONS = 3;
@@ -113,13 +113,15 @@ async function update() {
     run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir], { quiet: true });
     const sha = run('git', ['-C', tmpDir, 'rev-parse', 'HEAD'], { quiet: true }).stdout.trim();
 
-    if (sha === before) {
+    // before is a directory name read off disk (already short, see versionDir);
+    // sha is the freshly computed full one, so compare on the same slice.
+    if (sha.slice(0, 12) === before) {
       console.log('✓ Already up to date!');
       fs.rmSync(tmpDir, { recursive: true, force: true });
       return;
     }
 
-    const finalDir = path.join(versionsDir(), sha);
+    const finalDir = versionDir(sha);
     if (fs.existsSync(finalDir)) fs.rmSync(finalDir, { recursive: true, force: true });
     fs.renameSync(tmpDir, finalDir);
 
@@ -150,7 +152,7 @@ async function update() {
     const beforeDir = currentLink();
     fs.renameSync(tmpLink, currentLink()); // atomic swap
 
-    pruneOldVersions(sha);
+    pruneOldVersions(sha.slice(0, 12));
     const beforeVersion = before ? semverFor(beforeDir) : null;
     const afterVersion = semverFor(finalDir);
     let summary;

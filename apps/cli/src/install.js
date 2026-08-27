@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('./proc');
-const { home, versionsDir, currentLink, repoUrl, branch, linkType, shimDir, shimPath: shimFilePath } = require('./home');
+const { home, versionsDir, versionDir, currentLink, repoUrl, branch, linkType, shimDir, shimPath: shimFilePath } = require('./home');
 const { printBanner } = require('./splash');
 
 function writeShim(targetEntry) {
@@ -29,7 +29,7 @@ async function install() {
   run('git', ['clone', '--depth', '1', '--branch', branch(), repoUrl(), tmpDir], { quiet: true });
 
   const sha = run('git', ['-C', tmpDir, 'rev-parse', 'HEAD'], { quiet: true }).stdout.trim();
-  const finalDir = path.join(versionsDir(), sha);
+  const finalDir = versionDir(sha);
   if (fs.existsSync(finalDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   else fs.renameSync(tmpDir, finalDir);
 
