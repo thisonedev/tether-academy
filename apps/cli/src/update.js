@@ -4,8 +4,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run, runQuiet } = require('./proc');
 const { runAction } = require('./electron-bridge');
-const { home, versionsDir, versionDir, currentLink, backupsDir, repoUrl, branch, linkType } = require('./home');
+const { home, versionsDir, versionDir, pnpmVirtualStoreDir, currentLink, backupsDir, repoUrl, branch, linkType } = require('./home');
 const { UpdateLock, describeHolder } = require('./update-lock');
+
+// See pnpmVirtualStoreDir() in home.js: keeps pnpm's hashed store names off
+// the long versions/<sha>/ prefix so native addon paths stay under Windows' MAX_PATH.
+function writeWindowsNpmrc(dir) {
+  if (process.platform !== 'win32') return;
+  const storeDir = pnpmVirtualStoreDir().split(path.sep).join('/');
+  fs.writeFileSync(path.join(dir, '.npmrc'), `virtual-store-dir=${storeDir}\n`, { flag: 'a' });
+}
 
 const KEEP_VERSIONS = 3;
 const KEEP_BACKUPS = 3;
@@ -124,6 +132,7 @@ async function update() {
     const finalDir = versionDir(sha);
     if (fs.existsSync(finalDir)) fs.rmSync(finalDir, { recursive: true, force: true });
     fs.renameSync(tmpDir, finalDir);
+    writeWindowsNpmrc(finalDir);
 
     // Everything below happens in `finalDir`, never touching `current`. A
     // failure at any point here leaves the live install completely untouched.

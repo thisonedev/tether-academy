@@ -24,6 +24,14 @@ function versionDir(sha) {
   return path.join(versionsDir(), sha.slice(0, 12));
 }
 
+// Windows-only. Left at the default (nested under versions/<sha>/node_modules/.pnpm/)
+// pnpm's own hashed store directory names are long enough that combined with
+// that prefix, native addon paths (sodium-native, bare-runtime) blow past
+// Windows' 260-char MAX_PATH ("The filename or extension is too long").
+function pnpmVirtualStoreDir() {
+  return path.join(os.homedir(), '.pnpm-store');
+}
+
 function currentLink() {
   return path.join(home(), 'current');
 }
@@ -68,4 +76,17 @@ function branch() {
   return override && override.trim() ? override : 'master';
 }
 
-module.exports = { home, versionsDir, versionDir, currentLink, backupsDir, lockPath, repoUrl, branch, linkType, shimDir, shimPath };
+module.exports = {
+  home,
+  versionsDir,
+  versionDir,
+  pnpmVirtualStoreDir,
+  currentLink,
+  backupsDir,
+  lockPath,
+  repoUrl,
+  branch,
+  linkType,
+  shimDir,
+  shimPath,
+};

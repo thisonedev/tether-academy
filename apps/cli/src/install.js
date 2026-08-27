@@ -3,8 +3,26 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { run, runQuiet } = require('./proc');
-const { home, versionsDir, versionDir, currentLink, repoUrl, branch, linkType, shimDir, shimPath: shimFilePath } = require('./home');
-const { printBanner } = require('./splash');
+const {
+  home,
+  versionsDir,
+  versionDir,
+  pnpmVirtualStoreDir,
+  currentLink,
+  repoUrl,
+  branch,
+  linkType,
+  shimDir,
+  shimPath: shimFilePath,
+} = require('./home');
+
+// See pnpmVirtualStoreDir(): keeps pnpm's hashed store names off the long
+// versions/<sha>/ prefix so native addon paths stay under Windows' MAX_PATH.
+function writeWindowsNpmrc(dir) {
+  if (process.platform !== 'win32') return;
+  const storeDir = pnpmVirtualStoreDir().split(path.sep).join('/');
+  fs.writeFileSync(path.join(dir, '.npmrc'), `virtual-store-dir=${storeDir}\n`, { flag: 'a' });
+}
 
 function writeShim(targetEntry) {
   const binDir = shimDir();
@@ -21,7 +39,7 @@ function writeShim(targetEntry) {
 }
 
 async function install() {
-  printBanner('Installing Tether Academy...');
+  console.log('Installing Tether Academy...');
   fs.mkdirSync(versionsDir(), { recursive: true });
   const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);
 
@@ -32,6 +50,8 @@ async function install() {
   const finalDir = versionDir(sha);
   if (fs.existsSync(finalDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   else fs.renameSync(tmpDir, finalDir);
+
+  writeWindowsNpmrc(finalDir);
 
   console.log('-> Installing dependencies...');
   await runQuiet('pnpm', ['install'], { cwd: finalDir });
