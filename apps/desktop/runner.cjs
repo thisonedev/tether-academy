@@ -24,6 +24,10 @@ const FORCE_REAP_MS = 5_000;
 // macOS unless told otherwise; see electron/dock-hide-shim.cjs.
 const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
 
+// @qvac/sdk spawns its `bare` worker with no windowsHide, popping a console
+// window per model load; see electron/windows-spawn-hide-shim.cjs.
+const WINDOWS_SPAWN_HIDE_SHIM = path.join(__dirname, 'electron', 'windows-spawn-hide-shim.cjs');
+
 const { buildLesson, decideMockImports } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
 const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
@@ -114,6 +118,7 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
     [
       '--experimental-strip-types',
       ...(process.platform === 'darwin' ? ['--require', DOCK_HIDE_SHIM] : []),
+      ...(process.platform === 'win32' ? ['--require', WINDOWS_SPAWN_HIDE_SHIM] : []),
       file,
       ...extraArgv,
     ],
