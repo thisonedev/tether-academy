@@ -10,6 +10,16 @@ curl -fsSL https://tetheracademy.cc/install.sh | sh
 
 Installs to ~/.tether-academy and adds tether-academy to your PATH.
 
+## Install via terminal (Windows)
+
+Run this in **PowerShell**, not Command Prompt (`irm`/`iex` don't exist in `cmd.exe`):
+
+```powershell
+irm https://tetheracademy.cc/install.ps1 | iex
+```
+
+Installs to `%USERPROFILE%\.tether-academy` and adds `tether-academy` to your PATH.
+
 ```bash
 tether-academy start              # launch the desktop app
 tether-academy update             # pull and safely build the latest version

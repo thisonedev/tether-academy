@@ -34,9 +34,9 @@ async function install() {
   else fs.renameSync(tmpDir, finalDir);
 
   console.log('-> Installing dependencies...');
-  run('pnpm', ['install'], { cwd: finalDir, quiet: true });
+  run('pnpm', ['install'], { cwd: finalDir });
   console.log('-> Building (this can take a minute or two)...');
-  run('pnpm', ['build'], { cwd: finalDir, quiet: true });
+  run('pnpm', ['build'], { cwd: finalDir });
 
   const tmpLink = `${currentLink()}.tmp-${process.pid}`;
   fs.symlinkSync(finalDir, tmpLink, linkType());

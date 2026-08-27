@@ -1,14 +1,15 @@
 'use strict';
 
-// Every external command in this CLI goes through here: argv arrays only,
-// `shell` never set to true, so nothing from a sha or path can be
-// interpreted by a shell even if it contains `; rm -rf ~` etc.
+// Argv arrays only, `shell` never true on POSIX, so nothing in a sha or
+// path is shell-interpretable. Windows needs it: a bare `pnpm`/`git`
+// resolves to a .cmd shim spawnSync can't run without shell:true.
 const { spawnSync, spawn } = require('node:child_process');
 
 function run(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, {
     stdio: opts.quiet ? 'pipe' : 'inherit',
     encoding: 'utf8',
+    shell: process.platform === 'win32',
     ...opts,
   });
   if (result.error) throw result.error;

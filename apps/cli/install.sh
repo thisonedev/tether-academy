@@ -19,7 +19,13 @@ need() {
 
 need git "https://git-scm.com"
 need node "https://nodejs.org"
-need pnpm "npm install -g pnpm"
+
+# npm ships with node, so this one prerequisite is safe to self-heal;
+# git/node stay hard requirements rather than something this script installs.
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "-> Installing pnpm..."
+  npm install -g pnpm
+fi
 
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/tether-academy-bootstrap.XXXXXX")
 cleanup() { rm -rf "$tmp_dir"; }

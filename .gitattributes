@@ -1,0 +1,4 @@
+# Git for Windows defaults to core.autocrlf=true, checking every text file
+# out as CRLF, which fails the LF-only Biome format gate on every file.
+# Forces LF on checkout regardless of the cloning machine's own git config.
+* text=auto eol=lf
