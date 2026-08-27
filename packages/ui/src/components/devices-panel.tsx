@@ -98,14 +98,19 @@ function pairUrl(invite: string, hostIdentity: string | null): string {
 }
 
 /** Profile username as the peer-visible device name, so pairing doesn't fall
- *  back to the OS login name and hostname. */
-async function pairingUserData(): Promise<{ name: string } | undefined> {
-  try {
-    const host = await window.academy?.identity?.getUsername?.();
-    return host?.username ? { name: host.username } : undefined;
-  } catch {
-    return undefined;
-  }
+ *  back to the OS login name and hostname. Also sends this device's OS, so
+ *  the other side's peer picker can flag a Windows peer as execute-only. */
+async function pairingUserData(): Promise<{ name?: string; os?: string } | undefined> {
+  const name = await window.academy?.identity
+    ?.getUsername?.()
+    .then((host) => host?.username || undefined)
+    .catch(() => undefined);
+  const os = await window.academy?.device
+    ?.info?.()
+    .then((info) => info?.os || undefined)
+    .catch(() => undefined);
+  if (!name && !os) return undefined;
+  return { ...(name ? { name } : {}), ...(os ? { os } : {}) };
 }
 
 export function pairUserDataLabel(info: { userData: unknown }): string {
