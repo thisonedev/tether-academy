@@ -245,6 +245,9 @@ export function DevicesPanel() {
   const [identity, setIdentity] = useState<AcademyPeerIdentity | null | 'loading'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [deeplinkToast, setDeeplinkToast] = useState(false);
+  // Hosting (creating an invite) makes this device the executor for whatever
+  // pairs with it, and Windows has no sandbox to run a peer's code in yet.
+  const [isWindows, setIsWindows] = useState(false);
 
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteModal, setInviteModal] = useState<{
@@ -289,6 +292,10 @@ export function DevicesPanel() {
     }
     refresh();
     refreshPeers();
+    void window.academy?.device
+      ?.info()
+      .then((info) => setIsWindows(info.os === 'windows'))
+      .catch(() => {});
     void window.academy.peer.takeDeeplink?.().then((payload) => {
       if (payload?.invite) applyDeeplink(payload);
     });
@@ -454,23 +461,33 @@ export function DevicesPanel() {
         <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
           Pair a new device
         </p>
-        <p className="mt-1 text-sm text-canvas-muted-foreground">
-          Create a one-time invite. Share the link over chat or email, and the 6-character
-          code separately. Approving a device lets it run code on this machine, confined by
-          the OS. macOS and Linux only; peer exec is not available on Windows yet.
-        </p>
+        {isWindows ? (
+          <p className="mt-1 text-sm text-canvas-muted-foreground">
+            Pairing as host is not supported on Windows: approving a device lets it run code
+            on this machine, confined by the OS, and Windows has no sandbox for that yet.
+            Pair by pasting an invite from a macOS or Linux device below instead.
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-canvas-muted-foreground">
+              Create a one-time invite. Share the link over chat or email, and the 6-character
+              code separately. Approving a device lets it run code on this machine, confined by
+              the OS. macOS and Linux only; peer exec is not available on Windows yet.
+            </p>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={onCreateInvite}
-            disabled={inviteBusy}
-            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
-          >
-            {inviteBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
-            Create invite
-          </button>
-        </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={onCreateInvite}
+                disabled={inviteBusy}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
+              >
+                {inviteBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
+                Create invite
+              </button>
+            </div>
+          </>
+        )}
 
         <div className="mt-5 border-t border-canvas-border pt-4">
           <label
