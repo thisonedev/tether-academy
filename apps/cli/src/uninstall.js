@@ -8,12 +8,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
-const { home, versionsDir, currentLink, backupsDir, lockPath } = require('./home');
+const { home, versionsDir, currentLink, backupsDir, lockPath, shimPath } = require('./home');
 const { printBanner } = require('./splash');
-
-function shimPath() {
-  return path.join(os.homedir(), '.local', 'bin', 'tether-academy');
-}
 
 function secretsDir() {
   return path.join(home(), 'keys');

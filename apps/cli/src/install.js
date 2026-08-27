@@ -2,17 +2,21 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { run } = require('./proc');
-const { home, versionsDir, currentLink, repoUrl, branch } = require('./home');
+const { home, versionsDir, currentLink, repoUrl, branch, linkType, shimDir, shimPath: shimFilePath } = require('./home');
 const { printBanner } = require('./splash');
 
 function writeShim(targetEntry) {
-  const binDir = path.join(os.homedir(), '.local', 'bin');
-  const shimPath = path.join(binDir, 'tether-academy');
+  const binDir = shimDir();
+  const shimPath = shimFilePath();
   fs.mkdirSync(binDir, { recursive: true });
-  const script = `#!/usr/bin/env bash\nexec node "${targetEntry}" "$@"\n`;
-  fs.writeFileSync(shimPath, script, { mode: 0o755 });
+  if (process.platform === 'win32') {
+    // %~dp0-relative would break once versions/<sha> gets pruned by an
+    // update; targetEntry is already the live `current` symlink/junction.
+    fs.writeFileSync(shimPath, `@node "${targetEntry}" %*\r\n`);
+  } else {
+    fs.writeFileSync(shimPath, `#!/usr/bin/env bash\nexec node "${targetEntry}" "$@"\n`, { mode: 0o755 });
+  }
   return { shimPath, onPath: (process.env.PATH || '').split(path.delimiter).includes(binDir) };
 }
 
@@ -35,8 +39,8 @@ async function install() {
   run('pnpm', ['build'], { cwd: finalDir, quiet: true });
 
   const tmpLink = `${currentLink()}.tmp-${process.pid}`;
-  fs.symlinkSync(finalDir, tmpLink, 'dir');
-  fs.renameSync(tmpLink, currentLink()); // atomic on POSIX: same-directory rename
+  fs.symlinkSync(finalDir, tmpLink, linkType());
+  fs.renameSync(tmpLink, currentLink()); // atomic same-directory rename, POSIX and Windows both
 
   const entry = path.join(currentLink(), 'apps', 'cli', 'bin', 'tether-academy.js');
   const { shimPath, onPath } = writeShim(entry);
@@ -44,7 +48,11 @@ async function install() {
   console.log(`\ntether-academy installed at ${home()} (version ${sha.slice(0, 12)})`);
   console.log(`Shim written to ${shimPath}`);
   if (!onPath) {
-    console.log(`Add it to your PATH: export PATH="$HOME/.local/bin:$PATH"`);
+    console.log(
+      process.platform === 'win32'
+        ? `Add it to your PATH: setx PATH "%PATH%;${shimDir()}"`
+        : `Add it to your PATH: export PATH="$HOME/.local/bin:$PATH"`,
+    );
   }
   console.log('Run `tether-academy start` to launch the app.');
 }

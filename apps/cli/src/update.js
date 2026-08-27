@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('./proc');
 const { runAction } = require('./electron-bridge');
-const { home, versionsDir, currentLink, backupsDir, repoUrl, branch } = require('./home');
+const { home, versionsDir, currentLink, backupsDir, repoUrl, branch, linkType } = require('./home');
 const { UpdateLock, describeHolder } = require('./update-lock');
 
 const KEEP_VERSIONS = 3;
@@ -146,7 +146,7 @@ async function update() {
     }
 
     const tmpLink = `${currentLink()}.tmp-${process.pid}`;
-    fs.symlinkSync(finalDir, tmpLink, 'dir');
+    fs.symlinkSync(finalDir, tmpLink, linkType());
     const beforeDir = currentLink();
     fs.renameSync(tmpLink, currentLink()); // atomic swap
 
