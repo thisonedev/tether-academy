@@ -27,7 +27,9 @@ const BARE_PACKAGE_NAMES = new Set(Object.values(BARE_BUILTINS));
 // location, so a peer picks a name from the list and never a path.
 const LESSON_SHIM_DIR = 'lesson-shims';
 const LESSON_SHIMS = { child_process: 'child-process' };
-const LESSON_SHIM_NAMES = new Set(Object.values(LESSON_SHIMS));
+// child-process-node is node-only, reached directly rather than through
+// LESSON_SHIMS (bare-only), but still needs to be an accepted token name.
+const LESSON_SHIM_NAMES = new Set([...Object.values(LESSON_SHIMS), 'child-process-node']);
 
 // Registered together since which one a snippet needs isn't known until it
 // runs. Reached by path because the package's own `./<name>/plugin` exports

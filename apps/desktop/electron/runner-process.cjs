@@ -227,7 +227,14 @@ function bareBuiltinPath(spec, portable) {
 
 function resolveImport(spec, runtime, portable) {
   if (spec.startsWith('node:')) {
-    return runtime === 'bare' ? bareBuiltinPath(spec, portable) ?? spec : spec;
+    if (runtime === 'bare') return bareBuiltinPath(spec, portable) ?? spec;
+    // __academyExit calls process.exit() directly, which bypasses the open
+    // handle that would normally keep node's event loop alive for a spawned
+    // child. See child-process-node.cjs.
+    if (spec === 'node:child_process') {
+      return portable ? lessonShimToken('child-process-node') : fileSpecifier(lessonShimPath('child-process-node'));
+    }
+    return spec;
   }
   if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('..')) {
     return spec;
@@ -447,14 +454,13 @@ function resolveFixturePaths(src, coursesDir, portable) {
 }
 
 // Never clobber: add _1, _2 like a browser download, swapped in at the call site.
-const childrenAlivePreamble = (runtime, portable) => (runtime === 'bare'
-  ? `import { __academyLiveChildren as __academyLiveChildrenCount } from ${JSON.stringify(resolveImport('node:child_process', runtime, portable))};
+// Both runtimes route node:child_process through a tracking shim now (see
+// child-process.cjs / child-process-node.cjs), so both get the real check.
+const childrenAlivePreamble = (runtime, portable) => `import { __academyLiveChildren as __academyLiveChildrenCount } from ${JSON.stringify(resolveImport('node:child_process', runtime, portable))};
 function __academyChildrenAlive() {
   try { return __academyLiveChildrenCount() > 0; } catch { return false; }
 }
-`
-  : `function __academyChildrenAlive() { return false; }
-`);
+`;
 
 const dedupePreamble = (runtime, portable) => `import { writeFileSync as __academyWrite, existsSync as __academyExists, mkdirSync as __academyMkdir } from ${JSON.stringify(resolveImport('node:fs', runtime, portable))};
 import { dirname as __academyDirname, extname as __academyExt, join as __academyJoin, basename as __academyBase, resolve as __academyResolve } from ${JSON.stringify(resolveImport('node:path', runtime, portable))};
