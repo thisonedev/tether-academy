@@ -537,9 +537,12 @@ function __academyIsTeardownNoise(err) {
 }
 process.on('uncaughtException', (err) => {
   if (__academyIsTeardownNoise(err)) return;
-  // Real error worth surfacing as a one-liner.
+  // Real error worth surfacing as a one-liner, then actually end the run:
+  // a throw before any awaits skips the appended __academyFinish call, so
+  // without this the process hangs until the host's idle timeout kills it.
   const m = ((err && err.message) || String(err) || '').toString().trim();
   console.error(m);
+  __academyEnd(1);
 });
 `;
 
