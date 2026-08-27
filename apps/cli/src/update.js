@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { run } = require('./proc');
+const { run, runQuiet } = require('./proc');
 const { runAction } = require('./electron-bridge');
 const { home, versionsDir, versionDir, currentLink, backupsDir, repoUrl, branch, linkType } = require('./home');
 const { UpdateLock, describeHolder } = require('./update-lock');
@@ -129,13 +129,13 @@ async function update() {
     // failure at any point here leaves the live install completely untouched.
     try {
       console.log('→ Installing dependencies...');
-      run('pnpm', ['install'], { cwd: finalDir, quiet: true });
+      await runQuiet('pnpm', ['install'], { cwd: finalDir });
       console.log('  ✓ Dependencies installed');
       console.log('→ Building (this can take a minute or two)...');
-      run('pnpm', ['build'], { cwd: finalDir, quiet: true });
+      await runQuiet('pnpm', ['build'], { cwd: finalDir });
       console.log('  ✓ Build complete');
       console.log('→ Validating build...');
-      run('pnpm', ['--filter', '@tether-academy/desktop', 'typecheck'], { cwd: finalDir, quiet: true });
+      await runQuiet('pnpm', ['--filter', '@tether-academy/desktop', 'typecheck'], { cwd: finalDir });
       console.log('  ✓ Build validated');
       await smokeTest(finalDir);
       console.log('  ✓ Smoke test passed');

@@ -20,8 +20,44 @@ function run(cmd, args, opts = {}) {
   return result;
 }
 
+// spawnSync blocks the event loop for the whole command, so a quiet run()
+// can't also print a heartbeat. This uses async spawn so a "still working"
+// dot can print while output stays hidden, surfaced in full only on failure.
+function runQuiet(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { shell: process.platform === 'win32', ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let printedDots = false;
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    const heartbeat = setInterval(() => {
+      process.stdout.write('.');
+      printedDots = true;
+    }, 10000);
+    child.on('error', (err) => {
+      clearInterval(heartbeat);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearInterval(heartbeat);
+      if (printedDots) process.stdout.write('\n');
+      if (code !== 0) {
+        const detail = (stderr || stdout).trim();
+        reject(new Error(`${cmd} ${args.join(' ')} failed (exit ${code})${detail ? `: ${detail}` : ''}`));
+        return;
+      }
+      resolve({ stdout, stderr, status: code });
+    });
+  });
+}
+
 function runInherit(cmd, args, opts = {}) {
   return spawn(cmd, args, { stdio: 'inherit', ...opts });
 }
 
-module.exports = { run, runInherit };
+module.exports = { run, runQuiet, runInherit };

@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { run } = require('./proc');
+const { run, runQuiet } = require('./proc');
 const { home, versionsDir, versionDir, currentLink, repoUrl, branch, linkType, shimDir, shimPath: shimFilePath } = require('./home');
 const { printBanner } = require('./splash');
 
@@ -34,9 +34,9 @@ async function install() {
   else fs.renameSync(tmpDir, finalDir);
 
   console.log('-> Installing dependencies...');
-  run('pnpm', ['install'], { cwd: finalDir });
+  await runQuiet('pnpm', ['install'], { cwd: finalDir });
   console.log('-> Building (this can take a minute or two)...');
-  run('pnpm', ['build'], { cwd: finalDir });
+  await runQuiet('pnpm', ['build'], { cwd: finalDir });
 
   const tmpLink = `${currentLink()}.tmp-${process.pid}`;
   fs.symlinkSync(finalDir, tmpLink, linkType());
