@@ -20,6 +20,11 @@ if (missingLibHint) {
   return; // Stop this module's own requires from ever reaching the fragile ones below.
 }
 
+// Before anything below can touch @qvac/sdk (chat.cjs's model auto-load in
+// particular): it spawns its `bare` worker with no windowsHide, popping a
+// console window per model load. See windows-spawn-hide-shim.cjs.
+require('./windows-spawn-hide-shim.cjs');
+
 // Same lazy-require guard as state-store.cjs's loadCorestore().
 function loadPearRuntime() {
   try {

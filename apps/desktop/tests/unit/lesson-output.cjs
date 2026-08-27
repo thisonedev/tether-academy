@@ -95,8 +95,10 @@ test('lesson-output - fixture reads are made absolute', (t) => {
     source: 'const p = "./examples/qvac/image-generation/input/sketch.png";\n',
     cwd: COURSES,
   });
+  // JSON.stringify, not the raw path: a Windows path's backslashes have to
+  // reach the generated source as escapes, so that's the form it's embedded in.
   t.ok(
-    built.includes(path.join(COURSES, 'examples/qvac/image-generation/input/sketch.png')),
+    built.includes(JSON.stringify(path.join(COURSES, 'examples/qvac/image-generation/input/sketch.png'))),
     'relative fixture path is resolved against the courses dir',
   );
 });

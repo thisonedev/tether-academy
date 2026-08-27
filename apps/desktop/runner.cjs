@@ -24,6 +24,10 @@ const FORCE_REAP_MS = 5_000;
 // macOS unless told otherwise; see electron/dock-hide-shim.cjs.
 const DOCK_HIDE_SHIM = path.join(__dirname, 'electron', 'dock-hide-shim.cjs');
 
+// @qvac/sdk spawns its `bare` worker with no windowsHide, popping a console
+// window per model load; see electron/windows-spawn-hide-shim.cjs.
+const WINDOWS_SPAWN_HIDE_SHIM = path.join(__dirname, 'electron', 'windows-spawn-hide-shim.cjs');
+
 const { buildLesson, decideMockImports } = require('./electron/runner-process.cjs');
 const { createAccumulator } = require('./electron/run-accumulator.cjs');
 const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
@@ -31,6 +35,7 @@ const { acceptAll, syncFast, pruneTruncatedModels } = require('./shared/model-in
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
 const { hintForMissingLib } = require('./electron/linux-lib-hint.cjs');
+const { killTree, spawnFlags } = require('./shared/process-control.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
@@ -113,6 +118,7 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
     [
       '--experimental-strip-types',
       ...(process.platform === 'darwin' ? ['--require', DOCK_HIDE_SHIM] : []),
+      ...(process.platform === 'win32' ? ['--require', WINDOWS_SPAWN_HIDE_SHIM] : []),
       file,
       ...extraArgv,
     ],
@@ -125,20 +131,12 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
         QVAC_LOG_LEVEL: 'warn',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Own process group so killGroup reaches the QVAC worker it spawns.
-      detached: true,
+      // The spawn flags killGroup needs to reach the QVAC worker on this platform.
+      ...spawnFlags,
     },
   );
 
-  const killGroup = (signal) => {
-    try {
-      process.kill(-child.pid, signal);
-    } catch {
-      try {
-        child.kill(signal);
-      } catch {}
-    }
-  };
+  const killGroup = (signal) => killTree(child, signal);
 
   let stopRequested = false;
   // Same 1 MiB per-stream cap peer-exec uses. Hoisted out of the Promise
@@ -192,9 +190,7 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
       // A SIGKILL'd run never runs its own JS-level cleanup, so its QVAC
       // worker can outlive it; a moment later lets the OS reap `child` first.
       const reapTimer = setTimeout(() => {
-        try {
-          require('./shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers();
-        } catch {}
+        require('./shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers().catch(() => {});
       }, 500);
       if (typeof reapTimer.unref === 'function') reapTimer.unref();
       rm(dir, { recursive: true, force: true }).catch(() => {});

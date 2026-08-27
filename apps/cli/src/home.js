@@ -33,6 +33,24 @@ function lockPath() {
   return path.join(home(), '.update-in-progress');
 }
 
+// Real symlinks need admin or dev mode on Windows; junctions need neither
+// and fs.symlinkSync's 'junction' type has covered them since Node 6.
+function linkType() {
+  return process.platform === 'win32' ? 'junction' : 'dir';
+}
+
+// POSIX gets a bash shim on PATH already searched by convention (~/.local/bin).
+// Windows has no such convention, so this uses its own per-app bin dir instead.
+function shimDir() {
+  return process.platform === 'win32'
+    ? path.join(os.homedir(), 'AppData', 'Local', 'tether-academy', 'bin')
+    : path.join(os.homedir(), '.local', 'bin');
+}
+
+function shimPath() {
+  return path.join(shimDir(), process.platform === 'win32' ? 'tether-academy.cmd' : 'tether-academy');
+}
+
 function repoUrl() {
   const override = process.env.TETHER_ACADEMY_REPO;
   // HTTPS, not SSH: this is what a fresh machine with no deploy key clones
@@ -47,4 +65,4 @@ function branch() {
   return override && override.trim() ? override : 'master';
 }
 
-module.exports = { home, versionsDir, versionDir, currentLink, backupsDir, lockPath, repoUrl, branch };
+module.exports = { home, versionsDir, versionDir, currentLink, backupsDir, lockPath, repoUrl, branch, linkType, shimDir, shimPath };

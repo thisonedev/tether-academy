@@ -2,7 +2,15 @@
   "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
   "vcs": { "enabled": false },
   "files": {
-    "includes": ["**", "!node_modules", "!.next", "!out", "!.source", "!public/monaco"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!.next",
+      "!out",
+      "!.source",
+      "!public/monaco",
+      "!next-env.d.ts"
+    ]
   },
   "formatter": {
     "enabled": true,

@@ -258,19 +258,112 @@ function mergeCapabilities(base, dynamic) {
 // 0o022: group-write or world-write; either lets a second account edit the allowlist.
 const UNSAFE_ALLOWLIST_MODE = 0o022;
 
+// Every icacls permission token that grants any kind of write. Compound
+// entries print as a single comma-joined group ("S,WD,AD,X"), so this has
+// to match a token bounded by word edges, not the whole group.
+const ACL_WRITE_TOKEN_RE = /\b(F|M|W|WD|AD|WA|WEA|DC|WO|WDAC)\b/;
+// The OS and the local admin group already have unconditional file access,
+// so flagging them is a false positive, not real exposure. CREATOR OWNER
+// only ever applies to newly created children, never an existing file.
+const ACL_TRUSTED_ACCOUNTS = new Set(['NT AUTHORITY\\SYSTEM', 'BUILTIN\\ADMINISTRATORS', 'CREATOR OWNER']);
+
 /**
- * Refuse an allowlist any account but the owner can edit. POSIX only; Windows
- * mode bits carry no such meaning.
+ * Parses `icacls <path>` output into { account, groups } pairs. The path
+ * prefix on the first line can contain spaces, so it's stripped by exact
+ * match against `filePath` rather than split on whitespace.
+ * @param {string} out
+ * @param {string} filePath
+ * @returns {{ account: string, groups: string[] }[]}
+ */
+function parseIcacls(out, filePath) {
+  const entries = [];
+  for (let line of out.split(/\r?\n/)) {
+    if (!line.includes(':(')) continue;
+    if (line.startsWith(filePath)) line = line.slice(filePath.length);
+    line = line.trim();
+    const idx = line.indexOf(':(');
+    if (idx === -1) continue;
+    const account = line.slice(0, idx).trim().toUpperCase();
+    const groups = [...line.slice(idx + 1).matchAll(/\(([^)]*)\)/g)].map((m) => m[1]);
+    entries.push({ account, groups });
+  }
+  return entries;
+}
+
+/**
+ * Refuse an allowlist any account but the owner (or the OS/admin group) can
+ * write to, via `icacls` since Windows mode bits carry no ownership meaning.
+ * Fails closed: an unreadable ACL can't vouch for the file either.
+ * @param {string} filePath
+ */
+function assertOwnerOnlyWindows(filePath) {
+  const { execFileSync } = require('child_process');
+  let out;
+  try {
+    out = execFileSync('icacls', [filePath], { encoding: 'utf8', windowsHide: true });
+  } catch (err) {
+    throw new Error(
+      `sandbox.loadDynamicCapabilities: could not read the ACL on ${filePath}: ${err.message}`,
+    );
+  }
+  const currentUser = String(os.userInfo().username || '').toUpperCase();
+  for (const { account, groups } of parseIcacls(out, filePath)) {
+    const writable = groups.some((g) => ACL_WRITE_TOKEN_RE.test(g));
+    if (!writable) continue;
+    if (account === currentUser || account.endsWith(`\\${currentUser}`)) continue;
+    if (ACL_TRUSTED_ACCOUNTS.has(account)) continue;
+    throw new Error(
+      `sandbox.loadDynamicCapabilities: ${filePath} grants write access to ${account}; ` +
+        `remove that permission (icacls "${filePath}" /remove:g "${account}") or delete the file`,
+    );
+  }
+}
+
+/**
+ * Refuse an allowlist any account but the owner can edit.
  * @param {string} filePath
  */
 function assertOwnerOnly(filePath) {
-  if (process.platform === 'win32') return;
+  if (process.platform === 'win32') return assertOwnerOnlyWindows(filePath);
   const { mode } = fs.statSync(filePath);
   if ((mode & UNSAFE_ALLOWLIST_MODE) === 0) return;
   throw new Error(
     `sandbox.loadDynamicCapabilities: ${filePath} is writable beyond its owner ` +
       `(mode ${(mode & 0o777).toString(8)}); chmod 600 it or remove it`,
   );
+}
+
+/**
+ * Windows equivalent of `chmod 0600`: strips the ACL down to the current
+ * user, the OS, and the admin group. `{ mode: 0o600 }` is silently
+ * advisory on Windows, so a caller writing a real secret calls this after.
+ * @param {string} filePath
+ */
+function restrictToOwnerWindows(filePath) {
+  const { execFileSync } = require('child_process');
+  const currentUser = os.userInfo().username;
+  const run = (args) => execFileSync('icacls', args, { windowsHide: true, stdio: 'ignore' });
+  try {
+    // /grant:r only replaces the named account's own permission, so an
+    // existing grant to an unrelated account survives unless removed first.
+    run([filePath, '/inheritance:r']);
+    const out = execFileSync('icacls', [filePath], { encoding: 'utf8', windowsHide: true });
+    const currentUpper = currentUser.toUpperCase();
+    const seen = new Set();
+    for (const { account } of parseIcacls(out, filePath)) {
+      if (seen.has(account) || account === currentUpper || account.endsWith(`\\${currentUpper}`)) continue;
+      seen.add(account);
+      if (ACL_TRUSTED_ACCOUNTS.has(account)) continue;
+      try {
+        run([filePath, '/remove:g', account]);
+      } catch {
+        // best-effort
+      }
+    }
+    run([filePath, '/grant:r', `${currentUser}:F`, '/grant:r', 'SYSTEM:F', '/grant:r', 'Administrators:F']);
+  } catch {
+    // best-effort; see comment above
+  }
 }
 
 // Trusted only because it lives where the sandboxed child cannot write.
@@ -505,4 +598,5 @@ module.exports = {
   resolveExecNames,
   loadDynamicCapabilities,
   mergeCapabilities,
+  restrictToOwnerWindows,
 };

@@ -125,6 +125,12 @@ function peerDisplayName(p: { discoveryKey: string; userData: unknown }): string
     : p.discoveryKey.slice(0, 8);
 }
 
+// Self-reported at pairing time (see devices-panel.tsx's pairingUserData);
+// Windows has no AppContainer sandbox, so a Windows peer can never execute.
+function peerIsWindows(userData: unknown): boolean {
+  return Boolean(userData && typeof userData === 'object' && 'os' in userData && (userData as { os: unknown }).os === 'windows');
+}
+
 function overrideKey(slotName: string): string {
   return `${ARGV_OVERRIDE_PREFIX}${slotName}`;
 }
@@ -354,7 +360,11 @@ export function LessonWorkspace({ data, children }: { data: LessonData; children
     if (runMode !== 'remote') return;
     if (realRemotePeers.length === 0) return;
     if (realRemotePeers.some((p) => p.discoveryKey === selectedPeerId)) return;
-    const latest = realRemotePeers.reduce((a, b) => (a.pairedAt >= b.pairedAt ? a : b));
+    // A Windows peer is a disabled option in the picker below, so defaulting
+    // to one would auto-select something the user can't actually run against.
+    const executable = realRemotePeers.filter((p) => !peerIsWindows(p.userData));
+    const candidates = executable.length > 0 ? executable : realRemotePeers;
+    const latest = candidates.reduce((a, b) => (a.pairedAt >= b.pairedAt ? a : b));
     setSelectedPeerId(latest.discoveryKey);
   }, [runMode, realRemotePeers, selectedPeerId]);
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
@@ -1506,13 +1516,19 @@ function Runner({
               title={
                 remotePeers.length === 0
                   ? 'No paired devices. Pair one in Settings.'
-                  : 'Pick a paired device'
+                  : 'Pick a paired device. Windows devices are listed but disabled: they cannot execute a paired run yet.'
               }
             >
               {remotePeers.length === 0 ? <option value="">No paired devices</option> : null}
               {remotePeers.map((p) => (
-                <option key={p.discoveryKey} value={p.discoveryKey}>
+                <option
+                  key={p.discoveryKey}
+                  value={p.discoveryKey}
+                  disabled={peerIsWindows(p.userData)}
+                  title={peerIsWindows(p.userData) ? 'Windows cannot execute a paired run yet' : undefined}
+                >
                   {peerDisplayName(p)}
+                  {peerIsWindows(p.userData) ? ' (Windows, cannot execute)' : ''}
                 </option>
               ))}
             </select>

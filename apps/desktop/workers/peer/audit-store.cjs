@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { restrictToOwnerWindows } = require('../sandbox/capabilities.cjs');
 
 const AUDIT_FILE = 'peer-audit.jsonl';
 const AUDIT_MODE = 0o600;
@@ -29,6 +30,7 @@ function openStream(filePath) {
   if (!exists) {
     // Create with mode 0600; later opens with 'a' preserve the inode's mode.
     fs.writeFileSync(filePath, '', { mode: 0o600 });
+    if (process.platform === 'win32') restrictToOwnerWindows(filePath);
   }
   return fs.openSync(filePath, 'a');
 }

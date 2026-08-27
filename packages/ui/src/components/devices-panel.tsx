@@ -98,14 +98,19 @@ function pairUrl(invite: string, hostIdentity: string | null): string {
 }
 
 /** Profile username as the peer-visible device name, so pairing doesn't fall
- *  back to the OS login name and hostname. */
-async function pairingUserData(): Promise<{ name: string } | undefined> {
-  try {
-    const host = await window.academy?.identity?.getUsername?.();
-    return host?.username ? { name: host.username } : undefined;
-  } catch {
-    return undefined;
-  }
+ *  back to the OS login name and hostname. Also sends this device's OS, so
+ *  the other side's peer picker can flag a Windows peer as execute-only. */
+async function pairingUserData(): Promise<{ name?: string; os?: string } | undefined> {
+  const name = await window.academy?.identity
+    ?.getUsername?.()
+    .then((host) => host?.username || undefined)
+    .catch(() => undefined);
+  const os = await window.academy?.device
+    ?.info?.()
+    .then((info) => info?.os || undefined)
+    .catch(() => undefined);
+  if (!name && !os) return undefined;
+  return { ...(name ? { name } : {}), ...(os ? { os } : {}) };
 }
 
 export function pairUserDataLabel(info: { userData: unknown }): string {
@@ -245,6 +250,9 @@ export function DevicesPanel() {
   const [identity, setIdentity] = useState<AcademyPeerIdentity | null | 'loading'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [deeplinkToast, setDeeplinkToast] = useState(false);
+  // Hosting (creating an invite) makes this device the executor for whatever
+  // pairs with it, and Windows has no sandbox to run a peer's code in yet.
+  const [isWindows, setIsWindows] = useState(false);
 
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteModal, setInviteModal] = useState<{
@@ -289,6 +297,10 @@ export function DevicesPanel() {
     }
     refresh();
     refreshPeers();
+    void window.academy?.device
+      ?.info()
+      .then((info) => setIsWindows(info.os === 'windows'))
+      .catch(() => {});
     void window.academy.peer.takeDeeplink?.().then((payload) => {
       if (payload?.invite) applyDeeplink(payload);
     });
@@ -454,23 +466,33 @@ export function DevicesPanel() {
         <p className="text-[11px] font-semibold uppercase tracking-wider text-canvas-muted-foreground">
           Pair a new device
         </p>
-        <p className="mt-1 text-sm text-canvas-muted-foreground">
-          Create a one-time invite. Share the link over chat or email, and the 6-character
-          code separately. Approving a device lets it run code on this machine, confined by
-          the OS. macOS and Linux only; peer exec is not available on Windows yet.
-        </p>
+        {isWindows ? (
+          <p className="mt-1 text-sm text-canvas-muted-foreground">
+            Pairing as host is not supported on Windows: approving a device lets it run code
+            on this machine, confined by the OS, and Windows has no sandbox for that yet.
+            Pair by pasting an invite from a macOS or Linux device below instead.
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-canvas-muted-foreground">
+              Create a one-time invite. Share the link over chat or email, and the 6-character
+              code separately. Approving a device lets it run code on this machine, confined by
+              the OS. macOS and Linux only; peer exec is not available on Windows yet.
+            </p>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={onCreateInvite}
-            disabled={inviteBusy}
-            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
-          >
-            {inviteBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
-            Create invite
-          </button>
-        </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={onCreateInvite}
+                disabled={inviteBusy}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-canvas transition-colors hover:bg-emerald-400 disabled:opacity-50"
+              >
+                {inviteBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
+                Create invite
+              </button>
+            </div>
+          </>
+        )}
 
         <div className="mt-5 border-t border-canvas-border pt-4">
           <label
@@ -756,6 +778,9 @@ export function PendingRequestsSection() {
   const [pending, setPending] = useState<AcademyPeerPending[]>([]);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
+  // A pending request only exists for a device someone tried to pair with as
+  // host, which Windows can never be.
+  const [isWindows, setIsWindows] = useState(false);
 
   const refresh = useCallback(async () => {
     const pn = (await window.academy?.peer?.pending?.().catch(() => [])) ?? [];
@@ -766,6 +791,10 @@ export function PendingRequestsSection() {
     if (!window.academy?.peer) return;
     let cancelled = false;
     refresh();
+    void window.academy?.device
+      ?.info()
+      .then((info) => setIsWindows(info.os === 'windows'))
+      .catch(() => {});
     const off = window.academy.peer.onEvent(() => {
       if (cancelled) return;
       refresh();
@@ -809,6 +838,8 @@ export function PendingRequestsSection() {
       setActionBusy(null);
     }
   }, []);
+
+  if (isWindows) return null;
 
   return (
     <div className="flex flex-col rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">

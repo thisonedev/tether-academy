@@ -14,6 +14,7 @@ const {
   resolvePortableToken,
   substitutePortableImports,
   substitutePortableAssets,
+  fileSpecifier,
 } = require('../../shared/portable-lesson-imports.cjs');
 
 const resolvers = {
@@ -40,7 +41,8 @@ test('portable-lesson-imports - resolves a known builtin, refuses an unknown one
 
 test('portable-lesson-imports - resolves a known plugin, refuses an unknown one', (t) => {
   const resolved = resolvePortableToken(qvacSdkPluginToken('llamacpp-completion'), resolvers);
-  t.ok(resolved.endsWith('dist/server/bare/plugins/llamacpp-completion/plugin.js'));
+  // path.join, not a forward-slash literal: the real separator is \ on Windows.
+  t.ok(resolved.endsWith(path.join('dist', 'server', 'bare', 'plugins', 'llamacpp-completion', 'plugin.js')));
   t.is(resolvePortableToken(qvacSdkPluginToken('not-a-real-plugin'), resolvers), null);
 });
 
@@ -67,9 +69,26 @@ test('portable-lesson-imports - substitutePortableImports rewrites only import/e
   ].join('\n');
   const { code: out, unresolved } = substitutePortableImports(code, resolvers);
   t.is(unresolved.length, 0);
-  t.ok(out.includes('from "/receiver/node_modules/bare-process/index.js"'));
-  t.ok(out.includes('from "/receiver/node_modules/@qvac/sdk/dist/index.js"'));
+  t.ok(out.includes('from "file:///receiver/node_modules/bare-process/index.js"'));
+  t.ok(out.includes('from "file:///receiver/node_modules/@qvac/sdk/dist/index.js"'));
   t.ok(out.includes(`console.log("${bareBuiltinToken('bare-process')} in a string is not an import, left alone");`));
+});
+
+test('portable-lesson-imports - a Windows path becomes a usable file:// specifier', (t) => {
+  const win = { resolveSdk: () => 'C:\\Users\\dev\\node_modules\\@qvac\\sdk\\dist\\index.js', resolveBuiltin: (p) => `C:\\Users\\dev\\node_modules\\${p}\\index.js` };
+  const code = `import { loadModel } from ${JSON.stringify(qvacSdkToken())};`;
+  const { code: out } = substitutePortableImports(code, win);
+  // Node reads a bare `C:\...` as a URL with scheme "c:" and refuses it.
+  t.ok(out.includes('from "file:///C:/Users/dev/node_modules/@qvac/sdk/dist/index.js"'));
+  // A raw interpolation would have left \U and \n as string escapes here.
+  t.absent(out.includes('\\U'), 'no unescaped backslash sequences survive');
+  t.is(new URL(out.match(/from "([^"]+)"/)[1]).protocol, 'file:');
+});
+
+test('portable-lesson-imports - fileSpecifier escapes characters that would end a URL path', (t) => {
+  t.is(fileSpecifier('/tmp/a b/c.js'), 'file:///tmp/a%20b/c.js');
+  t.is(fileSpecifier('/tmp/a#b/c.js'), 'file:///tmp/a%23b/c.js');
+  t.is(fileSpecifier('/tmp/a?b/c.js'), 'file:///tmp/a%3Fb/c.js');
 });
 
 test('portable-lesson-imports - substitutePortableImports reports what it could not resolve', (t) => {
@@ -122,7 +141,7 @@ test('portable-lesson-imports - a lesson shim resolves only for a known name', (
   const resolvers = { resolveSdk: () => '/sdk', resolveBuiltin: (p) => `/pkg/${p}` };
 
   const ok = resolveToken(lessonShimToken('child-process'), resolvers);
-  t.ok(ok && ok.endsWith('lesson-shims/child-process.cjs'), 'a listed shim resolves');
+  t.ok(ok && ok.endsWith(path.join('lesson-shims', 'child-process.cjs')), 'a listed shim resolves');
   t.ok(require('fs').existsSync(ok), 'and the file it names is really there');
 
   t.is(resolveToken('academy-portable:lesson-shim:nope', resolvers), null, 'an unlisted name does not');

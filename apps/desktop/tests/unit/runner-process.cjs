@@ -21,7 +21,9 @@ test('buildLesson - a normal examples/ rewrite stays under coursesDir', (t) => {
     source: "import x from 'examples/lesson-a/main.ts';\n",
     cwd: COURSES,
   });
-  t.ok(built.includes(path.join(COURSES, 'examples', 'lesson-a', 'main.ts')));
+  // JSON.stringify, not the raw path: a Windows path's backslashes have to
+  // reach the generated source as escapes, so that's the form it's embedded in.
+  t.ok(built.includes(JSON.stringify(path.join(COURSES, 'examples', 'lesson-a', 'main.ts'))));
   t.teardown(() => fs.rmSync(COURSES, { recursive: true, force: true }));
 });
 

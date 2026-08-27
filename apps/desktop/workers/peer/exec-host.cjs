@@ -15,6 +15,7 @@ const { isWindows } = require('which-runtime');
 
 const sandbox = require('../sandbox');
 const { ensureBareExecutable } = require('../../shared/bare-bin.cjs');
+const { killTree, spawnFlags } = require('../../shared/process-control.cjs');
 const { createNoiseFilter } = require('./exec-noise.cjs');
 const { takeLessonDone } = require('../../shared/lesson-done.cjs');
 const { isAllowed: rateAllow, GLOBAL_KEY } = require('./rate-limit.cjs');
@@ -218,25 +219,9 @@ function isAlive(child) {
   return !!child && child.exitCode === null && child.signalCode === null;
 }
 
-/**
- * Signal the child's whole process group (children spawn detached, so the
- * group id is the child pid). An orphaned QVAC worker grandchild keeps its
- * lock on the registry corestore, failing every later model download until killed.
- */
-function killGroup(child, signal) {
-  if (!child?.pid) return false;
-  try {
-    process.kill(-child.pid, signal);
-    return true;
-  } catch {
-    try {
-      child.kill(signal);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
+// An orphaned QVAC worker grandchild keeps its lock on the registry corestore,
+// failing every later model download until killed.
+const killGroup = (child, signal) => killTree(child, signal);
 
 function removeDir(dir) {
   if (!dir) return;
@@ -446,9 +431,7 @@ function createExecHost(ctx) {
     // can outlive it; a moment later gives the OS time to actually reap
     // run.child first, so the reaper sees its parent as dead.
     const reapTimer = setTimeout(() => {
-      try {
-        require('../../shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers();
-      } catch {}
+      require('../../shared/qvac-orphan-reaper.cjs').reapOrphanedQvacWorkers().catch(() => {});
     }, 500);
     if (typeof reapTimer.unref === 'function') reapTimer.unref();
     removeDir(run.fileDir);
@@ -1335,9 +1318,9 @@ function createExecHost(ctx) {
         cwd: childCwd,
         env: wrap.env,
         stdio,
-        // Own process group for killGroup. Not unref'd: this process still owns
-        // the run's lifetime.
-        detached: true,
+        // Platform spawn flags for killGroup. Not unref'd: this process still
+        // owns the run's lifetime.
+        ...spawnFlags,
       });
     } finally {
       if (seccompFd !== null) {

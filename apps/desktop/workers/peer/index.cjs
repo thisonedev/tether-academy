@@ -58,6 +58,9 @@ function sanitizeProfileUserData(userData) {
   return {
     name,
     app: typeof userData.app === 'string' ? userData.app.slice(0, 200) : null,
+    // Self-reported, same trust level as `name`: lets the other side's peer
+    // picker flag a Windows peer as execute-only, nothing more.
+    os: typeof userData.os === 'string' ? userData.os.slice(0, 40) : null,
     buildId: typeof userData.buildId === 'string' ? userData.buildId.slice(0, 200) : null,
     devicePublicKey: typeof userData.devicePublicKey === 'string' && HEX_64.test(userData.devicePublicKey)
       ? userData.devicePublicKey

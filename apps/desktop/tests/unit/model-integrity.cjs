@@ -28,11 +28,15 @@ function writeModel(root, rel, bytes) {
   return abs;
 }
 
+// path.join, not a forward-slash literal: scan() keys its manifest with
+// path.join too, so a hardcoded "/" wouldn't match a Windows lookup.
+const SHARDED_REL = path.join('sharded', 'keyhex', 'shard-0');
+
 function fixture(t, name) {
   const stateDir = tmpDir(t, `${name}-state`);
   const root = tmpDir(t, `${name}-models`);
   writeModel(root, 'aaaa_model.gguf', Buffer.alloc(64, 1));
-  writeModel(root, 'sharded/keyhex/shard-0', Buffer.alloc(32, 2));
+  writeModel(root, SHARDED_REL, Buffer.alloc(32, 2));
   return { stateDir, root };
 }
 
@@ -142,7 +146,7 @@ test('model-integrity - verifyModels reads nothing the run did not name', (t) =>
 
   t.alike(verifyModels(['model.gguf'], stateDir, root).recorded, [CACHED],
     'only the named model is hashed');
-  t.is(readManifest(stateDir).files['sharded/keyhex/shard-0'].sha256, null,
+  t.is(readManifest(stateDir).files[SHARDED_REL].sha256, null,
     'the rest of the cache is untouched');
 
   t.alike(verifyModels([], stateDir, root).recorded, [], 'a run naming no model reads nothing');

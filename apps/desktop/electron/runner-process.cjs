@@ -19,6 +19,7 @@ const {
   lessonShimToken,
   lessonShimPath,
   LESSON_SHIMS,
+  fileSpecifier,
 } = require('../shared/portable-lesson-imports.cjs');
 const { LESSON_DONE_MARKER } = require('../shared/lesson-done.cjs');
 
@@ -213,12 +214,12 @@ function bareBuiltinPath(spec, portable) {
   // A shim wins over the raw package: it is the same module plus the fixes
   // that let a lesson keep the source example's own code.
   const shim = LESSON_SHIMS[bare];
-  if (shim) return portable ? lessonShimToken(shim) : lessonShimPath(shim);
+  if (shim) return portable ? lessonShimToken(shim) : fileSpecifier(lessonShimPath(shim));
   const target = BARE_BUILTINS[bare];
   if (!target) return null;
   if (portable) return bareBuiltinToken(target);
   try {
-    return parentRequire.resolve(target);
+    return fileSpecifier(parentRequire.resolve(target));
   } catch {
     return null;
   }
@@ -226,7 +227,14 @@ function bareBuiltinPath(spec, portable) {
 
 function resolveImport(spec, runtime, portable) {
   if (spec.startsWith('node:')) {
-    return runtime === 'bare' ? bareBuiltinPath(spec, portable) ?? spec : spec;
+    if (runtime === 'bare') return bareBuiltinPath(spec, portable) ?? spec;
+    // __academyExit calls process.exit() directly, which bypasses the open
+    // handle that would normally keep node's event loop alive for a spawned
+    // child. See child-process-node.cjs.
+    if (spec === 'node:child_process') {
+      return portable ? lessonShimToken('child-process-node') : fileSpecifier(lessonShimPath('child-process-node'));
+    }
+    return spec;
   }
   if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('..')) {
     return spec;
@@ -239,14 +247,14 @@ function resolveImport(spec, runtime, portable) {
   // stripForNode removes this original line); the generic branch below
   // would otherwise tokenize it too, redeclaring the same names.
   if (spec === '@qvac/sdk') {
-    return portable ? qvacSdkToken() : parentRequire.resolve(spec);
+    return portable ? qvacSdkToken() : fileSpecifier(parentRequire.resolve(spec));
   }
   // A real npm dependency of a lesson (e.g. an MCP client library), not a
   // builtin. In portable mode this machine's resolved path is meaningless on
   // the receiver, so hand off a token instead of the sender's own path.
   if (portable) return npmPackageToken(spec);
   try {
-    return parentRequire.resolve(spec);
+    return fileSpecifier(parentRequire.resolve(spec));
   } catch {
     return spec;
   }
@@ -270,7 +278,9 @@ function resolveAllImports(src, runtime, portable) {
     /(\bimport\s+(?:[\w*\s{},]+\s+from\s+)?|\bexport\s+(?:[\w*\s{},]+\s+from\s+)?)(['"])([^'"]+)\2/g,
     (match, head, quote, spec) => {
       const resolved = resolveImport(spec, runtime, portable);
-      return resolved === spec ? match : `${head}${quote}${resolved}${quote}`;
+      // JSON.stringify, not raw interpolation: a Windows path carries
+      // backslashes that a JS string literal would read as escapes.
+      return resolved === spec ? match : `${head}${JSON.stringify(resolved)}`;
     },
   );
 }
@@ -314,7 +324,9 @@ function mockPreamble(mockMap, bindingsBySpec) {
 }
 
 function stripForNode(src) {
-  const sdkPath = parentRequire.resolve('@qvac/sdk');
+  // resolveAllImports has already rewritten this specifier to its file:// form,
+  // so the pattern that strips it has to be that same form.
+  const sdkPath = fileSpecifier(parentRequire.resolve('@qvac/sdk'));
   const sdkPathRe = sdkPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // In portable mode resolveAllImports already rewrote the original @qvac/sdk
   // specifier to this token, not the sender's own path; strip that form too,
@@ -432,22 +444,23 @@ function resolveFixturePaths(src, coursesDir, portable) {
     }
     // A peer run opens the file on the other machine, where this checkout's
     // path means nothing, so the host resolves the token against its own.
+    // A fixture stays a filesystem path (the lesson hands it to fs), so unlike
+    // an import specifier only its escaping changes.
     if (portable) {
-      return `${quote}${courseAssetToken(path.relative(root, abs).split(path.sep).join('/'))}${quote}`;
+      return JSON.stringify(courseAssetToken(path.relative(root, abs).split(path.sep).join('/')));
     }
-    return `${quote}${abs}${quote}`;
+    return JSON.stringify(abs);
   });
 }
 
 // Never clobber: add _1, _2 like a browser download, swapped in at the call site.
-const childrenAlivePreamble = (runtime, portable) => (runtime === 'bare'
-  ? `import { __academyLiveChildren as __academyLiveChildrenCount } from ${JSON.stringify(resolveImport('node:child_process', runtime, portable))};
+// Both runtimes route node:child_process through a tracking shim now (see
+// child-process.cjs / child-process-node.cjs), so both get the real check.
+const childrenAlivePreamble = (runtime, portable) => `import { __academyLiveChildren as __academyLiveChildrenCount } from ${JSON.stringify(resolveImport('node:child_process', runtime, portable))};
 function __academyChildrenAlive() {
   try { return __academyLiveChildrenCount() > 0; } catch { return false; }
 }
-`
-  : `function __academyChildrenAlive() { return false; }
-`);
+`;
 
 const dedupePreamble = (runtime, portable) => `import { writeFileSync as __academyWrite, existsSync as __academyExists, mkdirSync as __academyMkdir } from ${JSON.stringify(resolveImport('node:fs', runtime, portable))};
 import { dirname as __academyDirname, extname as __academyExt, join as __academyJoin, basename as __academyBase, resolve as __academyResolve } from ${JSON.stringify(resolveImport('node:path', runtime, portable))};
@@ -530,9 +543,12 @@ function __academyIsTeardownNoise(err) {
 }
 process.on('uncaughtException', (err) => {
   if (__academyIsTeardownNoise(err)) return;
-  // Real error worth surfacing as a one-liner.
+  // Real error worth surfacing as a one-liner, then actually end the run:
+  // a throw before any awaits skips the appended __academyFinish call, so
+  // without this the process hangs until the host's idle timeout kills it.
   const m = ((err && err.message) || String(err) || '').toString().trim();
   console.error(m);
+  __academyEnd(1);
 });
 `;
 
@@ -626,10 +642,12 @@ function barePreamble(source, portable) {
   for (const [i, plugin] of BARE_PLUGINS.entries()) {
     const name = `__academyPlugin${i}`;
     names.push(name);
-    const pluginPath = portable ? qvacSdkPluginToken(plugin) : path.join(sdkRoot, BARE_PLUGIN_DIR, plugin, 'plugin.js');
+    const pluginPath = portable
+      ? qvacSdkPluginToken(plugin)
+      : fileSpecifier(path.join(sdkRoot, BARE_PLUGIN_DIR, plugin, 'plugin.js'));
     lines.push(`import * as ${name} from ${JSON.stringify(pluginPath)};`);
   }
-  const sdkPath = portable ? qvacSdkToken() : parentRequire.resolve('@qvac/sdk');
+  const sdkPath = portable ? qvacSdkToken() : fileSpecifier(parentRequire.resolve('@qvac/sdk'));
   lines.push(
     `import { plugins as __academyPlugins } from ${JSON.stringify(sdkPath)};`,
     // Each module names its export differently, so take the objects.
@@ -655,7 +673,7 @@ function buildLesson({ source, cwd, runtime = 'node', mockImports = {}, mockNote
   );
   const importedNames = extractImportedNames(unmockedSource);
   const namesForImport = Array.from(new Set([...importedNames, 'close']));
-  const sdkPath = portable ? qvacSdkToken() : parentRequire.resolve('@qvac/sdk');
+  const sdkPath = portable ? qvacSdkToken() : fileSpecifier(parentRequire.resolve('@qvac/sdk'));
   const aliased = namesForImport.map((n) => `${n} as __academySdk_${n}`).join(', ');
   const importLine = `import { ${aliased} } from ${JSON.stringify(sdkPath)};\n`;
   // Same names the lesson wrote, so nothing below this line knows the difference.

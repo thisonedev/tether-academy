@@ -27,7 +27,9 @@ const BARE_PACKAGE_NAMES = new Set(Object.values(BARE_BUILTINS));
 // location, so a peer picks a name from the list and never a path.
 const LESSON_SHIM_DIR = 'lesson-shims';
 const LESSON_SHIMS = { child_process: 'child-process' };
-const LESSON_SHIM_NAMES = new Set(Object.values(LESSON_SHIMS));
+// child-process-node is node-only, reached directly rather than through
+// LESSON_SHIMS (bare-only), but still needs to be an accepted token name.
+const LESSON_SHIM_NAMES = new Set([...Object.values(LESSON_SHIMS), 'child-process-node']);
 
 // Registered together since which one a snippet needs isn't known until it
 // runs. Reached by path because the package's own `./<name>/plugin` exports
@@ -157,6 +159,20 @@ function resolvePortableToken(spec, { resolveSdk, resolveBuiltin }) {
   return null;
 }
 
+/**
+ * ESM specifier for an absolute path. Node reads `C:\...` as a URL with scheme
+ * "c:", so a Windows path is never a usable specifier on its own; Node and Bare
+ * both accept the file:// form on every platform.
+ * @param {string} abs
+ * @returns {string}
+ */
+function fileSpecifier(abs) {
+  const slashed = String(abs).replace(/\\/g, '/');
+  const rooted = slashed.startsWith('/') ? slashed : `/${slashed}`;
+  // encodeURI leaves ? and # alone, and both would end the URL's path early.
+  return `file://${encodeURI(rooted).replace(/\?/g, '%3F').replace(/#/g, '%23')}`;
+}
+
 // Matches runner-process.cjs's resolveAllImports, so substitution only
 // touches actual import/export specifiers.
 const IMPORT_SPECIFIER_RE =
@@ -177,7 +193,9 @@ function substitutePortableImports(code, resolvers) {
       unresolved.push(spec);
       return match;
     }
-    return `${head}${quote}${resolved}${quote}`;
+    // JSON.stringify, not raw interpolation: a Windows path carries
+    // backslashes that a JS string literal would read as escapes.
+    return `${head}${JSON.stringify(fileSpecifier(resolved))}`;
   });
   return { code: out, unresolved };
 }
@@ -211,7 +229,9 @@ function substitutePortableAssets(code, { coursesDir }) {
       missing.push(rel);
       return match;
     }
-    return `${quote}${abs}${quote}`;
+    // Stays a filesystem path (the lesson hands it to fs), so only the
+    // escaping changes.
+    return JSON.stringify(abs);
   });
   return { code: out, missing, refused };
 }
@@ -235,4 +255,5 @@ module.exports = {
   resolvePortableToken,
   substitutePortableImports,
   substitutePortableAssets,
+  fileSpecifier,
 };
