@@ -773,6 +773,9 @@ export function PendingRequestsSection() {
   const [pending, setPending] = useState<AcademyPeerPending[]>([]);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
+  // A pending request only exists for a device someone tried to pair with as
+  // host, which Windows can never be.
+  const [isWindows, setIsWindows] = useState(false);
 
   const refresh = useCallback(async () => {
     const pn = (await window.academy?.peer?.pending?.().catch(() => [])) ?? [];
@@ -783,6 +786,10 @@ export function PendingRequestsSection() {
     if (!window.academy?.peer) return;
     let cancelled = false;
     refresh();
+    void window.academy?.device
+      ?.info()
+      .then((info) => setIsWindows(info.os === 'windows'))
+      .catch(() => {});
     const off = window.academy.peer.onEvent(() => {
       if (cancelled) return;
       refresh();
@@ -826,6 +833,8 @@ export function PendingRequestsSection() {
       setActionBusy(null);
     }
   }, []);
+
+  if (isWindows) return null;
 
   return (
     <div className="flex flex-col rounded-xl border border-canvas-border bg-canvas p-5 sm:p-6">
