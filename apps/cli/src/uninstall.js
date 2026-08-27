@@ -9,7 +9,6 @@ const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
 const { home, versionsDir, currentLink, backupsDir, lockPath, shimPath } = require('./home');
-const { printBanner } = require('./splash');
 
 function secretsDir() {
   return path.join(home(), 'keys');
@@ -78,7 +77,7 @@ function confirm(question) {
 }
 
 async function uninstall({ purge = false, yes = false } = {}) {
-  printBanner('Removing Tether Academy...');
+  console.log('Removing Tether Academy...');
   const targets = plan({ purge });
   if (targets.length === 0) {
     console.log('Nothing to remove: no install found.');
