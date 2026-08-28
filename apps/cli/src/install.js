@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { run, runQuiet } = require('./proc');
+const { run, runQuiet, ensureCommand } = require('./proc');
 const {
   home,
   versionsDir,
@@ -40,6 +40,9 @@ function writeShim(targetEntry) {
 }
 
 async function install() {
+  ensureCommand('git', 'https://git-scm.com');
+  ensureCommand('node', 'https://nodejs.org');
+
   console.log('Installing Tether Academy...');
   fs.mkdirSync(versionsDir(), { recursive: true });
   const tmpDir = path.join(versionsDir(), `.tmp-${process.pid}-${Date.now()}`);

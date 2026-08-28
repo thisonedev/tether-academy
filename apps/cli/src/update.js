@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { run, runQuiet } = require('./proc');
+const { run, runQuiet, ensureCommand } = require('./proc');
 const { runAction } = require('./electron-bridge');
 const {
   home,
@@ -112,6 +112,9 @@ function pruneOldVersions(keepSha) {
 // successful build+smoke test, and a running process keeps its old code in
 // memory regardless. Restart the app afterward to pick up the new version.
 async function update() {
+  ensureCommand('git', 'https://git-scm.com');
+  ensureCommand('node', 'https://nodejs.org');
+
   const lock = new UpdateLock();
   const acquired = lock.acquire();
   if (!acquired.acquired) {
