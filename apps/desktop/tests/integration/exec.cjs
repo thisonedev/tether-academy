@@ -16,12 +16,13 @@ const PROC_ESM = bareImports('process');
 // a raw newline in a failure message would drop everything after it.
 const oneLine = (s) => s.replace(/\s*\n\s*/g, ' | ');
 
-// The host reports the stages it crosses on stderr, so what the lesson itself
+// The host reports the stages it crosses on stderr (→ in progress, ✓ done,
+// ! a warning like an unavailable security scan), so what the lesson itself
 // wrote is whatever is left once those are removed.
 const lessonStderr = (s) =>
   s
     .split('\n')
-    .filter((line) => !/^\s*[→✓]/.test(line))
+    .filter((line) => !/^\s*[→✓!]/.test(line))
     .join('\n')
     .trim();
 
