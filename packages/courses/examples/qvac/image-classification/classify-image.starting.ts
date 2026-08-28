@@ -1,21 +1,16 @@
-import {
-  startQVACProvider,
-  stopQVACProvider,
-  loadModel,
-  classify,
-  unloadModel,
-} from "@qvac/sdk";
+import { loadModel, classify, unloadModel } from "@qvac/sdk";
 import fs from "node:fs";
 
 async function main() {
-  // 1: start the provider and load the classification model
+  const modelId = await loadModel({
+    modelType: "ggml-classification",
+  });
 
-  // 2: read the image, call classify, log each label
+  // 1: read the image with fs.readFileSync
 
-  // 3: unload the model and stop the provider
+  // 2: call classify({ modelId, image }) and log each label and confidence
 
-  await unloadModel({ modelId: "" });
-  await stopQVACProvider();
+  await unloadModel({ modelId });
 }
 
 main().catch(console.error);

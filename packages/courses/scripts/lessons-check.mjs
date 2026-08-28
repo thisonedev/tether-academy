@@ -2349,7 +2349,6 @@ function chapterGuess(upstreamFile, docChapterMap) {
   if (base.startsWith('kv-cache') || base.startsWith('llamacpp-cache')) return 'text-generation';
   if (base.startsWith('config-') || base.startsWith('default-config') || base.startsWith('llamacpp-http') || base.startsWith('llamacpp-sharded')) return 'getting-started';
   if (base.startsWith('quickstart') || base.startsWith('llamacpp-filesystem') || base.startsWith('llamacpp-p2p') || base.startsWith('llamacpp-structured') || base.startsWith('llamacpp-tools-') || base.startsWith('llamacpp-dynamic') || base.startsWith('mcp-websearch') || base.startsWith('seed-')) return 'getting-started';
-  if (base.startsWith('delegated-')) return 'delegated-inference';
   if (base.startsWith('voice-')) return 'voice-assistant';
   return '(root)';
 }
