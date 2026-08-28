@@ -337,11 +337,11 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         setModelLoading(false);
         return;
       }
-      // The configured model can be one this device never finished downloading,
-      // and the main process is the only side that can tell, since two registry
-      // entries share a file name. Its pick is whatever is already on disk.
+      // The configured model can be one this device never finished
+      // downloading, so only auto-load it if it's actually on disk; an
+      // uninstalled recommendation is not consent to download it.
       const onDisk = new Set((suggestion?.ranked ?? []).filter((e) => e.installed).map((e) => e.name));
-      const wanted = configured && onDisk.has(configured) ? configured : (suggestion?.pick ?? null);
+      const wanted = configured && onDisk.has(configured) ? configured : null;
       if (!wanted) {
         setModelLoading(false);
         return;
