@@ -126,6 +126,13 @@ test('lesson-output - const outputDir with a chapter folder is pre-created', (t)
   t.ok(fs.existsSync(path.join(dir, 'output', 'video-gen')));
 });
 
+test('lesson-output - a non-path argv default is not mistaken for a folder', (t) => {
+  const dir = tmp(t);
+  precreateOutputDirs('const query = process.argv[2] ?? "machine learning algorithms";\nconst category = process.argv[3] ?? "ai";', dir);
+  t.absent(fs.existsSync(path.join(dir, 'machine learning algorithms')));
+  t.absent(fs.existsSync(path.join(dir, 'ai')));
+});
+
 test('lesson-output - a lesson cannot mkdir its way out of the workspace', (t) => {
   const dir = tmp(t);
   precreateOutputDirs('fs.writeFileSync("../../escaped/evil.png", x)', dir);

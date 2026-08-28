@@ -36,8 +36,10 @@ function precreateOutputDirs(src, cwd) {
     /\bwriteFileSync\s*\(\s*['"]([^'"]+)['"]/g,
     // Lessons that read a CLI argv or env var but fall back to a chapter-folder
     // default like `const x = process.argv[2] ?? "output/.../file"` still need
-    // the default directory pre-created on disk.
-    /=\s*process\.argv\[\d\]\s*\?\?\s*['"]([^'"]+)['"]/g,
+    // the default directory pre-created on disk. Restricted to "output/..."
+    // literals so a prompt/query/caption default (e.g. `?? "ai"`) isn't
+    // mistaken for a path and mkdir'd as a stray sibling of output/.
+    /=\s*process\.argv\[\d\]\s*\?\?\s*['"](output\/[^'"]+)['"]/g,
     // Lessons that build a chapter-relative output path at runtime via
     // `const outputDir = "output/...";` (no argv). The `fs.writeFileSync`
     // call further down uses `path.join(outputDir, "file.avi")`, so the
