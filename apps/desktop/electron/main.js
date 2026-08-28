@@ -1,3 +1,7 @@
+// apps/cli installs a raw source checkout, so the app always runs
+// unpackaged and would otherwise show Electron's dev-only warnings to users.
+process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
+
 const { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell } = require('electron');
 const os = require('node:os');
 const path = require('node:path');
