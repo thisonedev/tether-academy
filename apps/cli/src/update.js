@@ -4,7 +4,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run, runQuiet } = require('./proc');
 const { runAction } = require('./electron-bridge');
-const { home, versionsDir, versionDir, pnpmVirtualStoreDir, currentLink, backupsDir, repoUrl, branch, linkType } = require('./home');
+const {
+  home,
+  versionsDir,
+  versionDir,
+  pnpmVirtualStoreDir,
+  currentLink,
+  backupsDir,
+  repoUrl,
+  branch,
+  linkType,
+  swapCurrentLink,
+} = require('./home');
 const { UpdateLock, describeHolder } = require('./update-lock');
 
 // See pnpmVirtualStoreDir() in home.js: keeps pnpm's hashed store names off
@@ -159,7 +170,7 @@ async function update() {
     const tmpLink = `${currentLink()}.tmp-${process.pid}`;
     fs.symlinkSync(finalDir, tmpLink, linkType());
     const beforeDir = currentLink();
-    fs.renameSync(tmpLink, currentLink()); // atomic swap
+    swapCurrentLink(tmpLink);
 
     pruneOldVersions(sha.slice(0, 12));
     const beforeVersion = before ? semverFor(beforeDir) : null;

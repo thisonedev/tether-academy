@@ -5,6 +5,7 @@
 //   current                symlink -> versions/<sha>, the active version
 //   backups/<ts>/          pre-update snapshots of the app's userData dir
 //   .update-in-progress    update lock (pid + started-at)
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -76,6 +77,21 @@ function branch() {
   return override && override.trim() ? override : 'master';
 }
 
+// Swaps `tmpLink` into place as `current`. Windows' MoveFileEx can't replace
+// an existing directory/junction, so shuffle it aside there instead.
+function swapCurrentLink(tmpLink) {
+  const target = currentLink();
+  if (process.platform !== 'win32') {
+    fs.renameSync(tmpLink, target);
+    return;
+  }
+  const old = `${target}.old-${process.pid}`;
+  const hadPrevious = fs.existsSync(target);
+  if (hadPrevious) fs.renameSync(target, old);
+  fs.renameSync(tmpLink, target);
+  if (hadPrevious) fs.rmdirSync(old);
+}
+
 module.exports = {
   home,
   versionsDir,
@@ -89,4 +105,5 @@ module.exports = {
   linkType,
   shimDir,
   shimPath,
+  swapCurrentLink,
 };

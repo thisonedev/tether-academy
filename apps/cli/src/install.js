@@ -14,6 +14,7 @@ const {
   linkType,
   shimDir,
   shimPath: shimFilePath,
+  swapCurrentLink,
 } = require('./home');
 
 // See pnpmVirtualStoreDir(): keeps pnpm's hashed store names off the long
@@ -60,7 +61,7 @@ async function install() {
 
   const tmpLink = `${currentLink()}.tmp-${process.pid}`;
   fs.symlinkSync(finalDir, tmpLink, linkType());
-  fs.renameSync(tmpLink, currentLink()); // atomic same-directory rename, POSIX and Windows both
+  swapCurrentLink(tmpLink);
 
   const entry = path.join(currentLink(), 'apps', 'cli', 'bin', 'tether-academy.js');
   const { shimPath, onPath } = writeShim(entry);
