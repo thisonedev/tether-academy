@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-monaco.mjs",
     "dev": "next dev --turbopack",
+    "predev:webpack": "node scripts/copy-monaco.mjs",
     "dev:webpack": "next dev",
-    "dev:clean": "node ../../packages/courses/scripts/dev-clean.mjs && next dev --turbopack",
+    "dev:clean": "node scripts/copy-monaco.mjs && node ../../packages/courses/scripts/dev-clean.mjs && next dev --turbopack",
     "prebuild": "node scripts/copy-monaco.mjs && node scripts/copy-install-sh.mjs && pnpm -w run build:packages && pnpm -w run check:yaml && pnpm -w run verify:tests:check && pnpm lint && pnpm check",
     "build": "next build",
     "build:dev": "next build",

@@ -23,6 +23,9 @@ dist
 # copied from apps/cli/install.sh by apps/web/scripts/copy-install-sh.mjs
 apps/web/public/install.sh
 
+# copied from monaco-editor/min/vs by apps/web/scripts/copy-monaco.mjs
+apps/web/public/monaco
+
 # workspace migration tracker
 checkpoints/
 
