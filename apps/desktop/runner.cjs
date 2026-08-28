@@ -36,6 +36,7 @@ const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
 const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
 const { hintForMissingLib } = require('./electron/linux-lib-hint.cjs');
 const { killTree, spawnFlags } = require('./shared/process-control.cjs');
+const { detectWindowsMicDevice } = require('./shared/windows-mic-device.cjs');
 
 function runExample({ source, language, argv, onChunk }) {
   const isJsLike =
@@ -113,6 +114,14 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
     });
   }
 
+  // Mic lessons read MIC_DEVICE themselves; only dshow (win32) has no default
+  // device concept, so this is the only platform that needs one supplied.
+  let micDeviceEnv = {};
+  if (process.platform === 'win32' && !process.env.MIC_DEVICE && wrapped.includes('MIC_DEVICE')) {
+    const detected = detectWindowsMicDevice();
+    if (detected) micDeviceEnv = { MIC_DEVICE: detected };
+  }
+
   const child = spawn(
     process.execPath,
     [
@@ -129,6 +138,7 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
         ELECTRON_RUN_AS_NODE: '1',
         NODE_NO_WARNINGS: '1',
         QVAC_LOG_LEVEL: 'warn',
+        ...micDeviceEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       // The spawn flags killGroup needs to reach the QVAC worker on this platform.
