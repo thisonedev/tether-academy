@@ -14,6 +14,16 @@ declare global {
 
 type Step = 'choose' | 'backup' | 'recover' | 'done';
 
+function WindowsFirewallNote() {
+  return (
+    <p className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs text-canvas-foreground">
+      <Shield className="mt-0.5 size-3.5 shrink-0 text-sky-400" />
+      Windows may ask for firewall permission for background peer-to-peer networking used
+      by model downloads and device pairing. Click Allow to continue.
+    </p>
+  );
+}
+
 /** Profile setup for Settings: create, recover, or view/remove the local identity. Multi-device link and Keet app interop are deferred. */
 export function ProfileOnboarding({ onReady }: { onReady?: () => void }) {
   const resetUser = useUserStore((s) => s.reset);
@@ -24,6 +34,9 @@ export function ProfileOnboarding({ onReady }: { onReady?: () => void }) {
   const [mnemonic, setMnemonic] = useState<string | null>(null);
   const [backupChecked, setBackupChecked] = useState(false);
   const [recoverText, setRecoverText] = useState('');
+  // confirmBackup()/recover() both start the P2P mesh, and Windows shows its
+  // own firewall prompt for that unprompted; this note gets ahead of it.
+  const [isWindows, setIsWindows] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!window.academy?.identity) return null;
@@ -42,6 +55,13 @@ export function ProfileOnboarding({ onReady }: { onReady?: () => void }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    void window.academy?.device
+      ?.info()
+      .then((info) => setIsWindows(info.os === 'windows'))
+      .catch(() => {});
+  }, []);
 
   const hasApi =
     typeof window !== 'undefined' && typeof window.academy?.identity?.status === 'function';
@@ -230,6 +250,7 @@ export function ProfileOnboarding({ onReady }: { onReady?: () => void }) {
           <pre className="whitespace-pre-wrap rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-3 font-mono text-xs leading-relaxed text-canvas-foreground">
             {mnemonic}
           </pre>
+          {isWindows ? <WindowsFirewallNote /> : null}
           <label className="flex items-start gap-2 text-xs text-canvas-muted-foreground">
             <input
               type="checkbox"
@@ -277,6 +298,7 @@ export function ProfileOnboarding({ onReady }: { onReady?: () => void }) {
             className="w-full rounded-md border border-canvas-border bg-canvas-muted px-3 py-2 font-mono text-xs text-canvas-foreground"
             placeholder="word1 word2 …"
           />
+          {isWindows ? <WindowsFirewallNote /> : null}
           <div className="flex items-center gap-2">
             <button
               type="button"
