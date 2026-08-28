@@ -124,7 +124,12 @@ async function uninstall({ purge = false, yes = false } = {}) {
   }
 
   console.log(`\n✓ Removed ${targets.length} path${targets.length === 1 ? '' : 's'}.`);
-  console.log('Reinstall with: curl -fsSL https://tetheracademy.cc/install.sh | sh');
+  console.log(`Reinstall with: ${reinstallCommand()}`);
+}
+
+function reinstallCommand() {
+  if (process.platform === 'win32') return 'irm https://tetheracademy.cc/install.ps1 | iex';
+  return 'curl -fsSL https://tetheracademy.cc/install.sh | sh';
 }
 
 function appStateDir() {
