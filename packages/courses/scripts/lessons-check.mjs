@@ -221,6 +221,10 @@ async function ensureRepo(repo) {
   if (existsSync(path.join(repo.dir, '.git'))) {
     console.error(`[check] ${repo.key} repo exists, fetching...`);
     await repo.git(['fetch', '--tags', '--force', 'origin']);
+    // `fetch` alone never moves the local checkout forward, so HEAD stays
+    // pinned to whatever commit was checked out on the first clone.
+    await repo.git(['remote', 'set-head', 'origin', '-a']);
+    await repo.git(['reset', '--hard', 'origin/HEAD']);
     return;
   }
   mkdirSync(path.dirname(repo.dir), { recursive: true });
@@ -802,13 +806,24 @@ async function listCommitsTouchingExamples(git, sinceRef, toRef) {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Lists the files a commit touched.
+// Lists the files a commit touched, plus which of those it deleted (so
+// callers can tell a real addition from a file that's already gone again).
 // ────────────────────────────────────────────────────────────────────
 
 async function filesChangedInCommit(git, sha) {
   try {
-    return (await git(['show', '--name-only', '--format=', sha])).split('\n').filter(Boolean);
-  } catch { return []; }
+    const out = await git(['show', '--name-status', '--format=', sha]);
+    const files = [];
+    const deleted = new Set();
+    for (const line of out.split('\n').filter(Boolean)) {
+      const parts = line.split('\t');
+      const status = parts[0];
+      const file = parts[parts.length - 1];
+      files.push(file);
+      if (status.startsWith('D')) deleted.add(file);
+    }
+    return { files, deleted };
+  } catch { return { files: [], deleted: new Set() }; }
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -1438,10 +1453,12 @@ function partitionChanges(changes, commits, index, examplesRepoDir, examplesFrom
   for (const commit of commits) {
     const files = (commit._files ?? []).filter((f) => f.startsWith(CONFIG.examplesPathPrefix));
     const coveredFiles = files.filter((f) => index.coveredExampleFiles.has(f));
-    // Files that aren't covered AND aren't the `to` half of a known rename
-    // become new-opportunity files.
+    // Files that aren't covered, aren't the `to` half of a known rename, and
+    // weren't deleted by this same commit become new-opportunity files. A
+    // deleted file has nothing to build a lesson from.
+    const deletedFiles = commit._deletedFiles ?? new Set();
     const newOpportunityFiles = files.filter((f) =>
-      !index.coveredExampleFiles.has(f) && !renames.some((r) => r.to === f)
+      !index.coveredExampleFiles.has(f) && !renames.some((r) => r.to === f) && !deletedFiles.has(f)
     );
     relevantCommits.push({ ...commit, _files: coveredFiles, _newOpportunityFiles: newOpportunityFiles });
   }
@@ -2420,7 +2437,11 @@ async function main() {
 
   // Examples directory commits.
   const commits = await listCommitsTouchingExamples(examplesRepo.git, examplesFrom.sha, examplesTo.sha);
-  for (const c of commits) c._files = await filesChangedInCommit(examplesRepo.git, c.sha);
+  for (const c of commits) {
+    const { files, deleted } = await filesChangedInCommit(examplesRepo.git, c.sha);
+    c._files = files;
+    c._deletedFiles = deleted;
+  }
   console.error(`[check] examples commits: ${commits.length}`);
 
   // Build the relevance index: which upstream paths and symbols do our
