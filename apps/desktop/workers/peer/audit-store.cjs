@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const process = require('process');
 const { restrictToOwnerWindows } = require('../sandbox/capabilities.cjs');
 
 const AUDIT_FILE = 'peer-audit.jsonl';
