@@ -1,15 +1,7 @@
 import fs from "node:fs";
-import {
-  startQVACProvider,
-  stopQVACProvider,
-  loadModel,
-  classify,
-  unloadModel,
-} from "@qvac/sdk";
+import { loadModel, classify, unloadModel } from "@qvac/sdk";
 
 async function main() {
-  await startQVACProvider({});
-
   const modelId = await loadModel({
     modelType: "ggml-classification",
   });
@@ -23,7 +15,6 @@ async function main() {
   }
 
   await unloadModel({ modelId });
-  await stopQVACProvider();
 }
 
 main().catch(console.error);

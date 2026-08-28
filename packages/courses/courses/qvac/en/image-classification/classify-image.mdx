@@ -3,9 +3,6 @@ title: Classify an image
 sourceExample: "packages/sdk/examples/classification/classify-image.ts"
 platforms: ['node']
 tests:
-  - id: starts-provider
-    description: 'Starts the QVAC provider before loading'
-    pattern: "startQVACProvider"
   - id: loads-classification
     description: 'Loads a model with modelType ggml-classification'
     pattern: "loadModel\\s*\\(\\s*\\{[^}]*modelType\\s*:\\s*[`\"']ggml-classification[`\"']"
@@ -19,7 +16,6 @@ tests:
     description: 'Loops over results and logs label and confidence'
     pattern: "for\\s*\\(\\s*const\\s+(?:\\{|\\w+\\s+of\\s+)results|results\\.forEach|for\\s*\\(\\s*const\\s*\\{[^}]*\\}\\s*of\\s+results"
 hints:
-  - "Call startQVACProvider({}) before loadModel, and stopQVACProvider() at the end. The provider boots the local inference backend."
   - "loadModel({ modelType: 'ggml-classification' }) with no modelSrc. The model is bundled inside @qvac/classification-ggml."
   - "Read the image as a Buffer with fs.readFileSync(path). classify({ modelId, image }) returns an array of { label, confidence } sorted by score."
 expectedOutput:
@@ -39,17 +35,6 @@ questions:
       - text: "`modelSrc` is optional for every model; classification isn't a special case."
         correct: false
         feedback: "Check whether other lessons' `loadModel` calls also omit `modelSrc`, or whether this is specific to classification."
-  - id: what-startqvacprovider-does
-    text: "What is the primary purpose of `startQVACProvider()`?"
-    answers:
-      - text: "It's optional and only speeds up the first `classify()` call."
-        correct: false
-        feedback: "Re-read whether booting the provider is described as required or optional."
-      - text: "It boots the local inference backend that `loadModel` needs before any model can load."
-        correct: true
-      - text: "It uploads each classification result to a remote server for logging."
-        correct: false
-        feedback: "Check whether `startQVACProvider()` does anything with results, versus setting up the backend."
   - id: why-model-intentionally-small
     text: "What lets the bundled MobileNetV3-Small classifier run in tens of milliseconds on a single CPU core?"
     answers:
@@ -67,12 +52,9 @@ We're going to add one more image-based capability, separate from generation.
 
 Image classification takes an image and returns one or more category labels with confidence scores. The SDK includes a small bundled MobileNetV3-Small model that produces three classes: `food`, `report`, `other`. It's useful for routing (which model to invoke), filtering (does this image contain X?), and tagging at scale.
 
-The flow is similar to the other capabilities. The full lifecycle, with the provider started, the model loaded, the function called, and the provider stopped.
-
-Booting the provider is required before any model loads. The classification model is bundled in the addon, so `loadModel` takes no `modelSrc`:
+The flow is similar to the other capabilities: load the model, call the function, unload the model. The classification model is bundled in the addon, so `loadModel` takes no `modelSrc`:
 
 ```ts
-await startQVACProvider({});
 const modelId = await loadModel({ modelType: "ggml-classification" });
 ```
 
@@ -87,11 +69,10 @@ for (const { label, confidence } of results) {
 }
 ```
 
-Cleanup means freeing the model and shutting the provider back down. Both are explicit so the next caller doesn't see a half-running backend. You would clean up like so:
+Cleanup means freeing the model, same as any other capability:
 
 ```ts
 await unloadModel({ modelId });
-await stopQVACProvider();
 ```
 
 The notable difference from other lessons: `loadModel` takes no `modelSrc`. The classification model is bundled inside the `@qvac/classification-ggml` addon; the registry download step other lessons use doesn't apply here. The `modelType: "ggml-classification"` flag tells the SDK which addon to route through.

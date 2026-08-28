@@ -627,26 +627,6 @@ export const CURRICULUM: CurriculumChapter[] = [
   },
   {
     num: '18',
-    label: 'Delegated inference',
-    slug: 'delegated-inference',
-    href: chapterHref('delegated-inference'),
-    lessons: [
-      {
-        num: '01',
-        title: 'Run a delegated-inference provider',
-        slug: 'delegated-provider',
-        href: lessonHref('delegated-inference', 'delegated-provider'),
-      },
-      {
-        num: '02',
-        title: 'Connect a delegated-inference consumer',
-        slug: 'delegated-consumer',
-        href: lessonHref('delegated-inference', 'delegated-consumer'),
-      },
-    ],
-  },
-  {
-    num: '19',
     label: 'Music generation',
     slug: 'music-generation',
     href: chapterHref('music-generation'),
