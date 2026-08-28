@@ -37,6 +37,39 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
   }
 }
 
+# Mic lessons spawn ffmpeg directly and it's never bundled, so self-heal it
+# like pnpm above rather than a hard Need() (no install-ffmpeg.exe to point
+# users at). Confined to the user's own profile: unlike provision.ps1, this
+# script never runs elevated.
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+  Write-Host "-> Installing ffmpeg..."
+  $FfmpegDest = Join-Path $env:LOCALAPPDATA 'tether-academy\ffmpeg'
+  try {
+    $FfmpegWork = Join-Path ([System.IO.Path]::GetTempPath()) "tether-academy-ffmpeg-$([System.IO.Path]::GetRandomFileName())"
+    New-Item -ItemType Directory -Path $FfmpegWork | Out-Null
+    $FfZip = Join-Path $FfmpegWork 'ffmpeg.zip'
+    Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $FfZip -UseBasicParsing
+    Expand-Archive -Path $FfZip -DestinationPath $FfmpegWork -Force
+    $FfBinSrc = Get-ChildItem -Path $FfmpegWork -Recurse -Directory -Filter 'bin' | Select-Object -First 1
+    New-Item -ItemType Directory -Force -Path $FfmpegDest | Out-Null
+    Copy-Item -Path (Join-Path $FfBinSrc.FullName '*') -Destination $FfmpegDest -Force
+    Remove-Item -Recurse -Force $FfmpegWork -ErrorAction SilentlyContinue
+    # Confirm the extracted binary actually runs before trusting it on PATH;
+    # a truncated download or a zip layout change should fail loudly here,
+    # not resurface later as a confusing mic-lesson error.
+    & (Join-Path $FfmpegDest 'ffmpeg.exe') -version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ffmpeg.exe -version exited $LASTEXITCODE" }
+    $UserPath = [System.Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($UserPath -notlike "*$FfmpegDest*") {
+      [System.Environment]::SetEnvironmentVariable('Path', "$UserPath;$FfmpegDest", 'User')
+    }
+    $env:Path = "$env:Path;$FfmpegDest"
+  } catch {
+    Write-Error "ffmpeg install failed: $($_.Exception.Message). Install it manually from https://www.gyan.dev/ffmpeg/builds/ (essentials build) and put it on PATH, then retry."
+    exit 1
+  }
+}
+
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "tether-academy-bootstrap-$([System.IO.Path]::GetRandomFileName())"
 New-Item -ItemType Directory -Path $TmpDir | Out-Null
 
