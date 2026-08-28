@@ -367,6 +367,15 @@ async function runAcademy(parsed, evt) {
     });
   }
 
+  // The chat model's worker holds the registry corestore's fd-lock open for
+  // as long as it's loaded, so a lesson's own model load only gets a 10s
+  // budget to win it. Release it first.
+  try {
+    await chat.unload();
+  } catch (err) {
+    console.warn('[tether-academy-desktop] chat.unload before lesson run failed:', err?.message ?? err);
+  }
+
   await ensureLessonModels(parsed.source, sendChunk);
 
   const run = runExample({
