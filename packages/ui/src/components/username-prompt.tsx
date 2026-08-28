@@ -17,6 +17,16 @@ const VALID_RE = /^[a-zA-Z0-9_-]+$/;
 
 type DesktopStep = 'choose' | 'backup' | 'recover' | 'username';
 
+function WindowsFirewallNote() {
+  return (
+    <p className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs text-canvas-foreground">
+      <Shield className="mt-0.5 size-3.5 shrink-0 text-sky-400" />
+      Windows may ask for firewall permission for background peer-to-peer networking used
+      by model downloads and device pairing. Click Allow to continue.
+    </p>
+  );
+}
+
 /** Sign-in modal. Desktop: create identity, recover with phrase, or continue if already set up. Web: local display name only. */
 export function UsernamePrompt() {
   const hydrated = useUserHydrated();
@@ -43,6 +53,9 @@ export function UsernamePrompt() {
   const [identityLabel, setIdentityLabel] = useState<string | null>(null);
   // Username already signed to this identity, if any (sign-out doesn't clear it).
   const [existingUsername, setExistingUsername] = useState<string | null>(null);
+  // confirmBackup()/recover() both start the P2P mesh, and Windows shows its
+  // own firewall prompt for that unprompted; this note gets ahead of it.
+  const [isWindows, setIsWindows] = useState(false);
 
   // Latest-value ref: lets refreshIdentity read mnemonic without a dep.
   const mnemonicRef = useRef<string | null>(null);
@@ -84,6 +97,13 @@ export function UsernamePrompt() {
     const desktop = typeof window !== 'undefined' && !!window.academy?.identity;
     setIsDesktop(desktop);
   }, [promptOpen]);
+
+  useEffect(() => {
+    void window.academy?.device
+      ?.info()
+      .then((info) => setIsWindows(info.os === 'windows'))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!promptOpen || !isDesktop) return;
@@ -497,6 +517,7 @@ export function UsernamePrompt() {
                 <pre className="whitespace-pre-wrap rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-3 font-mono text-xs leading-relaxed text-canvas-foreground">
                   {mnemonic}
                 </pre>
+                {isWindows ? <WindowsFirewallNote /> : null}
               </>
             ) : (
               <p className="text-sm text-canvas-muted-foreground">
@@ -556,6 +577,7 @@ export function UsernamePrompt() {
               className="w-full rounded-md border border-canvas-border bg-canvas px-3 py-2 font-mono text-xs text-canvas-foreground"
               placeholder="word1 word2 …"
             />
+            {isWindows ? <WindowsFirewallNote /> : null}
             <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
