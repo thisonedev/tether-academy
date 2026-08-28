@@ -7,7 +7,7 @@ export { CurriculumStrip } from './components/curriculum-strip.js';
 export { HelpPanel } from './components/help-panel.js';
 export { LessonConsole } from './components/lesson-console.js';
 export type { ConsoleEntry, LessonConsoleLessonContext } from './components/lesson-console.js';
-export { CopyButton, InstallCommand } from './components/install-command.js';
+export { CopyButton, InstallCommand, InstallCommandTabs } from './components/install-command.js';
 export { LessonCompleteModal } from './components/lesson-complete-modal.js';
 export { LessonWorkspace } from './components/lesson-workspace.js';
 export type {

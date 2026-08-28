@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { InstallCommand } from '../../../../../packages/ui/src/components/install-command';
+import { InstallCommandTabs } from '../../../../../packages/ui/src/components/install-command';
 
 declare global {
   interface Window {
@@ -23,7 +23,10 @@ declare global {
   }
 }
 
-const INSTALL_COMMAND = 'curl -fsSL https://tetheracademy.cc/install.sh | sh';
+const INSTALL_TABS = [
+  { label: 'macOS / Linux', command: 'curl -fsSL https://tetheracademy.cc/install.sh | sh' },
+  { label: 'Windows', command: 'irm https://tetheracademy.cc/install.ps1 | iex' },
+];
 const THISONEDEV_URL = 'https://github.com/thisonedev';
 
 const CARD_GLOW =
@@ -115,9 +118,9 @@ function InstallRow() {
   return (
     <section id="install" className="max-w-lg space-y-3 scroll-mt-24">
       <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
-        Install via Terminal (macOS / Linux)
+        Install via Terminal
       </p>
-      <InstallCommand command={INSTALL_COMMAND} />
+      <InstallCommandTabs tabs={INSTALL_TABS} />
     </section>
   );
 }
@@ -269,11 +272,11 @@ function ExploreCta() {
             Ready to build on the p2p stack?
           </h3>
           <p className="mt-2 text-sm leading-relaxed text-canvas-muted-foreground sm:text-base max-w-xl">
-            One install command. Runs offline. No accounts, no cloud. macOS and Linux.
+            One install command. Runs offline. No accounts, no cloud.
           </p>
         </div>
         <div className="min-w-0 w-full md:w-auto">
-          <InstallCommand command={INSTALL_COMMAND} />
+          <InstallCommandTabs tabs={INSTALL_TABS} />
         </div>
       </div>
     </div>

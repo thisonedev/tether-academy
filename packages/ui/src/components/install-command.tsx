@@ -86,3 +86,50 @@ export function InstallCommand({ command, className }: InstallCommandProps) {
     </div>
   );
 }
+
+interface InstallTab {
+  label: string;
+  command: string;
+}
+
+interface InstallCommandTabsProps {
+  tabs: InstallTab[];
+  className?: string;
+}
+
+/**
+ * Segmented OS tabs above an InstallCommand. Each tab swaps the command
+ * shown below it; tab state is local, so multiple instances on one page
+ * (e.g. hero + bottom CTA) don't share selection.
+ */
+export function InstallCommandTabs({ tabs, className }: InstallCommandTabsProps) {
+  const [active, setActive] = useState(0);
+
+  return (
+    <div className={className}>
+      <div
+        role="tablist"
+        aria-label="Install command by OS"
+        className="mb-2 inline-flex gap-0.5 rounded-lg border border-canvas-border bg-canvas-muted p-0.5"
+      >
+        {tabs.map((tab, index) => (
+          <button
+            key={tab.label}
+            type="button"
+            role="tab"
+            aria-selected={index === active}
+            onClick={() => setActive(index)}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              index === active
+                ? 'border border-canvas-border bg-canvas text-emerald-400'
+                : 'border border-transparent text-canvas-muted-foreground hover:text-canvas-foreground'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <InstallCommand command={tabs[active].command} />
+    </div>
+  );
+}
