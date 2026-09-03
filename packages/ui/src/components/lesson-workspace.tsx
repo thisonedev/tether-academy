@@ -104,7 +104,10 @@ const PASSING_MATCH_STATUSES = new Set<MatchStatus>(['match', 'complete', 'diffe
 
 // Streamed chunks rarely align with real newlines; treating each chunk as
 // its own line inserted a phantom space at every boundary once rejoined.
-function appendChunkLines(lines: OutputLine[], chunk: { stream: OutputLine['stream']; data: string }): OutputLine[] {
+export function appendChunkLines(
+  lines: OutputLine[],
+  chunk: { stream: OutputLine['stream']; data: string },
+): OutputLine[] {
   const segments = chunk.data.split('\n');
   const last = lines[lines.length - 1];
   const merged =

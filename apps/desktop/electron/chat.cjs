@@ -365,12 +365,20 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
     systemPrompt = buildSystemPrompt(lessonKey, null, null, docsWereRequested);
   }
 
-  // Send only the last user turn when the window is tight, to keep the
-  // answer room bigger.
+  // Split what's left after the system prompt between the reply and prior turns, most
+  // recent first, so a conversation isn't forgotten the moment it goes past one exchange.
   const priorRoom = approxTokens(systemPrompt) + 50;
-  const answerBudget = Math.max(200, ctxWindow - priorRoom);
-  const userOnly = messages.length > 0 && messages[messages.length - 1]?.role === 'user';
-  const tail = userOnly ? messages.slice(-1) : messages.slice(-2);
+  const available = Math.max(0, ctxWindow - priorRoom);
+  const answerBudget = Math.max(200, Math.floor(available * 0.6));
+  const historyBudget = Math.max(0, available - answerBudget);
+  const tail = [];
+  let historyUsed = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const cost = approxTokens(messages[i]?.content || '') + 4;
+    if (tail.length > 0 && historyUsed + cost > historyBudget) break;
+    tail.unshift(messages[i]);
+    historyUsed += cost;
+  }
 
   const history = [
     { role: 'system', content: systemPrompt },
@@ -434,8 +442,11 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
       }
       // Replace the whole assistant message with the paragraph-split version
       // so the user sees visible paragraph breaks even when the model emits
-      // one run-on paragraph.
-      const finalised = splitParagraphs(stripTurnRecap(assembled));
+      // one run-on paragraph. Skipped outside lessons: splitParagraphs collapses
+      // every internal newline, which shreds Markdown tables and lists that the
+      // no-lesson system prompt explicitly asked the model to produce.
+      const recapStripped = stripTurnRecap(assembled);
+      const finalised = lessonKey ? splitParagraphs(recapStripped) : recapStripped;
       if (finalised.length > 0 && (finalised !== assembled || !emitted)) {
         emitChunk({ requestId, delta: finalised, done: false, replace: true, error: null });
       }

@@ -1,9 +1,11 @@
 'use client';
 
 import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
-import { Check, Loader2, Settings, Square, X } from 'lucide-react';
+import { Check, Download, Loader2, Settings, Square, X } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { isAiBotModel } from './ai-bot-models.js';
 import { type LessonProgress, parseProgress } from './lesson-progress.js';
 import { formatSeconds, type RunSegment, type StageSegment, splitStages } from './lesson-stages.js';
@@ -52,6 +54,8 @@ export interface LessonConsoleProps {
   entries: ConsoleEntry[];
   /** Cancels an in-progress AI review for the given check entry. */
   onStopCheck: (entryId: string) => void;
+  /** "Check answer" only exists in a lesson; playground has no such thing to mention. */
+  emptyStateText?: string;
 }
 
 /** Chat input for the bottom nav. Owns the model/send/stop machinery;
@@ -202,6 +206,11 @@ const CARD_INSET = 1 + 6;
 // a monospace glyph reads low in its line box because of the ascender space.
 const DOT_OFFSET = 5;
 
+// Set by PlaygroundConsole only: too many parallel rails read as noise once a
+// workflow's output panel isn't also carrying a lesson's stage-by-stage trace.
+// Lesson chat never provides it, so the rail there is unchanged.
+export const RailHiddenContext = createContext(false);
+
 function RailRow({
   dot,
   card = false,
@@ -212,6 +221,14 @@ function RailRow({
   card?: boolean;
   children: React.ReactNode;
 }) {
+  const railHidden = useContext(RailHiddenContext);
+  if (railHidden) {
+    return (
+      <div style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
+        {card ? <div className={RAIL_CARD}>{children}</div> : children}
+      </div>
+    );
+  }
   return (
     <div className={RAIL_ROW} style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
       {/* Padding, not margin: the line spans the full row, so spacing a row
@@ -246,12 +263,25 @@ function TimelineRow({
   );
 }
 
-export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
+export function LessonConsole({ entries, onStopCheck, emptyStateText }: LessonConsoleProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Streaming keeps this effect firing every chunk; pinning unconditionally made it
+  // impossible to scroll up mid-reply. Stick to the bottom only while already there.
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    const onScroll = () => {
+      stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !stickToBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
   }, [entries]);
 
@@ -269,7 +299,7 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
       className="min-h-0 flex-1 space-y-0 overflow-x-hidden overflow-y-auto p-3 text-sm"
       style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}
     >
-      {entries.length === 0 ? <EmptyState /> : null}
+      {entries.length === 0 ? <EmptyState text={emptyStateText} /> : null}
       {entries.map((entry) => {
         if (entry.kind === 'chat-user') return <UserBubble key={entry.id} content={entry.content} />;
         if (entry.kind === 'chat-assistant') {
@@ -630,9 +660,79 @@ function UserBubble({ content }: { content: string }) {
   );
 }
 
+// Set only by PlaygroundConsole, so a table can offer "export this table"
+// without lesson chat, which never sets it, growing the same button.
+export const TableExportContext = createContext<((markdown: string) => void) | null>(null);
+// The raw markdown behind the bubble currently rendering, so the table
+// component below can slice out its own source instead of re-serializing.
+const RawMarkdownContext = createContext('');
+
+// Prose stays stripped to plain sentences server-side; GFM tables survive that
+// stripping (it never touches `|`), so this is the one construct worth parsing.
+const MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="wrap-anywhere whitespace-pre-wrap first:mt-0 last:mb-0 my-1.5">{children}</p>
+  ),
+  // biome-ignore lint/suspicious/noExplicitAny: react-markdown's mdast `node` prop
+  table: ({ children, node }: { children?: React.ReactNode; node?: any }) => {
+    const onExportTable = useContext(TableExportContext);
+    const raw = useContext(RawMarkdownContext);
+    const source =
+      onExportTable && node?.position && raw ? raw.slice(node.position.start.offset, node.position.end.offset) : null;
+    return (
+      <div className="group relative my-1.5">
+        {source ? (
+          <button
+            type="button"
+            onClick={() => source && onExportTable?.(source)}
+            className="absolute top-1.5 right-1.5 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+            title="Export this table"
+            aria-label="Export this table"
+          >
+            <Download className="size-3" />
+          </button>
+        ) : null}
+        <div className="overflow-x-auto rounded-md">
+          <table className="w-full border-collapse text-left">{children}</table>
+        </div>
+      </div>
+    );
+  },
+  thead: ({ children }: { children?: React.ReactNode }) => (
+    <thead className="bg-canvas-muted text-canvas-muted-foreground">{children}</thead>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="border border-canvas-border px-2 py-1 font-semibold">{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="border border-canvas-border px-2 py-1">{children}</td>
+  ),
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="rounded bg-canvas-muted px-1 py-0.5">{children}</code>
+  ),
+  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+    <a href={href} target="_blank" rel="noreferrer" className="text-emerald-400 underline">
+      {children}
+    </a>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="my-1.5 list-decimal space-y-0.5 pl-6">{children}</ol>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="my-1.5 list-disc space-y-0.5 pl-6">{children}</ul>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => <li className="pl-0.5">{children}</li>,
+};
+
 function AssistantBubble({ content }: { content: string }) {
   return (
-    <p className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-muted-foreground">{content}</p>
+    <div className="wrap-anywhere font-mono text-xs text-canvas-muted-foreground">
+      <RawMarkdownContext.Provider value={content}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+          {content}
+        </ReactMarkdown>
+      </RawMarkdownContext.Provider>
+    </div>
   );
 }
 
@@ -755,10 +855,10 @@ function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
   );
 }
 
-function EmptyState() {
+function EmptyState({ text }: { text?: string }) {
   return (
     <p className="px-1 py-1 font-mono text-xs text-canvas-muted-foreground">
-      Run your code, check your answer, or ask a question. It all shows up here.
+      {text ?? 'Run your code, check your answer, or ask a question. It all shows up here.'}
     </p>
   );
 }

@@ -33,9 +33,12 @@ function trimDocs(docs) {
 // `docsWereRequested` is true when the turn looked like an API/doc question.
 function buildSystemPrompt(lessonKey, lessonContext, docs, docsWereRequested = false) {
   // Without a name, "what is your name?" degenerates into a role description.
+  // Only the lesson branch is pinned to coding: outside a lesson (e.g. the
+  // playground, building an automation with no code involved), the same
+  // "coding buddy" framing made a plain "what's up" turn into "coding away".
   const base = lessonKey
     ? `You are Jerry, a warm coding buddy in a Tether Academy lesson (chapter: ${lessonKey.chapter}, lesson: ${lessonKey.lesson}). You crack the occasional light joke, react to how the user is feeling, and talk like a friend who knows this stuff, not a doc-reading machine.`
-    : 'You are Jerry, a warm coding buddy inside Tether Academy, an interactive code school. You crack the occasional light joke, react to how the user is feeling, and talk like a person who knows this stuff, not a doc-reading machine.';
+    : 'You are Jerry, a warm, helpful assistant inside Tether Academy. You crack the occasional light joke, react to how the user is feeling, and talk like a friend who knows this stuff, not a doc-reading machine.';
   // Trim even at the cap so a smaller preset can't overflow from the
   // reference alone.
   const lesson = trimLessonContext(lessonContext);
@@ -46,7 +49,9 @@ function buildSystemPrompt(lessonKey, lessonContext, docs, docsWereRequested = f
     'For real questions, answer the actual question. Use the references below only when the question is about the lesson or SDK. Do not invent facts, dates, or versions. Do not deflect ("let me know if you would like help") or pivot away.',
     'Ignore typos. Do not mention or correct spelling.',
     'Return only the answer. No reasoning, no analysis, no think blocks.',
-    'Plain text only. No Markdown, asterisks, backticks, headings, bullets, numbered lists, or code blocks. Short paragraphs separated by a blank line; one idea per paragraph.',
+    lessonKey
+      ? 'Plain text only. No Markdown, asterisks, backticks, headings, bullets, numbered lists, or code blocks. Short paragraphs separated by a blank line; one idea per paragraph.'
+      : 'When the answer is naturally a list, use a numbered or bulleted Markdown list. When it is naturally tabular, use a Markdown table. Otherwise write short plain paragraphs, one idea per paragraph.',
     'Avoid filler like "ships", "lands", or "this matters".',
     lesson ? `LESSON REFERENCE:\n${lesson}` : '',
     reference

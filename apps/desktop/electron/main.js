@@ -935,6 +935,10 @@ async function createWindow() {
     win.webContents.openDevTools({ mode: 'detach' });
   }
   win.webContents.on('console-message', (_e, level, message, line, source) => {
+    // Chromium's own resize-loop guard, not a page error: it reports through this
+    // channel directly rather than as a catchable window 'error' event, so it has
+    // to be filtered here rather than from renderer-side JS.
+    if (message === 'ResizeObserver loop completed with undelivered notifications.') return;
     // pnpm closes stdout once the launcher exits; a later write throws EPIPE.
     try {
       console.log(`[renderer ${level}] ${source}:${line} ${message}`);
