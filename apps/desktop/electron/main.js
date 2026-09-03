@@ -643,13 +643,24 @@ handle('academy:chat:docs-refresh', async () => chat.docsRefresh());
 // Playground node credentials: named secrets a workflow JSON references by
 // name only. `get` (plaintext) is deliberately main-process-only, not
 // exposed over IPC, until a node actually needs to consume one.
-const playgroundCredentials = createPlaygroundCredentials(app.getPath('userData'));
-handle('academy:playground-credentials:list', async () => playgroundCredentials.list());
+//
+// Lazily created, not at module load: this touches Electron's `safeStorage`
+// (Keychain on macOS), which Electron's own docs say is only safe to call
+// after app.whenReady(). Module load runs long before that; calling it here
+// destabilized identity's own later safeStorage access. Every other
+// safeStorage consumer in this file (see `getSafeStorage` passed into
+// createPearEnd) is already deferred the same way for the same reason.
+let _playgroundCredentials = null;
+function playgroundCredentials() {
+  if (!_playgroundCredentials) _playgroundCredentials = createPlaygroundCredentials(app.getPath('userData'));
+  return _playgroundCredentials;
+}
+handle('academy:playground-credentials:list', async () => playgroundCredentials().list());
 handle('academy:playground-credentials:set', async ({ name, value }) => {
-  playgroundCredentials.set(name, value);
+  playgroundCredentials().set(name, value);
   return true;
 });
-handle('academy:playground-credentials:delete', async (name) => playgroundCredentials.delete(name));
+handle('academy:playground-credentials:delete', async (name) => playgroundCredentials().delete(name));
 
 handle('academy:translate', async ({ text, language }) => translate.translateText(text, language));
 handle('academy:rag-search', async ({ documents, query, topK }) => rag.searchDocuments(documents, query, topK));

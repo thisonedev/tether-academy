@@ -15,7 +15,7 @@ import {
   useNodesState,
   useReactFlow,
 } from '@xyflow/react';
-import { Download, Eraser, FolderOpen, History, Loader2, Pencil, Play, RotateCcw, Save, Square } from 'lucide-react';
+import { Clock, Download, Eraser, FolderOpen, History, Loader2, Pencil, Play, RotateCcw, Save, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConsoleEntry } from './lesson-console.js';
 import { PlaygroundConfigPopup } from './playground-config-popup.js';
@@ -161,6 +161,24 @@ function PlaygroundCanvas() {
     document.addEventListener('mousedown', onPointerDown);
     return () => document.removeEventListener('mousedown', onPointerDown);
   }, [showRecent]);
+  // Session-only, never saved with the workflow: while enabled, fires a run on
+  // the interval below. No OS-level scheduling (the app has to stay open),
+  // a deliberate scope call, not an oversight; see playground.md.
+  const [schedule, setSchedule] = useState<{ enabled: boolean; intervalMinutes: number }>({
+    enabled: false,
+    intervalMinutes: 60,
+  });
+  const [showSchedule, setShowSchedule] = useState(false);
+  const scheduleMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showSchedule) return;
+    function onPointerDown(e: MouseEvent) {
+      if (e.target instanceof Node && scheduleMenuRef.current?.contains(e.target)) return;
+      setShowSchedule(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [showSchedule]);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -457,6 +475,21 @@ function PlaygroundCanvas() {
       stopRequestedRef.current = false;
     }
   }, [nodes, edges, runAgentNode, translateNode, confirmNode, searchDocumentsNode]);
+
+  // Read inside the interval tick below instead of closing over `isRunning`
+  // directly, so a long run in progress doesn't get a second one stacked on top.
+  const isRunningRef = useRef(false);
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
+  useEffect(() => {
+    if (!schedule.enabled) return;
+    const ms = Math.max(1, schedule.intervalMinutes) * 60_000;
+    const id = window.setInterval(() => {
+      if (!isRunningRef.current) void handleRun();
+    }, ms);
+    return () => window.clearInterval(id);
+  }, [schedule.enabled, schedule.intervalMinutes, handleRun]);
 
   // Stops the queue between nodes; the in-flight agent call itself only stops
   // early when the desktop bridge can actually abort it.
@@ -849,6 +882,50 @@ function PlaygroundCanvas() {
                     </button>
                   ))
                 )}
+              </div>
+            )}
+          </div>
+          <div className="relative shrink-0" ref={scheduleMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowSchedule((prev) => !prev)}
+              className={`rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground ${
+                schedule.enabled ? 'text-emerald-400' : 'text-canvas-muted-foreground'
+              }`}
+              title={schedule.enabled ? `Running every ${schedule.intervalMinutes} min` : 'Run on a schedule'}
+              aria-label="Run on a schedule"
+            >
+              <Clock className="size-4" />
+            </button>
+            {showSchedule && (
+              <div className="absolute right-0 top-full z-10 mt-1 w-56 rounded-md border border-canvas-border bg-canvas p-3 shadow-lg">
+                <label className="flex items-center gap-2 text-xs text-canvas-foreground">
+                  Run every
+                  <input
+                    type="number"
+                    min={1}
+                    value={schedule.intervalMinutes}
+                    onChange={(e) =>
+                      setSchedule((prev) => ({ ...prev, intervalMinutes: Math.max(1, Number(e.target.value) || 1) }))
+                    }
+                    className="w-14 rounded border border-canvas-border bg-canvas px-1.5 py-0.5 font-mono text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+                  />
+                  min
+                </label>
+                <p className="mt-1.5 text-[10px] text-canvas-muted-foreground">
+                  Only while this tab stays open; not saved with the workflow.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSchedule((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                  className={`mt-2 w-full rounded px-2 py-1 text-xs font-semibold transition-colors ${
+                    schedule.enabled
+                      ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                      : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+                  }`}
+                >
+                  {schedule.enabled ? 'Stop scheduled runs' : 'Start scheduled runs'}
+                </button>
               </div>
             )}
           </div>
