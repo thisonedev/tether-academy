@@ -65,14 +65,14 @@ export const PlaygroundFlowNode = memo(function PlaygroundFlowNode({
     return (
       <div
         className={`relative flex size-12 items-center justify-center rounded-full border bg-canvas-muted font-mono shadow-lg ${
-          selected ? 'border-fuchsia-400 ring-2 ring-fuchsia-400/40' : 'border-emerald-400/40'
+          selected ? 'border-fuchsia-400 ring-2 ring-fuchsia-400/40' : 'border-red-300/40'
         }`}
       >
-        <div className="absolute -top-6 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-emerald-400/40 bg-emerald-400/15 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-400">
+        <div className="absolute -top-6 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-red-300/40 bg-red-300/15 px-2.5 py-0.5 text-[10px] font-semibold text-red-300">
           <Zap className="size-3" strokeWidth={2.5} />
           Trigger
         </div>
-        <Zap className="size-5 text-emerald-400" strokeWidth={2} />
+        <Zap className="size-5 text-red-300" strokeWidth={2} />
         <Handle
           type="source"
           position={Position.Bottom}

@@ -1,16 +1,19 @@
 import { IF_OPERATORS, IF_UNARY_OPERATORS } from './playground-table.js';
 import type { PlaygroundCategory, PlaygroundNodeKindDef } from './playground-types.js';
 
+// One color per chakra, root to crown: trigger/data/logic ground and shape the
+// run, ai-text/ai-voice/ai-media map to heart/throat/third-eye by what they
+// actually do (understand, speak, see), interface is the crown's outward reach.
 export const CATEGORY_CLASSES: Record<PlaygroundCategory, string> = {
-  trigger: 'text-emerald-400 bg-emerald-400/15 border-emerald-400/40',
-  conditions: 'text-amber-400 bg-amber-400/15 border-amber-400/40',
-  agent: 'text-fuchsia-400 bg-fuchsia-400/15 border-fuchsia-400/40',
-  'ai-text': 'text-orange-400 bg-orange-400/15 border-orange-400/40',
-  'ai-media': 'text-pink-400 bg-pink-400/15 border-pink-400/40',
-  'ai-voice': 'text-teal-400 bg-teal-400/15 border-teal-400/40',
-  data: 'text-sky-400 bg-sky-400/15 border-sky-400/40',
-  transform: 'text-violet-400 bg-violet-400/15 border-violet-400/40',
-  interface: 'text-amber-400 bg-amber-400/15 border-amber-400/40',
+  // red-300, not red-400: full-intensity red reads as an alarm/error color
+  // elsewhere in the app, too harsh for a category that's just "this starts things."
+  trigger: 'text-red-300 bg-red-300/15 border-red-300/40',
+  data: 'text-orange-400 bg-orange-400/15 border-orange-400/40',
+  logic: 'text-amber-400 bg-amber-400/15 border-amber-400/40',
+  'ai-text': 'text-green-400 bg-green-400/15 border-green-400/40',
+  'ai-voice': 'text-blue-400 bg-blue-400/15 border-blue-400/40',
+  'ai-media': 'text-indigo-400 bg-indigo-400/15 border-indigo-400/40',
+  interface: 'text-violet-400 bg-violet-400/15 border-violet-400/40',
 };
 
 function defaultsFrom(fields: PlaygroundNodeKindDef['fields']) {
@@ -107,7 +110,7 @@ const askDocFields: PlaygroundNodeKindDef['fields'] = [
 export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   start: {
     kind: 'start',
-    label: 'When you click Run',
+    label: 'Start a workflow',
     category: 'trigger',
     input: null,
     output: 'flow',
@@ -126,7 +129,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   filter: {
     kind: 'filter',
     label: 'Filter rows',
-    category: 'transform',
+    category: 'logic',
     input: 'table',
     output: 'table',
     fields: filterFields,
@@ -135,7 +138,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   'ai-agent': {
     kind: 'ai-agent',
     label: 'Ask an AI agent',
-    category: 'agent',
+    category: 'ai-text',
     input: 'table',
     // Always a reply string at runtime, table input or not: declaring 'table' here
     // let this connect into Filter/Iterate even though it can never feed them real rows.
@@ -146,7 +149,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   if: {
     kind: 'if',
     label: 'If',
-    category: 'conditions',
+    category: 'logic',
     // Accepts a table (splits rows by column) or plain text (tests the whole
     // string), whichever is actually wired in; see the run loop for the branch.
     input: 'any',
@@ -158,7 +161,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   'iterate-ai': {
     kind: 'iterate-ai',
     label: 'Iterate',
-    category: 'conditions',
+    category: 'logic',
     input: 'table',
     output: 'table',
     fields: iterateFields,
@@ -183,5 +186,98 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'value',
     fields: askDocFields,
     defaultFields: defaultsFrom(askDocFields),
+  },
+  // Inactive: placeholders so every chakra color actually shows up in the palette,
+  // not real node kinds yet. No handler in the run loop, can't be dragged onto
+  // the canvas (see PlaygroundPalette), and never claim otherwise.
+  'text-to-speech': {
+    kind: 'text-to-speech',
+    label: 'Text to speech',
+    category: 'ai-voice',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  'speech-to-text': {
+    kind: 'speech-to-text',
+    label: 'Speech to text',
+    category: 'ai-voice',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  'generate-image': {
+    kind: 'generate-image',
+    label: 'Generate image',
+    category: 'ai-media',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  'generate-video': {
+    kind: 'generate-video',
+    label: 'Generate video',
+    category: 'ai-media',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  'generate-music': {
+    kind: 'generate-music',
+    label: 'Generate music',
+    category: 'ai-media',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  ocr: {
+    kind: 'ocr',
+    label: 'Read text from image',
+    category: 'ai-media',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  'classify-image': {
+    kind: 'classify-image',
+    label: 'Classify image',
+    category: 'ai-media',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  'search-documents': {
+    kind: 'search-documents',
+    label: 'Search documents',
+    category: 'ai-text',
+    input: 'any',
+    output: 'value',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
+  },
+  'ask-confirmation': {
+    kind: 'ask-confirmation',
+    label: 'Ask for confirmation',
+    category: 'interface',
+    input: 'any',
+    output: 'bool',
+    fields: [],
+    defaultFields: () => ({}),
+    inactive: true,
   },
 };

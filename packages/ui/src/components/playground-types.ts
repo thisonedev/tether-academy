@@ -3,16 +3,9 @@
 // on a plain string equally.
 export type PlaygroundDataType = 'table' | 'value' | 'bool' | 'flow' | 'any';
 
-export type PlaygroundCategory =
-  | 'trigger'
-  | 'conditions'
-  | 'agent'
-  | 'ai-text'
-  | 'ai-media'
-  | 'ai-voice'
-  | 'data'
-  | 'transform'
-  | 'interface';
+// Exactly 7, one per chakra (root to crown, red to violet): trigger, data, logic,
+// ai-text, ai-voice, ai-media, interface. See CATEGORY_CLASSES for the color map.
+export type PlaygroundCategory = 'trigger' | 'data' | 'logic' | 'ai-text' | 'ai-voice' | 'ai-media' | 'interface';
 
 export interface PlaygroundFieldDef {
   key: string;
@@ -36,6 +29,9 @@ export interface PlaygroundNodeKindDef {
   dualOutput?: boolean;
   fields: PlaygroundFieldDef[];
   defaultFields: () => Record<string, string>;
+  /** Shows in the palette (dimmed, for real color coverage) but can't be dragged
+   *  onto the canvas: a placeholder for a category with no working node yet. */
+  inactive?: boolean;
 }
 
 export interface PlaygroundNodeData extends Record<string, unknown> {

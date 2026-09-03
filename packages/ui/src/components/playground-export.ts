@@ -112,12 +112,12 @@ export function buildConversationMarkdown(entries: ConsoleEntry[]): string {
   return parts.join('\n\n');
 }
 
-function slugFilename(name: string, ext: string): string {
+export function slugFilename(name: string, ext: string): string {
   const safe = name.trim().replace(/[^a-z0-9-_ ]/gi, '').replace(/\s+/g, '-').toLowerCase();
   return `${safe || 'export'}.${ext}`;
 }
 
-function downloadBlob(blob: Blob, filename: string): void {
+export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

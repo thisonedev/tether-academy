@@ -15,7 +15,12 @@ export interface PlaygroundSelectProps {
  *  restyled once open, so this is a real dropdown built to match the app's dark theme. */
 export function PlaygroundSelect({ id, value, options, onChange }: PlaygroundSelectProps) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  // `bottom`-anchored when opening up, so the browser sizes the box from its real
+  // content: a `top` position pre-computed for a full 224px list left a visible
+  // gap above a short one, which never actually grew that tall.
+  const [pos, setPos] = useState<{ left: number; width: number; top?: number; bottom?: number } | null>(
+    null,
+  );
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -23,13 +28,14 @@ export function PlaygroundSelect({ id, value, options, onChange }: PlaygroundSel
     if (!open) return;
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
-    // A long list (49 languages) opening downward with no room below ran off
-    // the bottom of the screen with no way to scroll the page itself.
     const maxListHeight = 224; // matches max-h-56 below
     const openUpward =
       window.innerHeight - rect.bottom < maxListHeight + 8 && rect.top > maxListHeight + 8;
-    const top = openUpward ? rect.top - maxListHeight - 4 : rect.bottom + 4;
-    setPos({ left: rect.left, top, width: rect.width });
+    setPos(
+      openUpward
+        ? { left: rect.left, width: rect.width, bottom: window.innerHeight - rect.top + 4 }
+        : { left: rect.left, width: rect.width, top: rect.bottom + 4 },
+    );
   }, [open]);
 
   useLayoutEffect(() => {
@@ -65,7 +71,7 @@ export function PlaygroundSelect({ id, value, options, onChange }: PlaygroundSel
             ref={listRef}
             data-playground-select-menu
             className="fixed z-[60] max-h-56 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-muted py-1 shadow-xl"
-            style={{ left: pos.left, top: pos.top, width: pos.width }}
+            style={{ left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom }}
           >
             {options.map((o) => (
               <button

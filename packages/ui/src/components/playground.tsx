@@ -15,7 +15,7 @@ import {
   useNodesState,
   useReactFlow,
 } from '@xyflow/react';
-import { Download, Eraser, Loader2, Pencil, Play, RotateCcw, Square } from 'lucide-react';
+import { Download, Eraser, FolderOpen, Loader2, Pencil, Play, RotateCcw, Save, Square } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConsoleEntry } from './lesson-console.js';
 import { PlaygroundConfigPopup } from './playground-config-popup.js';
@@ -36,6 +36,15 @@ import {
   tableToMarkdown,
 } from './playground-table.js';
 import type { PlaygroundNodeData } from './playground-types.js';
+import {
+  canPickFiles,
+  downloadWorkflow,
+  parseWorkflowFile,
+  pickOpenHandle,
+  pickSaveHandle,
+  type SavedWorkflow,
+  writeWorkflowToHandle,
+} from './playground-workflow.js';
 
 declare global {
   interface Window {
@@ -113,12 +122,23 @@ function initialGraph(): { nodes: Node<PlaygroundNodeData>[]; edges: Edge[] } {
 }
 const INITIAL_GRAPH = initialGraph();
 
+// Navigating to another route (Courses, etc.) unmounts PlaygroundCanvas entirely,
+// so its own useState would reset on return. Held here instead, outside React, it
+// survives that; it only clears on an actual page reload/app restart, or Reset.
+let heldState: {
+  nodes: Node<PlaygroundNodeData>[];
+  edges: Edge[];
+  entries: ConsoleEntry[];
+  workflowName: string;
+  fileHandle: FileSystemFileHandle | null;
+} | null = null;
+
 function PlaygroundCanvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<PlaygroundNodeData>>(
-    INITIAL_GRAPH.nodes,
+    heldState?.nodes ?? INITIAL_GRAPH.nodes,
   );
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(INITIAL_GRAPH.edges);
-  const [entries, setEntries] = useState<ConsoleEntry[]>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(heldState?.edges ?? INITIAL_GRAPH.edges);
+  const [entries, setEntries] = useState<ConsoleEntry[]>(heldState?.entries ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rejectMessage, setRejectMessage] = useState<string | null>(null);
   const [exportRequest, setExportRequest] = useState<{
@@ -127,7 +147,7 @@ function PlaygroundCanvas() {
     formats: ExportFormat[];
     defaultName: string;
   } | null>(null);
-  const [workflowName, setWorkflowName] = useState('Untitled workflow');
+  const [workflowName, setWorkflowName] = useState(heldState?.workflowName ?? 'Untitled workflow');
   const [editingName, setEditingName] = useState(false);
   const commitWorkflowName = useCallback(() => {
     setWorkflowName((prev) => prev.trim() || 'Untitled workflow');
@@ -194,7 +214,7 @@ function PlaygroundCanvas() {
     (e: React.DragEvent) => {
       e.preventDefault();
       const kind = e.dataTransfer.getData(PLAYGROUND_DRAG_MIME);
-      if (!kind || !PLAYGROUND_NODE_DEFS[kind]) return;
+      if (!kind || !PLAYGROUND_NODE_DEFS[kind] || PLAYGROUND_NODE_DEFS[kind].inactive) return;
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
       const node = makeNode(kind, position.x - 100, position.y - 30);
       setNodes((nds) => [...nds, node]);
@@ -296,7 +316,11 @@ function PlaygroundCanvas() {
     const resolveContent = (fields: Record<string, string>, manualKey: string, id: string) => {
       if ((fields.source ?? 'Custom text') !== 'Previous result') return fields[manualKey] ?? '';
       const upstream = readInput(id);
-      return typeof upstream === 'string' ? upstream : undefined;
+      // An empty string counts as "nothing usable" too: an upstream If with zero
+      // matching items still writes '', which otherwise sailed through as real
+      // content and got sent to the model with nothing to actually act on.
+      if (typeof upstream !== 'string' || upstream.trim().length === 0) return undefined;
+      return upstream;
     };
     const pushTable = (content: string) =>
       setEntries((prev) => [
@@ -363,7 +387,7 @@ function PlaygroundCanvas() {
             const { yes, no } = splitLines(input, operator, value);
             nodeOutputs.set(outKey(id, 'true'), yes.join('\n'));
             nodeOutputs.set(outKey(id, 'false'), no.join('\n'));
-            pushTable(`${yes.length} of ${yes.length + no.length} line(s) matched the condition.`);
+            pushTable(`${yes.length} of ${yes.length + no.length} item(s) matched the condition.`);
             continue;
           }
           const { yes, no } = splitTable(input, node.data.fields.column ?? '', operator, value);
@@ -422,7 +446,7 @@ function PlaygroundCanvas() {
               {
                 kind: 'run',
                 id: nextEntryId(),
-                lines: [{ stream: 'stderr', line: 'No previous text result connected in.' }],
+                lines: [{ stream: 'stderr', line: 'Nothing to work with: the previous step produced no text, or nothing is connected.' }],
                 status: 'err',
               },
             ]);
@@ -444,7 +468,7 @@ function PlaygroundCanvas() {
               {
                 kind: 'run',
                 id: nextEntryId(),
-                lines: [{ stream: 'stderr', line: 'No previous text result connected in.' }],
+                lines: [{ stream: 'stderr', line: 'Nothing to work with: the previous step produced no text, or nothing is connected.' }],
                 status: 'err',
               },
             ]);
@@ -499,14 +523,123 @@ function PlaygroundCanvas() {
     if (requestId) void window.academy?.chat?.stop?.(requestId).catch(() => undefined);
   }, [isRunning]);
 
+  // The file this workflow was last opened from or saved to, if the browser
+  // supports keeping one: lets Save write back to it directly, no picker, the
+  // same "Ctrl+S just saves" behavior every other app has.
+  const fileHandleRef = useRef<FileSystemFileHandle | null>(heldState?.fileHandle ?? null);
+
+  // Keeps heldState current every render so it's there to read from if this
+  // component unmounts (navigating away) and remounts (navigating back).
+  useEffect(() => {
+    heldState = { nodes, edges, entries, workflowName, fileHandle: fileHandleRef.current };
+  });
+
   const handleReset = useCallback(() => {
     const fresh = initialGraph();
     setNodes(fresh.nodes);
     setEdges(fresh.edges);
     setSelectedId(null);
     setEntries([]);
+    fileHandleRef.current = null;
     centerOnStart(200);
   }, [setNodes, setEdges, centerOnStart]);
+
+  const buildWorkflow = useCallback(
+    (): SavedWorkflow => ({
+      version: 1,
+      name: workflowName,
+      nodes: nodes.map((n) => ({ id: n.id, kind: n.data.kind, x: n.position.x, y: n.position.y, fields: n.data.fields })),
+      edges: edges.map((e) => ({
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? null,
+        targetHandle: e.targetHandle ?? null,
+      })),
+    }),
+    [nodes, edges, workflowName],
+  );
+
+  const handleSaveWorkflow = useCallback(async () => {
+    const workflow = buildWorkflow();
+    if (!canPickFiles()) {
+      downloadWorkflow(workflow);
+      return;
+    }
+    if (!fileHandleRef.current) {
+      const handle = await pickSaveHandle(`${workflow.name || 'workflow'}.json`);
+      if (!handle) return; // user cancelled the picker
+      fileHandleRef.current = handle;
+    }
+    await writeWorkflowToHandle(fileHandleRef.current, workflow);
+  }, [buildWorkflow]);
+
+  // Loaded nodes get fresh ids through the same nextId() every other node uses,
+  // never the saved ones directly: those came from a different session's counter
+  // and could collide with whatever's minted next in this one.
+  const applyLoadedWorkflow = useCallback(
+    (workflow: ReturnType<typeof parseWorkflowFile>) => {
+      const idMap = new Map(workflow.nodes.map((n) => [n.id, nextId()]));
+      setNodes(
+        workflow.nodes.map((n) => ({
+          id: idMap.get(n.id) ?? n.id,
+          type: 'playgroundNode',
+          position: { x: n.x, y: n.y },
+          data: { kind: n.kind, fields: n.fields },
+        })),
+      );
+      setEdges(
+        workflow.edges
+          .filter((e) => idMap.has(e.source) && idMap.has(e.target))
+          .map((e) => ({
+            id: nextId(),
+            source: idMap.get(e.source) ?? '',
+            target: idMap.get(e.target) ?? '',
+            sourceHandle: e.sourceHandle,
+            targetHandle: e.targetHandle,
+          })),
+      );
+      setWorkflowName(workflow.name);
+      setSelectedId(null);
+      setEntries([]);
+      centerOnStart(0);
+    },
+    [setNodes, setEdges, centerOnStart],
+  );
+
+  const handleLoadWorkflowFile = useCallback(
+    async (file: File) => {
+      try {
+        applyLoadedWorkflow(parseWorkflowFile(await file.text()));
+      } catch (err) {
+        setRejectMessage(err instanceof Error ? err.message : 'Could not read that file.');
+        window.setTimeout(() => setRejectMessage(null), 2600);
+      }
+    },
+    [applyLoadedWorkflow],
+  );
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const handleOpenWorkflow = useCallback(async () => {
+    if (!canPickFiles()) {
+      fileInputRef.current?.click();
+      return;
+    }
+    const handle = await pickOpenHandle();
+    if (!handle) return; // user cancelled the picker
+    await handleLoadWorkflowFile(await handle.getFile());
+    fileHandleRef.current = handle;
+  }, [handleLoadWorkflowFile]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void handleSaveWorkflow();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleSaveWorkflow]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
   const anchorEl = selectedId
@@ -631,6 +764,40 @@ function PlaygroundCanvas() {
           >
             <Download className="size-4" />
           </button>
+          <button
+            type="button"
+            onClick={() => void handleSaveWorkflow()}
+            disabled={isRunning}
+            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            title="Save workflow (⌘S)"
+            aria-label="Save workflow"
+          >
+            <Save className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleOpenWorkflow()}
+            disabled={isRunning}
+            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            title="Open workflow"
+            aria-label="Open workflow"
+          >
+            <FolderOpen className="size-4" />
+          </button>
+          {/* Fallback only: used when the File System Access API isn't available.
+           *  Extension-based accept, not a MIME type, which some OS file dialogs
+           *  don't reliably match against an actual .json file's reported type. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) void handleLoadWorkflowFile(file);
+            }}
+          />
         </div>
       </div>
 
