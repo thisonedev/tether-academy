@@ -15,33 +15,27 @@ import {
   useNodesState,
   useReactFlow,
 } from '@xyflow/react';
-import { Download, Eraser, FolderOpen, Loader2, Pencil, Play, RotateCcw, Save, Square } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Download, Eraser, FolderOpen, History, Loader2, Pencil, Play, RotateCcw, Save, Square } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConsoleEntry } from './lesson-console.js';
 import { PlaygroundConfigPopup } from './playground-config-popup.js';
 import { PlaygroundConsole } from './playground-console.js';
 import { buildConversationMarkdown, type ExportFormat } from './playground-export.js';
 import { PlaygroundExportPopup } from './playground-export-popup.js';
 import { PlaygroundFlowNode } from './playground-flow-node.js';
-import { PLAYGROUND_NODE_DEFS } from './playground-node-defs.js';
+import { BRANCH_COLOR, PLAYGROUND_NODE_DEFS, PORT_COLOR } from './playground-node-defs.js';
 import { PLAYGROUND_DRAG_MIME, PlaygroundPalette } from './playground-palette.js';
-import {
-  filterTable,
-  type PlaygroundTable,
-  parseCsv,
-  rowToMarkdown,
-  SAMPLE_EXPENSES_CSV,
-  splitLines,
-  splitTable,
-  tableToMarkdown,
-} from './playground-table.js';
+import type { PlaygroundTable } from './playground-table.js';
 import type { PlaygroundNodeData } from './playground-types.js';
 import {
   canPickFiles,
   downloadWorkflow,
+  listRecentWorkflows,
   parseWorkflowFile,
   pickOpenHandle,
   pickSaveHandle,
+  recordRecentWorkflow,
+  type RecentWorkflowEntry,
   type SavedWorkflow,
   writeWorkflowToHandle,
 } from './playground-workflow.js';
@@ -60,8 +54,6 @@ const VIEWPORT_ZOOM = 0.85;
 // below the node keeps it horizontally centered but pushes it up into the
 // canvas's upper portion instead of dead center.
 const VIEWPORT_FOCUS = { x: START_NODE_CENTER.x, y: START_NODE_CENTER.y + 220 };
-// Bounds real per-row model calls until there's hardware-aware concurrency in the engine.
-const MAX_ITERATE_ROWS = 5;
 const MIN_PANEL_WIDTH = 340;
 const DEFAULT_PANEL_WIDTH = 410;
 const MAX_PANEL_WIDTH = 720;
@@ -153,6 +145,20 @@ function PlaygroundCanvas() {
     setWorkflowName((prev) => prev.trim() || 'Untitled workflow');
     setEditingName(false);
   }, []);
+  // Loaded lazily (not on mount): reading localStorage during the initial render
+  // would differ between server and client and trip a hydration mismatch.
+  const [recentWorkflows, setRecentWorkflows] = useState<RecentWorkflowEntry[]>([]);
+  const [showRecent, setShowRecent] = useState(false);
+  const recentMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showRecent) return;
+    function onPointerDown(e: MouseEvent) {
+      if (e.target instanceof Node && recentMenuRef.current?.contains(e.target)) return;
+      setShowRecent(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [showRecent]);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -299,30 +305,21 @@ function PlaygroundCanvas() {
   );
 
   const [isRunning, setIsRunning] = useState(false);
+  // Which nodes' `run` reported an error on the run currently shown in the
+  // output feed; render-only, cleared at the start of every run and reset.
+  const [nodeErrors, setNodeErrors] = useState<Set<string>>(new Set());
+  // The loop never branches on `kind`: every node contract in PLAYGROUND_NODE_DEFS
+  // owns its own `run`, so a new node kind never touches this function.
   const handleRun = useCallback(async () => {
     stopRequestedRef.current = false;
     setStopRequested(false);
     setIsRunning(true);
+    setNodeErrors(new Set());
     // Keyed by `nodeId::sourceHandle` (handle is '' for single-output nodes), rebuilt fresh
     // each run. Holds a table or plain text, whichever the upstream node actually produced.
     const nodeOutputs = new Map<string, PlaygroundTable | string>();
     const outKey = (nodeId: string, handle?: string | null) => `${nodeId}::${handle ?? ''}`;
-    const readInput = (id: string) => {
-      const edge = edges.find((e) => e.target === id);
-      return edge ? nodeOutputs.get(outKey(edge.source, edge.sourceHandle)) : undefined;
-    };
-    // The explicit "Text source" choice, not a connection silently overriding what
-    // was typed: undefined means "Previous result" was picked but nothing usable is wired in.
-    const resolveContent = (fields: Record<string, string>, manualKey: string, id: string) => {
-      if ((fields.source ?? 'Custom text') !== 'Previous result') return fields[manualKey] ?? '';
-      const upstream = readInput(id);
-      // An empty string counts as "nothing usable" too: an upstream If with zero
-      // matching items still writes '', which otherwise sailed through as real
-      // content and got sent to the model with nothing to actually act on.
-      if (typeof upstream !== 'string' || upstream.trim().length === 0) return undefined;
-      return upstream;
-    };
-    const pushTable = (content: string) =>
+    const pushResult = (content: string) =>
       setEntries((prev) => [
         ...prev,
         { kind: 'chat-assistant', id: nextEntryId(), content, streaming: false },
@@ -332,179 +329,53 @@ function PlaygroundCanvas() {
         if (stopRequestedRef.current) break;
         const node = nodes.find((n) => n.id === id);
         if (!node || node.data.kind === 'start') continue;
-
-        if (node.data.kind === 'read-file') {
-          const table = parseCsv(SAMPLE_EXPENSES_CSV);
-          nodeOutputs.set(outKey(id), table);
-          const sheet = node.data.fields.sheet || 'Expenses';
-          pushTable(`**${sheet}** — ${table.rows.length} rows\n\n${tableToMarkdown(table)}`);
-          continue;
-        }
-
-        if (node.data.kind === 'filter') {
-          const input = readInput(id);
-          if (!input || typeof input === 'string') {
-            setEntries((prev) => [
-              ...prev,
-              {
-                kind: 'run',
-                id: nextEntryId(),
-                lines: [{ stream: 'stderr', line: 'No table connected in.' }],
-                status: 'err',
-              },
-            ]);
-            continue;
-          }
-          const filtered = filterTable(
-            input,
-            node.data.fields.column ?? '',
-            node.data.fields.value ?? '',
-          );
-          nodeOutputs.set(outKey(id), filtered);
-          pushTable(
-            `${filtered.rows.length} of ${input.rows.length} rows match\n\n${tableToMarkdown(filtered)}`,
-          );
-          continue;
-        }
-
-        if (node.data.kind === 'if') {
-          const input = readInput(id);
-          if (input === undefined) {
-            setEntries((prev) => [
-              ...prev,
-              {
-                kind: 'run',
-                id: nextEntryId(),
-                lines: [{ stream: 'stderr', line: 'Nothing connected in.' }],
-                status: 'err',
-              },
-            ]);
-            continue;
-          }
-          const operator = node.data.fields.operator ?? 'equals';
-          const value = node.data.fields.value ?? '';
-          if (typeof input === 'string') {
-            const { yes, no } = splitLines(input, operator, value);
-            nodeOutputs.set(outKey(id, 'true'), yes.join('\n'));
-            nodeOutputs.set(outKey(id, 'false'), no.join('\n'));
-            pushTable(`${yes.length} of ${yes.length + no.length} item(s) matched the condition.`);
-            continue;
-          }
-          const { yes, no } = splitTable(input, node.data.fields.column ?? '', operator, value);
-          nodeOutputs.set(outKey(id, 'true'), yes);
-          nodeOutputs.set(outKey(id, 'false'), no);
-          pushTable(`${yes.rows.length} row(s) yes, ${no.rows.length} row(s) no`);
-          continue;
-        }
-
-        if (node.data.kind === 'iterate-ai') {
-          const input = readInput(id);
-          if (!input || typeof input === 'string') {
-            setEntries((prev) => [
-              ...prev,
-              {
-                kind: 'run',
-                id: nextEntryId(),
-                lines: [{ stream: 'stderr', line: 'No table connected in.' }],
-                status: 'err',
-              },
-            ]);
-            continue;
-          }
-          const task = node.data.fields.task ?? '';
-          const rows = input.rows.slice(0, MAX_ITERATE_ROWS);
-          if (input.rows.length > MAX_ITERATE_ROWS) {
-            setEntries((prev) => [
-              ...prev,
-              {
-                kind: 'run',
-                id: nextEntryId(),
-                lines: [
-                  {
-                    stream: 'stdout',
-                    line: `Capped to the first ${MAX_ITERATE_ROWS} of ${input.rows.length} rows.`,
-                  },
-                ],
-                status: 'ok',
-              },
-            ]);
-          }
-          for (const row of rows) {
-            if (stopRequestedRef.current) break;
-            await runAgentNode(`${task}\n\nRow: ${rowToMarkdown(input.headers, row)}`);
-          }
-          continue;
-        }
-
-        if (node.data.kind === 'translate') {
-          // Asks the general chat model, not the SDK's dedicated per-language Bergamot
-          // NMT models: there's no `academy.translate` bridge exposed to the renderer yet.
-          const text = resolveContent(node.data.fields, 'text', id);
-          if (text === undefined) {
-            setEntries((prev) => [
-              ...prev,
-              {
-                kind: 'run',
-                id: nextEntryId(),
-                lines: [{ stream: 'stderr', line: 'Nothing to work with: the previous step produced no text, or nothing is connected.' }],
-                status: 'err',
-              },
-            ]);
-            continue;
-          }
-          const language = node.data.fields.language || 'Spanish';
-          const reply = await runAgentNode(
-            `Translate the following text to ${language}. Reply with only the translation, nothing else.\n\n${text}`,
-          );
-          nodeOutputs.set(outKey(id), reply);
-          continue;
-        }
-
-        if (node.data.kind === 'ask-doc') {
-          const document = resolveContent(node.data.fields, 'document', id);
-          if (document === undefined) {
-            setEntries((prev) => [
-              ...prev,
-              {
-                kind: 'run',
-                id: nextEntryId(),
-                lines: [{ stream: 'stderr', line: 'Nothing to work with: the previous step produced no text, or nothing is connected.' }],
-                status: 'err',
-              },
-            ]);
-            continue;
-          }
-          const question = node.data.fields.question ?? '';
-          const reply = await runAgentNode(
-            `Answer the question using only the text below. If the answer isn't in the text, say so.\n\nText:\n${document}\n\nQuestion: ${question}`,
-          );
-          nodeOutputs.set(outKey(id), reply);
-          continue;
-        }
-
-        if (node.data.kind !== 'ai-agent') {
+        // Closes over this node's id so a failing `run` marks the node that
+        // actually failed, not whichever one happens to run next.
+        const pushRunLine = (status: 'ok' | 'err', line: string) => {
           setEntries((prev) => [
             ...prev,
-            {
-              kind: 'run',
-              id: nextEntryId(),
-              lines: [{ stream: 'stdout', line: '[not wired up yet]' }],
-              status: 'ok',
-            },
+            { kind: 'run', id: nextEntryId(), lines: [{ stream: status === 'err' ? 'stderr' : 'stdout', line }], status },
           ]);
+          if (status === 'err') setNodeErrors((prev) => new Set(prev).add(id));
+        };
+        const def = PLAYGROUND_NODE_DEFS[node.data.kind];
+        if (!def?.run) {
+          pushRunLine('ok', '[not wired up yet]');
           continue;
         }
-
-        const upstream = readInput(id);
-        const task = node.data.fields.task ?? '';
-        const prompt =
-          typeof upstream === 'string'
-            ? `${task}\n\nInput: ${upstream}`
-            : upstream
-              ? `${task}\n\nData:\n${tableToMarkdown(upstream)}`
-              : task;
-        const reply = await runAgentNode(prompt);
-        nodeOutputs.set(outKey(id), reply);
+        const readInput = () => {
+          const edge = edges.find((e) => e.target === id);
+          return edge ? nodeOutputs.get(outKey(edge.source, edge.sourceHandle)) : undefined;
+        };
+        // The explicit "Text source" choice, not a connection silently overriding what
+        // was typed: undefined means "Previous result" was picked but nothing usable is wired in.
+        const resolveContent = (manualKey: string) => {
+          const fields = node.data.fields;
+          if ((fields.source ?? 'Custom text') !== 'Previous result') return fields[manualKey] ?? '';
+          const upstream = readInput();
+          // An empty string counts as "nothing usable" too: an upstream If with zero
+          // matching items still writes '', which otherwise sailed through as real
+          // content and got sent to the model with nothing to actually act on.
+          if (typeof upstream !== 'string' || upstream.trim().length === 0) return undefined;
+          return upstream;
+        };
+        try {
+          await def.run({
+            fields: node.data.fields,
+            readInput,
+            resolveContent,
+            pushResult,
+            pushRunLine,
+            runAgent: runAgentNode,
+            setOutput: (value, handle) => nodeOutputs.set(outKey(id, handle), value),
+            stopRequested: () => stopRequestedRef.current,
+          });
+        } catch (err) {
+          // A handler that throws instead of reporting through pushRunLine (an
+          // unexpected exception, not a modeled "nothing connected" case) still
+          // has to mark its node and keep the run going for whatever's left.
+          pushRunLine('err', err instanceof Error ? err.message : 'This step failed.');
+        }
       }
     } finally {
       setIsRunning(false);
@@ -540,6 +411,8 @@ function PlaygroundCanvas() {
     setEdges(fresh.edges);
     setSelectedId(null);
     setEntries([]);
+    setNodeErrors(new Set());
+    setWorkflowName('Untitled workflow');
     fileHandleRef.current = null;
     centerOnStart(200);
   }, [setNodes, setEdges, centerOnStart]);
@@ -563,6 +436,7 @@ function PlaygroundCanvas() {
     const workflow = buildWorkflow();
     if (!canPickFiles()) {
       downloadWorkflow(workflow);
+      recordRecentWorkflow(workflow);
       return;
     }
     if (!fileHandleRef.current) {
@@ -571,6 +445,7 @@ function PlaygroundCanvas() {
       fileHandleRef.current = handle;
     }
     await writeWorkflowToHandle(fileHandleRef.current, workflow);
+    recordRecentWorkflow(workflow);
   }, [buildWorkflow]);
 
   // Loaded nodes get fresh ids through the same nextId() every other node uses,
@@ -601,6 +476,8 @@ function PlaygroundCanvas() {
       setWorkflowName(workflow.name);
       setSelectedId(null);
       setEntries([]);
+      setNodeErrors(new Set());
+      recordRecentWorkflow(workflow);
       centerOnStart(0);
     },
     [setNodes, setEdges, centerOnStart],
@@ -609,6 +486,9 @@ function PlaygroundCanvas() {
   const handleLoadWorkflowFile = useCallback(
     async (file: File) => {
       try {
+        // Cleared, not carried over: a stale handle from whatever was open before
+        // would otherwise let Ctrl+S silently overwrite the wrong file.
+        fileHandleRef.current = null;
         applyLoadedWorkflow(parseWorkflowFile(await file.text()));
       } catch (err) {
         setRejectMessage(err instanceof Error ? err.message : 'Could not read that file.');
@@ -629,6 +509,18 @@ function PlaygroundCanvas() {
     await handleLoadWorkflowFile(await handle.getFile());
     fileHandleRef.current = handle;
   }, [handleLoadWorkflowFile]);
+
+  // The Recent list holds JSON snapshots, not file handles (see recordRecentWorkflow),
+  // so reopening one is a fresh in-memory copy: Ctrl/Cmd+S after this asks where to
+  // save, same as any workflow that's never been saved to a file yet.
+  const handleOpenRecent = useCallback(
+    (entry: RecentWorkflowEntry) => {
+      fileHandleRef.current = null;
+      applyLoadedWorkflow(entry.workflow);
+      setShowRecent(false);
+    },
+    [applyLoadedWorkflow],
+  );
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -657,6 +549,28 @@ function PlaygroundCanvas() {
     (e) =>
       (e.kind === 'chat-assistant' && e.content.trim().length > 0) ||
       (e.kind === 'run' && e.lines.some((l) => l.line.trim().length > 0)),
+  );
+
+  // `hasError` is render-only (never saved with the workflow); only the errored
+  // nodes get a new object, so the rest of the canvas doesn't re-render.
+  const nodesForRender = useMemo(
+    () => (nodeErrors.size === 0 ? nodes : nodes.map((n) => (nodeErrors.has(n.id) ? { ...n, data: { ...n.data, hasError: true } } : n))),
+    [nodes, nodeErrors],
+  );
+
+  // A wire is colored by what's actually flowing through it, the same way its
+  // ports already are: the branch color for If's Yes/No, otherwise the source
+  // node's declared output type. Derived at render, not stored on the edge, so
+  // it stays correct even after the source node's kind changes underneath it.
+  const edgesForRender = useMemo(
+    () =>
+      edges.map((e) => {
+        const branch = e.sourceHandle === 'true' || e.sourceHandle === 'false' ? e.sourceHandle : null;
+        const outputType = PLAYGROUND_NODE_DEFS[nodes.find((n) => n.id === e.source)?.data.kind ?? '']?.output;
+        const color = branch ? BRANCH_COLOR[branch] : (outputType && PORT_COLOR[outputType]) || PORT_COLOR.flow;
+        return { ...e, style: { stroke: color } };
+      }),
+    [edges, nodes],
   );
 
   return (
@@ -784,6 +698,40 @@ function PlaygroundCanvas() {
           >
             <FolderOpen className="size-4" />
           </button>
+          <div className="relative shrink-0" ref={recentMenuRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setRecentWorkflows(listRecentWorkflows());
+                setShowRecent((prev) => !prev);
+              }}
+              disabled={isRunning}
+              className="rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title="Recent workflows"
+              aria-label="Recent workflows"
+            >
+              <History className="size-4" />
+            </button>
+            {showRecent && (
+              <div className="absolute right-0 top-full z-10 mt-1 w-64 rounded-md border border-canvas-border bg-canvas py-1 shadow-lg">
+                {recentWorkflows.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-canvas-muted-foreground">No recent workflows yet.</div>
+                ) : (
+                  recentWorkflows.map((entry) => (
+                    <button
+                      key={`${entry.name}-${entry.savedAt}`}
+                      type="button"
+                      onClick={() => handleOpenRecent(entry)}
+                      className="flex w-full flex-col items-start px-3 py-1.5 text-left text-xs hover:bg-canvas-muted"
+                    >
+                      <span className="truncate font-mono text-canvas-foreground">{entry.name}</span>
+                      <span className="text-canvas-muted-foreground">{new Date(entry.savedAt).toLocaleString()}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           {/* Fallback only: used when the File System Access API isn't available.
            *  Extension-based accept, not a MIME type, which some OS file dialogs
            *  don't reliably match against an actual .json file's reported type. */}
@@ -804,8 +752,8 @@ function PlaygroundCanvas() {
       <div ref={rowRef} className="flex min-h-0 flex-1">
         <div ref={wrapperRef} className="relative h-full min-w-0 flex-1">
           <ReactFlow
-            nodes={nodes}
-            edges={edges}
+            nodes={nodesForRender}
+            edges={edgesForRender}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

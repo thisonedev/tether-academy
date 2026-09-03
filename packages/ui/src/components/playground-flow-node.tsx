@@ -13,7 +13,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { type CSSProperties, memo } from 'react';
-import { CATEGORY_CLASSES, PLAYGROUND_NODE_DEFS } from './playground-node-defs.js';
+import { BRANCH_COLOR, CATEGORY_CLASSES, PLAYGROUND_NODE_DEFS, PORT_COLOR } from './playground-node-defs.js';
 import type { PlaygroundDataType, PlaygroundNodeData } from './playground-types.js';
 
 const KIND_ICON: Record<string, LucideIcon> = {
@@ -24,14 +24,6 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'iterate-ai': Repeat,
   translate: Languages,
   'ask-doc': FileQuestion,
-};
-
-const PORT_COLOR: Record<PlaygroundDataType, string> = {
-  table: '#6ea8fe',
-  value: '#5eead4',
-  bool: '#ff8fa3',
-  flow: '#9aa4af',
-  any: '#c9a5f8',
 };
 
 function portStyle(type: PlaygroundDataType): CSSProperties {
@@ -48,8 +40,7 @@ function portStyle(type: PlaygroundDataType): CSSProperties {
 // A branch's color says "which path," not "what data type": a dashed `any`-colored
 // circle on both Yes and No looked identical and read as a stuck loading spinner.
 function branchPortStyle(branch: 'true' | 'false'): CSSProperties {
-  const color = branch === 'true' ? '#34d399' : '#fb7185';
-  return { background: '#1b1f27', border: `2px solid ${color}`, width: 12, height: 12, borderRadius: '50%' };
+  return { background: '#1b1f27', border: `2px solid ${BRANCH_COLOR[branch]}`, width: 12, height: 12, borderRadius: '50%' };
 }
 
 export const PlaygroundFlowNode = memo(function PlaygroundFlowNode({
@@ -85,7 +76,11 @@ export const PlaygroundFlowNode = memo(function PlaygroundFlowNode({
   return (
     <div
       className={`relative flex w-52 items-center gap-3 rounded-2xl border bg-canvas-muted px-3.5 py-3 font-mono shadow-lg ${
-        selected ? 'border-fuchsia-400 ring-2 ring-fuchsia-400/40' : 'border-canvas-border'
+        data.hasError
+          ? 'border-red-500 ring-2 ring-red-500/40'
+          : selected
+            ? 'border-fuchsia-400 ring-2 ring-fuchsia-400/40'
+            : 'border-canvas-border'
       }`}
     >
       {def.input && (

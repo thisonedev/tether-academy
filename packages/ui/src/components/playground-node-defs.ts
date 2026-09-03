@@ -1,5 +1,31 @@
-import { IF_OPERATORS, IF_UNARY_OPERATORS } from './playground-table.js';
-import type { PlaygroundCategory, PlaygroundNodeKindDef } from './playground-types.js';
+import {
+  filterTable,
+  IF_OPERATORS,
+  IF_UNARY_OPERATORS,
+  parseCsv,
+  rowToMarkdown,
+  SAMPLE_EXPENSES_CSV,
+  splitLines,
+  splitTable,
+  tableToMarkdown,
+} from './playground-table.js';
+import type { PlaygroundCategory, PlaygroundDataType, PlaygroundNodeKindDef } from './playground-types.js';
+
+// Bounds real per-row model calls until there's hardware-aware concurrency in the engine.
+const MAX_ITERATE_ROWS = 5;
+
+// Shared with the wire color a port's edges render in (see playground.tsx), so a
+// port and everything plugged into it read as the same color, not just the endpoint.
+export const PORT_COLOR: Record<PlaygroundDataType, string> = {
+  table: '#6ea8fe',
+  value: '#5eead4',
+  bool: '#ff8fa3',
+  flow: '#9aa4af',
+  any: '#c9a5f8',
+};
+
+// A branch's color says "which path," not "what data type" (see branchPortStyle).
+export const BRANCH_COLOR = { true: '#34d399', false: '#fb7185' } as const;
 
 // One color per chakra, root to crown: trigger/data/logic ground and shape the
 // run, ai-text/ai-voice/ai-media map to heart/throat/third-eye by what they
@@ -125,6 +151,12 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'table',
     fields: readFileFields,
     defaultFields: defaultsFrom(readFileFields),
+    async run(ctx) {
+      const table = parseCsv(SAMPLE_EXPENSES_CSV);
+      ctx.setOutput(table);
+      const sheet = ctx.fields.sheet || 'Expenses';
+      ctx.pushResult(`**${sheet}** — ${table.rows.length} rows\n\n${tableToMarkdown(table)}`);
+    },
   },
   filter: {
     kind: 'filter',
@@ -134,6 +166,16 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'table',
     fields: filterFields,
     defaultFields: defaultsFrom(filterFields),
+    async run(ctx) {
+      const input = ctx.readInput();
+      if (!input || typeof input === 'string') {
+        ctx.pushRunLine('err', 'No table connected in.');
+        return;
+      }
+      const filtered = filterTable(input, ctx.fields.column ?? '', ctx.fields.value ?? '');
+      ctx.setOutput(filtered);
+      ctx.pushResult(`${filtered.rows.length} of ${input.rows.length} rows match\n\n${tableToMarkdown(filtered)}`);
+    },
   },
   'ai-agent': {
     kind: 'ai-agent',
@@ -145,18 +187,49 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'value',
     fields: agentFields,
     defaultFields: defaultsFrom(agentFields),
+    async run(ctx) {
+      const upstream = ctx.readInput();
+      const task = ctx.fields.task ?? '';
+      const prompt =
+        typeof upstream === 'string'
+          ? `${task}\n\nInput: ${upstream}`
+          : upstream
+            ? `${task}\n\nData:\n${tableToMarkdown(upstream)}`
+            : task;
+      ctx.setOutput(await ctx.runAgent(prompt));
+    },
   },
   if: {
     kind: 'if',
     label: 'If',
     category: 'logic',
     // Accepts a table (splits rows by column) or plain text (tests the whole
-    // string), whichever is actually wired in; see the run loop for the branch.
+    // string), whichever is actually wired in; see `run` for the branch.
     input: 'any',
     output: 'any',
     dualOutput: true,
     fields: ifFields,
     defaultFields: defaultsFrom(ifFields),
+    async run(ctx) {
+      const input = ctx.readInput();
+      if (input === undefined) {
+        ctx.pushRunLine('err', 'Nothing connected in.');
+        return;
+      }
+      const operator = ctx.fields.operator ?? 'equals';
+      const value = ctx.fields.value ?? '';
+      if (typeof input === 'string') {
+        const { yes, no } = splitLines(input, operator, value);
+        ctx.setOutput(yes.join('\n'), 'true');
+        ctx.setOutput(no.join('\n'), 'false');
+        ctx.pushResult(`${yes.length} of ${yes.length + no.length} item(s) matched the condition.`);
+        return;
+      }
+      const { yes, no } = splitTable(input, ctx.fields.column ?? '', operator, value);
+      ctx.setOutput(yes, 'true');
+      ctx.setOutput(no, 'false');
+      ctx.pushResult(`${yes.rows.length} row(s) yes, ${no.rows.length} row(s) no`);
+    },
   },
   'iterate-ai': {
     kind: 'iterate-ai',
@@ -166,6 +239,22 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'table',
     fields: iterateFields,
     defaultFields: defaultsFrom(iterateFields),
+    async run(ctx) {
+      const input = ctx.readInput();
+      if (!input || typeof input === 'string') {
+        ctx.pushRunLine('err', 'No table connected in.');
+        return;
+      }
+      const task = ctx.fields.task ?? '';
+      const rows = input.rows.slice(0, MAX_ITERATE_ROWS);
+      if (input.rows.length > MAX_ITERATE_ROWS) {
+        ctx.pushRunLine('ok', `Capped to the first ${MAX_ITERATE_ROWS} of ${input.rows.length} rows.`);
+      }
+      for (const row of rows) {
+        if (ctx.stopRequested()) break;
+        await ctx.runAgent(`${task}\n\nRow: ${rowToMarkdown(input.headers, row)}`);
+      }
+    },
   },
   translate: {
     kind: 'translate',
@@ -177,6 +266,24 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'value',
     fields: translateFields,
     defaultFields: defaultsFrom(translateFields),
+    async run(ctx) {
+      // Asks the general chat model, not the SDK's dedicated per-language Bergamot
+      // NMT models: there's no `academy.translate` bridge exposed to the renderer yet.
+      const text = ctx.resolveContent('text');
+      if (text === undefined) {
+        ctx.pushRunLine(
+          'err',
+          "Nothing to work with: the previous step produced no text, or nothing is connected.",
+        );
+        return;
+      }
+      const language = ctx.fields.language || 'Spanish';
+      ctx.setOutput(
+        await ctx.runAgent(
+          `Translate the following text to ${language}. Reply with only the translation, nothing else.\n\n${text}`,
+        ),
+      );
+    },
   },
   'ask-doc': {
     kind: 'ask-doc',
@@ -186,6 +293,22 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'value',
     fields: askDocFields,
     defaultFields: defaultsFrom(askDocFields),
+    async run(ctx) {
+      const document = ctx.resolveContent('document');
+      if (document === undefined) {
+        ctx.pushRunLine(
+          'err',
+          "Nothing to work with: the previous step produced no text, or nothing is connected.",
+        );
+        return;
+      }
+      const question = ctx.fields.question ?? '';
+      ctx.setOutput(
+        await ctx.runAgent(
+          `Answer the question using only the text below. If the answer isn't in the text, say so.\n\nText:\n${document}\n\nQuestion: ${question}`,
+        ),
+      );
+    },
   },
   // Inactive: placeholders so every chakra color actually shows up in the palette,
   // not real node kinds yet. No handler in the run loop, can't be dragged onto
