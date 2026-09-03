@@ -27,6 +27,18 @@ export const PORT_COLOR: Record<PlaygroundDataType, string> = {
 // A branch's color says "which path," not "what data type" (see branchPortStyle).
 export const BRANCH_COLOR = { true: '#34d399', false: '#fb7185' } as const;
 
+// Shared by isValidConnection (a dragged wire) and the inline "+" on a wire
+// (a node inserted into an existing one), so the two never disagree about
+// what's allowed to plug into what.
+export function typesCompatible(
+  outType: PlaygroundDataType | null | undefined,
+  inType: PlaygroundDataType | null | undefined,
+): boolean {
+  // 'flow' carries no data, so it fits any socket: a trigger just means "run this
+  // next." 'any' accepts or forwards whichever type actually shows up.
+  return outType != null && (outType === inType || outType === 'flow' || inType === 'any' || outType === 'any');
+}
+
 // One color per chakra, root to crown: trigger/data/logic ground and shape the
 // run, ai-text/ai-voice/ai-media map to heart/throat/third-eye by what they
 // actually do (understand, speak, see), interface is the crown's outward reach.
@@ -129,6 +141,19 @@ const askDocFields: PlaygroundNodeKindDef['fields'] = [
     hiddenWhen: (fields) => !usesCustomText(fields),
   },
   { key: 'question', label: 'Question', type: 'text' },
+];
+const confirmFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'message', label: 'Message to show', type: 'text' },
+];
+const searchDocsFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'source', label: 'Document source', type: 'select', options: INPUT_SOURCE_OPTIONS },
+  {
+    key: 'documents',
+    label: 'Documents (one per line)',
+    type: 'textarea',
+    hiddenWhen: (fields) => !usesCustomText(fields),
+  },
+  { key: 'query', label: 'Search query', type: 'text' },
 ];
 
 /** One deterministic source, one deterministic transform, one AI-backed node. Every other
@@ -383,9 +408,27 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     category: 'ai-text',
     input: 'any',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: searchDocsFields,
+    defaultFields: defaultsFrom(searchDocsFields),
+    async run(ctx) {
+      const raw = ctx.resolveContent('documents');
+      if (raw === undefined) {
+        ctx.pushRunLine(
+          'err',
+          "Nothing to work with: the previous step produced no text, or nothing is connected.",
+        );
+        return;
+      }
+      const documents = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      if (documents.length === 0) {
+        ctx.pushRunLine('err', 'No documents to search: nothing but blank lines.');
+        return;
+      }
+      ctx.setOutput(await ctx.search(documents, ctx.fields.query ?? ''));
+    },
   },
   'ask-confirmation': {
     kind: 'ask-confirmation',
@@ -393,8 +436,14 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     category: 'interface',
     input: 'any',
     output: 'bool',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: confirmFields,
+    defaultFields: defaultsFrom(confirmFields),
+    async run(ctx) {
+      const message = ctx.fields.message || 'Continue?';
+      const yes = await ctx.confirm(message);
+      // 'bool' output as the same string representation `if`'s branch-splitting
+      // already produces; nothing in the engine has a distinct boolean runtime type.
+      ctx.setOutput(yes ? 'true' : 'false');
+    },
   },
 };

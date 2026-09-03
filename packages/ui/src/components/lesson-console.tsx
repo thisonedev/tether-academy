@@ -46,6 +46,13 @@ export type ConsoleEntry =
       aiVerdict?: MatchStatus;
       aiReason?: string;
       aiError?: string;
+    }
+  | {
+      kind: 'confirm';
+      id: string;
+      message: string;
+      /** null until answered; the playground's Ask-for-confirmation node awaits it. */
+      answer: 'yes' | 'no' | null;
     };
 
 /** Timeline panel. Typing happens in the separate `ChatInputBar`, which
@@ -56,6 +63,8 @@ export interface LessonConsoleProps {
   onStopCheck: (entryId: string) => void;
   /** "Check answer" only exists in a lesson; playground has no such thing to mention. */
   emptyStateText?: string;
+  /** Answers a pending 'confirm' entry. Lessons never produce one, so this is optional. */
+  onConfirm?: (entryId: string, answer: 'yes' | 'no') => void;
 }
 
 /** Chat input for the bottom nav. Owns the model/send/stop machinery;
@@ -263,7 +272,7 @@ function TimelineRow({
   );
 }
 
-export function LessonConsole({ entries, onStopCheck, emptyStateText }: LessonConsoleProps) {
+export function LessonConsole({ entries, onStopCheck, emptyStateText, onConfirm }: LessonConsoleProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Streaming keeps this effect firing every chunk; pinning unconditionally made it
   // impossible to scroll up mid-reply. Stick to the bottom only while already there.
@@ -315,6 +324,13 @@ export function LessonConsole({ entries, onStopCheck, emptyStateText }: LessonCo
         // No outer dot: the run's own stages carry theirs, and this one used
         // to appear the moment a run started, before it had anything to show.
         if (entry.kind === 'run') return <RunCard key={entry.id} entry={entry} />;
+        if (entry.kind === 'confirm') {
+          return (
+            <TimelineRow key={entry.id} state={entry.answer === null ? 'thinking' : 'success'} card>
+              <ConfirmCard entry={entry} onAnswer={(answer) => onConfirm?.(entry.id, answer)} />
+            </TimelineRow>
+          );
+        }
         return (
           <TimelineRow key={entry.id} state={checkState(entry)} card>
             <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
@@ -838,6 +854,42 @@ function CheckCard({
       {entry.ai === 'error' ? (
         <p className="mt-2 text-xs text-amber-400">{entry.aiError ?? 'AI review failed. Try Check Answer again.'}</p>
       ) : null}
+      </div>
+    </EntryCard>
+  );
+}
+
+function ConfirmCard({
+  entry,
+  onAnswer,
+}: {
+  entry: Extract<ConsoleEntry, { kind: 'confirm' }>;
+  onAnswer: (answer: 'yes' | 'no') => void;
+}) {
+  return (
+    <EntryCard label="confirm">
+      <div className="font-mono text-xs">
+        <p className="text-canvas-foreground">{entry.message}</p>
+        {entry.answer === null ? (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onAnswer('yes')}
+              className="rounded border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/25"
+            >
+              Yes
+            </button>
+            <button
+              type="button"
+              onClick={() => onAnswer('no')}
+              className="rounded border border-rose-400/40 bg-rose-400/15 px-2.5 py-1 font-semibold text-rose-400 transition-colors hover:bg-rose-400/25"
+            >
+              No
+            </button>
+          </div>
+        ) : (
+          <p className="mt-1.5 text-canvas-muted-foreground">Answered: {entry.answer === 'yes' ? 'Yes' : 'No'}</p>
+        )}
       </div>
     </EntryCard>
   );

@@ -76,6 +76,7 @@ const { getDeviceInfo } = require('./device.cjs');
 const chat = require('./chat.cjs');
 const { createPlaygroundCredentials } = require('./playground-credentials.cjs');
 const translate = require('./translate.cjs');
+const rag = require('./rag.cjs');
 const { buildLesson } = require('./runner-process.cjs');
 const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
@@ -651,6 +652,7 @@ handle('academy:playground-credentials:set', async ({ name, value }) => {
 handle('academy:playground-credentials:delete', async (name) => playgroundCredentials.delete(name));
 
 handle('academy:translate', async ({ text, language }) => translate.translateText(text, language));
+handle('academy:rag-search', async ({ documents, query, topK }) => rag.searchDocuments(documents, query, topK));
 
 handle('academy:device:info', async () => getDeviceInfo());
 

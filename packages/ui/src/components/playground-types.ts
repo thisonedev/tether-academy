@@ -24,6 +24,12 @@ export interface PlaygroundRunContext {
   /** Dedicated per-language Bergamot NMT translation when the language and the
    *  desktop bridge are both available; falls back to `runAgent` otherwise. */
   translate: (text: string, language: string) => Promise<string>;
+  /** Posts a Yes/No entry to the output feed and resolves once the user answers
+   *  (or the run is stopped, which resolves every pending one as `false`). */
+  confirm: (message: string) => Promise<boolean>;
+  /** Real chunk + embed + vector search over `documents`, not the whole-document-
+   *  in-prompt approach `ask-doc` uses. Returns the results already formatted. */
+  search: (documents: string[], query: string) => Promise<string>;
   /** Records this node's output for whatever's wired downstream. `handle`
    *  selects the output port for dual-output kinds (If's "true"/"false"). */
   setOutput: (value: PlaygroundTable | string, handle?: string) => void;

@@ -6,11 +6,13 @@ export interface PlaygroundConsoleProps {
   entries: ConsoleEntry[];
   setEntries: React.Dispatch<React.SetStateAction<ConsoleEntry[]>>;
   onExportTable: (markdown: string) => void;
+  /** Answers a pending Ask-for-confirmation node's entry. */
+  onConfirm?: (entryId: string, answer: 'yes' | 'no') => void;
 }
 
 /** The same timeline used in lessons, not a lookalike: run output and chat share one
  *  feed there, so they share one here too, with no lesson context to ground the chat. */
-export function PlaygroundConsole({ entries, setEntries, onExportTable }: PlaygroundConsoleProps) {
+export function PlaygroundConsole({ entries, setEntries, onExportTable, onConfirm }: PlaygroundConsoleProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TableExportContext.Provider value={onExportTable}>
@@ -19,6 +21,7 @@ export function PlaygroundConsole({ entries, setEntries, onExportTable }: Playgr
             entries={entries}
             onStopCheck={() => {}}
             emptyStateText="Run a workflow or ask a question. It all shows up here."
+            onConfirm={onConfirm}
           />
         </RailHiddenContext.Provider>
       </TableExportContext.Provider>

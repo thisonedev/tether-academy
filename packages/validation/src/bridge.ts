@@ -559,6 +559,15 @@ export interface AcademyAPI {
   /** English -> target only, via the SDK's dedicated per-language Bergamot NMT
    *  models, not the general chat model. Throws for an unsupported language. */
   translate?: (text: string, language: string) => Promise<string>;
+  /** Real chunk + embed + vector search over `documents` for `query`, via a
+   *  throwaway RAG workspace that's deleted after the call returns. */
+  ragSearch?: (documents: string[], query: string, topK?: number) => Promise<AcademyRagSearchResult[]>;
+}
+
+export interface AcademyRagSearchResult {
+  id: string;
+  content: string;
+  score: number;
 }
 
 export interface AcademyClipboardAPI {

@@ -3,6 +3,7 @@
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import {
   Bot,
+  CircleHelp,
   FileQuestion,
   Filter,
   FolderOpen,
@@ -10,6 +11,7 @@ import {
   Languages,
   type LucideIcon,
   Repeat,
+  Search,
   Zap,
 } from 'lucide-react';
 import { type CSSProperties, memo } from 'react';
@@ -24,6 +26,8 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'iterate-ai': Repeat,
   translate: Languages,
   'ask-doc': FileQuestion,
+  'ask-confirmation': CircleHelp,
+  'search-documents': Search,
 };
 
 function portStyle(type: PlaygroundDataType): CSSProperties {

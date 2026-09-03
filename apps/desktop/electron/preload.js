@@ -78,6 +78,7 @@ const academy = {
     delete: (name) => ipcRenderer.invoke('academy:playground-credentials:delete', name),
   },
   translate: (text, language) => ipcRenderer.invoke('academy:translate', { text, language }),
+  ragSearch: (documents, query, topK) => ipcRenderer.invoke('academy:rag-search', { documents, query, topK }),
   identity: {
     status: () => ipcRenderer.invoke('academy:identity:status'),
     create: () => ipcRenderer.invoke('academy:identity:create'),

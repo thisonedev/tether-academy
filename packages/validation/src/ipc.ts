@@ -165,6 +165,12 @@ export const clipboardCopySchema = z.object({
   scrubAfterMs: z.number().int().min(0).max(10 * 60_000).default(CLIPBOARD_SCRUB_MS),
 });
 
+export const academyRagSearchSchema = z.object({
+  documents: z.array(z.string().min(1)).min(1).max(50),
+  query: z.string().min(1).max(2000),
+  topK: z.number().int().min(1).max(20).optional(),
+});
+
 export const academyTranslateSchema = z.object({
   text: z.string().min(1).max(20_000),
   /** Matches a key in translate.cjs's NMT_PRESETS (English source only). */

@@ -40,6 +40,7 @@ const IPC_CHANNELS = Object.freeze({
   'academy:playground-credentials:set': 'playgroundCredentialSetSchema',
   'academy:playground-credentials:delete': 'playgroundCredentialNameSchema',
   'academy:translate': 'academyTranslateSchema',
+  'academy:rag-search': 'academyRagSearchSchema',
   'academy:device:info': null,
   'academy:peer:identity': null,
   'academy:identity:status': null,

@@ -22,8 +22,9 @@ import { PlaygroundConfigPopup } from './playground-config-popup.js';
 import { PlaygroundConsole } from './playground-console.js';
 import { buildConversationMarkdown, type ExportFormat } from './playground-export.js';
 import { PlaygroundExportPopup } from './playground-export-popup.js';
+import { PlaygroundFlowEdge } from './playground-flow-edge.js';
 import { PlaygroundFlowNode } from './playground-flow-node.js';
-import { BRANCH_COLOR, PLAYGROUND_NODE_DEFS, PORT_COLOR } from './playground-node-defs.js';
+import { BRANCH_COLOR, PLAYGROUND_NODE_DEFS, PORT_COLOR, typesCompatible } from './playground-node-defs.js';
 import { PLAYGROUND_DRAG_MIME, PlaygroundPalette } from './playground-palette.js';
 import type { PlaygroundTable } from './playground-table.js';
 import type { PlaygroundNodeData } from './playground-types.js';
@@ -47,6 +48,7 @@ declare global {
 }
 
 const NODE_TYPES = { playgroundNode: PlaygroundFlowNode };
+const EDGE_TYPES = { playgroundEdge: PlaygroundFlowEdge };
 // The start node's flow position (see initialGraph) plus half its own size.
 const START_NODE_CENTER = { x: 130 + 24, y: 20 + 24 };
 const VIEWPORT_ZOOM = 0.85;
@@ -195,11 +197,7 @@ function PlaygroundCanvas() {
       if (!source || !target) return false;
       const outType = PLAYGROUND_NODE_DEFS[source.data.kind]?.output;
       const inType = PLAYGROUND_NODE_DEFS[target.data.kind]?.input;
-      // 'flow' carries no data, so it fits any socket: a trigger just means "run this next."
-      // 'any' (currently just If) accepts or forwards whichever type actually shows up.
-      const ok =
-        outType != null &&
-        (outType === inType || outType === 'flow' || inType === 'any' || outType === 'any');
+      const ok = typesCompatible(outType, inType);
       if (!ok) {
         setRejectMessage(
           `Doesn't fit: "${PLAYGROUND_NODE_DEFS[source.data.kind]?.label}" doesn't plug into "${PLAYGROUND_NODE_DEFS[target.data.kind]?.label}".`,
@@ -327,6 +325,56 @@ function PlaygroundCanvas() {
     [runAgentNode, setAssistantEntry],
   );
 
+  // Keyed by confirm entry id; handleStop resolves every pending one as `false`
+  // so a run stuck waiting on the user isn't the one thing Stop can't stop.
+  const confirmResolversRef = useRef(new Map<string, (answer: boolean) => void>());
+  const confirmNode = useCallback(
+    (message: string): Promise<boolean> =>
+      new Promise<boolean>((resolve) => {
+        const entryId = nextEntryId();
+        confirmResolversRef.current.set(entryId, resolve);
+        setEntries((prev) => [...prev, { kind: 'confirm', id: entryId, message, answer: null }]);
+      }),
+    [],
+  );
+  const handleConfirmAnswer = useCallback((entryId: string, answer: 'yes' | 'no') => {
+    setEntries((prev) => prev.map((e) => (e.id === entryId && e.kind === 'confirm' ? { ...e, answer } : e)));
+    const resolve = confirmResolversRef.current.get(entryId);
+    if (resolve) {
+      resolve(answer === 'yes');
+      confirmResolversRef.current.delete(entryId);
+    }
+  }, []);
+
+  // Real vector search (chunk + embed + ragSearch), not ask-doc's whole-document
+  // prompt stuffing. No chat-model fallback: a wrong answer dressed up as a
+  // real search result would be worse than a plain "not available" here.
+  const searchDocumentsNode = useCallback(
+    async (documents: string[], query: string): Promise<string> => {
+      const entryId = nextEntryId();
+      setEntries((prev) => [...prev, { kind: 'chat-assistant', id: entryId, content: '', streaming: true }]);
+      if (typeof window.academy?.ragSearch !== 'function') {
+        const content = 'Search documents is only available in the desktop app.';
+        setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+        return content;
+      }
+      try {
+        const results = await window.academy.ragSearch(documents, query);
+        const content =
+          results.length === 0
+            ? 'No matching results.'
+            : results.map((r, i) => `${i + 1}. (score ${r.score.toFixed(3)}) ${r.content}`).join('\n\n');
+        setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+        return content;
+      } catch (err) {
+        const content = err instanceof Error ? err.message : 'Search failed.';
+        setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+        return content;
+      }
+    },
+    [setAssistantEntry],
+  );
+
   const [isRunning, setIsRunning] = useState(false);
   // Which nodes' `run` reported an error on the run currently shown in the
   // output feed; render-only, cleared at the start of every run and reset.
@@ -391,6 +439,8 @@ function PlaygroundCanvas() {
             pushRunLine,
             runAgent: runAgentNode,
             translate: translateNode,
+            confirm: confirmNode,
+            search: searchDocumentsNode,
             setOutput: (value, handle) => nodeOutputs.set(outKey(id, handle), value),
             stopRequested: () => stopRequestedRef.current,
           });
@@ -406,7 +456,7 @@ function PlaygroundCanvas() {
       setStopRequested(false);
       stopRequestedRef.current = false;
     }
-  }, [nodes, edges, runAgentNode, translateNode]);
+  }, [nodes, edges, runAgentNode, translateNode, confirmNode, searchDocumentsNode]);
 
   // Stops the queue between nodes; the in-flight agent call itself only stops
   // early when the desktop bridge can actually abort it.
@@ -416,6 +466,14 @@ function PlaygroundCanvas() {
     setStopRequested(true);
     const requestId = pendingRequestIdRef.current;
     if (requestId) void window.academy?.chat?.stop?.(requestId).catch(() => undefined);
+    if (confirmResolversRef.current.size > 0) {
+      const pendingIds = new Set(confirmResolversRef.current.keys());
+      for (const resolve of confirmResolversRef.current.values()) resolve(false);
+      confirmResolversRef.current.clear();
+      setEntries((prev) =>
+        prev.map((e) => (e.kind === 'confirm' && pendingIds.has(e.id) ? { ...e, answer: 'no' } : e)),
+      );
+    }
   }, [isRunning]);
 
   // The file this workflow was last opened from or saved to, if the browser
@@ -586,15 +644,53 @@ function PlaygroundCanvas() {
   // ports already are: the branch color for If's Yes/No, otherwise the source
   // node's declared output type. Derived at render, not stored on the edge, so
   // it stays correct even after the source node's kind changes underneath it.
+  // Splits `edgeId` into source -> newNode -> target, dropping the old edge.
+  // The new node lands at the midpoint between the two it now sits between.
+  const handleInsertNode = useCallback(
+    (edgeId: string, kind: string) => {
+      const edge = edges.find((e) => e.id === edgeId);
+      const def = PLAYGROUND_NODE_DEFS[kind];
+      if (!edge || !def) return;
+      const sourceNode = nodes.find((n) => n.id === edge.source);
+      const targetNode = nodes.find((n) => n.id === edge.target);
+      if (!sourceNode || !targetNode) return;
+      const newId = nextId();
+      setNodes((prev) => [
+        ...prev,
+        {
+          id: newId,
+          type: 'playgroundNode',
+          position: {
+            x: (sourceNode.position.x + targetNode.position.x) / 2,
+            y: (sourceNode.position.y + targetNode.position.y) / 2,
+          },
+          data: { kind, fields: def.defaultFields() },
+        },
+      ]);
+      setEdges((prev) => [
+        ...prev.filter((e) => e.id !== edgeId),
+        { id: nextId(), source: edge.source, target: newId, sourceHandle: edge.sourceHandle, targetHandle: null },
+        { id: nextId(), source: newId, target: edge.target, sourceHandle: null, targetHandle: edge.targetHandle },
+      ]);
+    },
+    [edges, nodes, setNodes, setEdges],
+  );
   const edgesForRender = useMemo(
     () =>
       edges.map((e) => {
         const branch = e.sourceHandle === 'true' || e.sourceHandle === 'false' ? e.sourceHandle : null;
         const outputType = PLAYGROUND_NODE_DEFS[nodes.find((n) => n.id === e.source)?.data.kind ?? '']?.output;
+        const targetType = PLAYGROUND_NODE_DEFS[nodes.find((n) => n.id === e.target)?.data.kind ?? '']?.input ?? null;
+        const dataType = branch ? 'bool' : (outputType ?? 'any');
         const color = branch ? BRANCH_COLOR[branch] : (outputType && PORT_COLOR[outputType]) || PORT_COLOR.flow;
-        return { ...e, style: { stroke: color } };
+        return {
+          ...e,
+          type: 'playgroundEdge',
+          style: { stroke: color },
+          data: { dataType, targetType, onInsert: handleInsertNode },
+        };
       }),
-    [edges, nodes],
+    [edges, nodes, handleInsertNode],
   );
 
   return (
@@ -783,6 +879,7 @@ function PlaygroundCanvas() {
             onConnect={onConnect}
             isValidConnection={isValidConnection}
             nodeTypes={NODE_TYPES}
+            edgeTypes={EDGE_TYPES}
             onNodeClick={(_, node) => setSelectedId(node.id)}
             onPaneClick={() => setSelectedId(null)}
             onDrop={onDrop}
@@ -849,6 +946,7 @@ function PlaygroundCanvas() {
                 defaultName: workflowName,
               })
             }
+            onConfirm={handleConfirmAnswer}
           />
         </div>
       </div>
