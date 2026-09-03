@@ -304,6 +304,29 @@ function PlaygroundCanvas() {
     [setAssistantEntry],
   );
 
+  // Tries the SDK's dedicated per-language Bergamot NMT models first (real
+  // translation, not a chat-model guess); silently falls back to runAgentNode
+  // when the bridge is unavailable (web) or the language has no NMT model.
+  const translateNode = useCallback(
+    async (text: string, language: string): Promise<string> => {
+      if (typeof window.academy?.translate === 'function') {
+        const entryId = nextEntryId();
+        setEntries((prev) => [...prev, { kind: 'chat-assistant', id: entryId, content: '', streaming: true }]);
+        try {
+          const result = await window.academy.translate(text, language);
+          setAssistantEntry(entryId, (e) => ({ ...e, content: result, streaming: false }));
+          return result;
+        } catch {
+          setEntries((prev) => prev.filter((e) => e.id !== entryId));
+        }
+      }
+      return runAgentNode(
+        `Translate the following text to ${language}. Reply with only the translation, nothing else.\n\n${text}`,
+      );
+    },
+    [runAgentNode, setAssistantEntry],
+  );
+
   const [isRunning, setIsRunning] = useState(false);
   // Which nodes' `run` reported an error on the run currently shown in the
   // output feed; render-only, cleared at the start of every run and reset.
@@ -367,6 +390,7 @@ function PlaygroundCanvas() {
             pushResult,
             pushRunLine,
             runAgent: runAgentNode,
+            translate: translateNode,
             setOutput: (value, handle) => nodeOutputs.set(outKey(id, handle), value),
             stopRequested: () => stopRequestedRef.current,
           });
@@ -382,7 +406,7 @@ function PlaygroundCanvas() {
       setStopRequested(false);
       stopRequestedRef.current = false;
     }
-  }, [nodes, edges, runAgentNode]);
+  }, [nodes, edges, runAgentNode, translateNode]);
 
   // Stops the queue between nodes; the in-flight agent call itself only stops
   // early when the desktop bridge can actually abort it.

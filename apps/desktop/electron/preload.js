@@ -72,6 +72,12 @@ const academy = {
     copy: (text, scrubAfterMs) =>
       ipcRenderer.invoke('academy:clipboard:copy', { text, scrubAfterMs }),
   },
+  playgroundCredentials: {
+    list: () => ipcRenderer.invoke('academy:playground-credentials:list'),
+    set: (name, value) => ipcRenderer.invoke('academy:playground-credentials:set', { name, value }),
+    delete: (name) => ipcRenderer.invoke('academy:playground-credentials:delete', name),
+  },
+  translate: (text, language) => ipcRenderer.invoke('academy:translate', { text, language }),
   identity: {
     status: () => ipcRenderer.invoke('academy:identity:status'),
     create: () => ipcRenderer.invoke('academy:identity:create'),

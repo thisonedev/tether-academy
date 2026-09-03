@@ -21,6 +21,9 @@ export interface PlaygroundRunContext {
   pushRunLine: (status: 'ok' | 'err', line: string) => void;
   /** Sends one prompt through the desktop chat bridge and returns the reply. */
   runAgent: (task: string) => Promise<string>;
+  /** Dedicated per-language Bergamot NMT translation when the language and the
+   *  desktop bridge are both available; falls back to `runAgent` otherwise. */
+  translate: (text: string, language: string) => Promise<string>;
   /** Records this node's output for whatever's wired downstream. `handle`
    *  selects the output port for dual-output kinds (If's "true"/"false"). */
   setOutput: (value: PlaygroundTable | string, handle?: string) => void;

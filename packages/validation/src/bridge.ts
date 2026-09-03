@@ -555,9 +555,20 @@ export interface AcademyAPI {
   peer?: AcademyPeerAPI;
   identity?: AcademyIdentityAPI;
   clipboard?: AcademyClipboardAPI;
+  playgroundCredentials?: AcademyPlaygroundCredentialsAPI;
+  /** English -> target only, via the SDK's dedicated per-language Bergamot NMT
+   *  models, not the general chat model. Throws for an unsupported language. */
+  translate?: (text: string, language: string) => Promise<string>;
 }
 
 export interface AcademyClipboardAPI {
   /** Copies text and clears it after `scrubAfterMs` (0 = never); main owns the timer so the scrub survives the window closing. */
   copy: (text: string, scrubAfterMs?: number) => Promise<boolean>;
+}
+
+export interface AcademyPlaygroundCredentialsAPI {
+  /** Names only, never values. */
+  list: () => Promise<string[]>;
+  set: (name: string, value: string) => Promise<boolean>;
+  delete: (name: string) => Promise<boolean>;
 }

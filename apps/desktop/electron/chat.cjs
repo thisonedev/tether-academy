@@ -29,6 +29,11 @@ const { ensureModels } = require('../shared/model-fetch.cjs');
 // against. See approxContextWindow for why the request is trusted.
 const MODEL_CTX_SIZE = 4096;
 
+// A chat model is several GB resident in RAM/VRAM; nothing here ever evicted
+// it before, so an idle session held that memory indefinitely. 20 minutes of
+// no send/verify/securityScan call frees it back up.
+const IDLE_UNLOAD_MS = 20 * 60 * 1000;
+
 function isChatPreset(name) {
   return Object.prototype.hasOwnProperty.call(CHAT_PRESETS, name);
 }
@@ -54,6 +59,24 @@ let current = {
   modelId: null,
   preset: null,
 };
+
+let idleTimer = null;
+
+function clearIdleTimer() {
+  if (!idleTimer) return;
+  clearTimeout(idleTimer);
+  idleTimer = null;
+}
+
+// Called on every resolveModel()/load(): a model still mid-use never idles
+// out mid-run, since each request restarts the countdown from its own start.
+function touchIdleTimer() {
+  clearIdleTimer();
+  idleTimer = setTimeout(() => {
+    unload().catch((err) => console.warn('[chat] idle unload failed', err && err.message));
+  }, IDLE_UNLOAD_MS);
+  if (typeof idleTimer.unref === 'function') idleTimer.unref();
+}
 
 // Keyed by requestId so stop() can find and cancel a stream.
 const inflight = new Map();
@@ -81,10 +104,12 @@ async function load(modelHint) {
     throw new Error('modelHint is required');
   }
   await ensureLoaded(modelHint);
+  touchIdleTimer();
   return { modelName: current.filename };
 }
 
 async function unload() {
+  clearIdleTimer();
   if (!current.modelId) return;
   const modelId = current.modelId;
   const sdk = require('@qvac/sdk');
@@ -323,6 +348,7 @@ async function resolveModel(modelHint) {
       throw new Error('no model loaded; pick one in the AI assistant panel first');
     }
   }
+  touchIdleTimer();
   return current.filename;
 }
 

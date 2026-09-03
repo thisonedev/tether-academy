@@ -165,6 +165,24 @@ export const clipboardCopySchema = z.object({
   scrubAfterMs: z.number().int().min(0).max(10 * 60_000).default(CLIPBOARD_SCRUB_MS),
 });
 
+export const academyTranslateSchema = z.object({
+  text: z.string().min(1).max(20_000),
+  /** Matches a key in translate.cjs's NMT_PRESETS (English source only). */
+  language: z.string().min(1).max(64),
+});
+
+/** A playground credential's name: the only thing a workflow JSON is ever allowed to store, never the secret itself. */
+export const playgroundCredentialNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_.-]+$/, 'credential name must be letters, digits, dot, dash, or underscore');
+
+export const playgroundCredentialSetSchema = z.object({
+  name: playgroundCredentialNameSchema,
+  value: z.string().min(1).max(8192),
+});
+
 /** A model cache entry id, used as a relative path under the models root; `removeModel()` containment-checks the resolved result too, so this is the earlier of two gates. */
 export const modelIdSchema = z
   .string()

@@ -74,6 +74,8 @@ const {
 } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
 const chat = require('./chat.cjs');
+const { createPlaygroundCredentials } = require('./playground-credentials.cjs');
+const translate = require('./translate.cjs');
 const { buildLesson } = require('./runner-process.cjs');
 const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
@@ -636,6 +638,19 @@ handle('academy:chat:security-scan', async (parsed) => {
 handle('academy:chat:stop', async (requestId) => chat.stop(requestId));
 handle('academy:chat:docs-status', async () => chat.docsStatus());
 handle('academy:chat:docs-refresh', async () => chat.docsRefresh());
+
+// Playground node credentials: named secrets a workflow JSON references by
+// name only. `get` (plaintext) is deliberately main-process-only, not
+// exposed over IPC, until a node actually needs to consume one.
+const playgroundCredentials = createPlaygroundCredentials(app.getPath('userData'));
+handle('academy:playground-credentials:list', async () => playgroundCredentials.list());
+handle('academy:playground-credentials:set', async ({ name, value }) => {
+  playgroundCredentials.set(name, value);
+  return true;
+});
+handle('academy:playground-credentials:delete', async (name) => playgroundCredentials.delete(name));
+
+handle('academy:translate', async ({ text, language }) => translate.translateText(text, language));
 
 handle('academy:device:info', async () => getDeviceInfo());
 

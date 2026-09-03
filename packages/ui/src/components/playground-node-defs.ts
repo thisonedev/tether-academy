@@ -267,8 +267,6 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     fields: translateFields,
     defaultFields: defaultsFrom(translateFields),
     async run(ctx) {
-      // Asks the general chat model, not the SDK's dedicated per-language Bergamot
-      // NMT models: there's no `academy.translate` bridge exposed to the renderer yet.
       const text = ctx.resolveContent('text');
       if (text === undefined) {
         ctx.pushRunLine(
@@ -278,11 +276,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
         return;
       }
       const language = ctx.fields.language || 'Spanish';
-      ctx.setOutput(
-        await ctx.runAgent(
-          `Translate the following text to ${language}. Reply with only the translation, nothing else.\n\n${text}`,
-        ),
-      );
+      ctx.setOutput(await ctx.translate(text, language));
     },
   },
   'ask-doc': {
