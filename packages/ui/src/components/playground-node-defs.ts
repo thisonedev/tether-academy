@@ -73,9 +73,6 @@ const filterFields: PlaygroundNodeKindDef['fields'] = [
   },
   { key: 'value', label: 'Equals', type: 'text' },
 ];
-const agentFields: PlaygroundNodeKindDef['fields'] = [
-  { key: 'task', label: 'Instructions: what should it do?', type: 'textarea' },
-];
 const ifFields: PlaygroundNodeKindDef['fields'] = [
   {
     key: 'column',
@@ -116,6 +113,28 @@ const BERGAMOT_EN_TARGETS = [
 // picks explicitly rather than a connection silently overriding what they typed.
 const INPUT_SOURCE_OPTIONS = ['Custom text', 'Previous result'];
 const usesCustomText = (fields: Record<string, string>) => fields.source !== 'Previous result';
+
+// `content` is its own field, separate from instructions: same source toggle
+// as translate/ask-doc below, so a Text or document node wired in has to be
+// picked explicitly via "Previous result" rather than silently overriding it.
+const agentFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'source', label: 'Content source', type: 'select', options: INPUT_SOURCE_OPTIONS },
+  { key: 'content', label: 'Content', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'task', label: 'Instructions', type: 'textarea' },
+];
+
+const TEXT_SOURCE_OPTIONS = ['Type text', 'Choose document'];
+const textInputFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'source', label: 'Source', type: 'select', options: TEXT_SOURCE_OPTIONS },
+  { key: 'text', label: 'Text', type: 'textarea', hiddenWhen: (fields) => fields.source === 'Choose document' },
+  {
+    key: 'file',
+    label: 'Document',
+    type: 'file',
+    accept: '.txt,.md,.csv',
+    hiddenWhen: (fields) => fields.source !== 'Choose document',
+  },
+];
 
 const translateFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'source', label: 'Text source', type: 'select', options: INPUT_SOURCE_OPTIONS },
@@ -236,6 +255,31 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       ctx.pushResult(`**${picked.name}**, ${table.rows.length} rows\n\n${tableToMarkdown(table)}`);
     },
   },
+  'text-input': {
+    kind: 'text-input',
+    label: 'Text or document',
+    category: 'data',
+    input: 'flow',
+    output: 'value',
+    fields: textInputFields,
+    defaultFields: defaultsFrom(textInputFields),
+    async run(ctx) {
+      if (ctx.fields.source === 'Choose document') {
+        const picked = parsePickedFiles(ctx.fields.file)[0];
+        if (!picked) {
+          ctx.pushRunLine('err', 'No document selected: open this node and choose a file.');
+          return;
+        }
+        const text = dataUrlToText(picked.dataUrl);
+        ctx.setOutput(text);
+        ctx.pushResult(`**${picked.name}**\n\n${text}`);
+        return;
+      }
+      const text = ctx.fields.text ?? '';
+      ctx.setOutput(text);
+      ctx.pushResult(text || '[empty]');
+    },
+  },
   filter: {
     kind: 'filter',
     label: 'Filter rows',
@@ -266,14 +310,15 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     fields: agentFields,
     defaultFields: defaultsFrom(agentFields),
     async run(ctx) {
-      const upstream = ctx.readInput();
       const task = ctx.fields.task ?? '';
-      const prompt =
-        typeof upstream === 'string'
-          ? `${task}\n\nInput: ${upstream}`
-          : upstream
-            ? `${task}\n\nData:\n${tableToMarkdown(upstream)}`
-            : task;
+      const upstream = ctx.readInput();
+      if (upstream && typeof upstream !== 'string') {
+        // A real table can only ever arrive over a wire, never as typed content.
+        ctx.setOutput(await ctx.runAgent(`${task}\n\nData:\n${tableToMarkdown(upstream)}`));
+        return;
+      }
+      const content = ctx.resolveContent('content');
+      const prompt = content && content.trim().length > 0 ? `${task}\n\nInput: ${content}` : task;
       ctx.setOutput(await ctx.runAgent(prompt));
     },
   },

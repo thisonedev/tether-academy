@@ -24,7 +24,9 @@
       "x": 0,
       "y": 260,
       "fields": {
-        "task": "This is raw OCR text from a receipt. Reply with only one CSV row (no header) in the form Date,Vendor,Amount, using the receipt's own date/vendor/total. If a field is missing, use \"unknown\"."
+        "task": "This is raw OCR text from a receipt. Reply with only one CSV row (no header) in the form Date,Vendor,Amount, using the receipt's own date/vendor/total. If a field is missing, use \"unknown\".",
+        "source": "Previous result",
+        "content": ""
       }
     }
   ],

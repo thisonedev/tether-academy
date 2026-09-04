@@ -4,6 +4,7 @@ import {
   Bot,
   CircleCheck,
   FileQuestion,
+  FileText,
   Filter,
   FolderOpen,
   GitBranch,
@@ -28,6 +29,7 @@ import type { PlaygroundCategory, PlaygroundNodeKindDef } from './playground-typ
 const KIND_ICON: Record<string, LucideIcon> = {
   start: Zap,
   'read-file': FolderOpen,
+  'text-input': FileText,
   filter: Filter,
   'ai-agent': Bot,
   if: GitBranch,

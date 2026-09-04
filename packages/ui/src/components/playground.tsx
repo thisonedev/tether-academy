@@ -23,7 +23,7 @@ import {
   FileCode,
   FileText,
   FolderOpen,
-  History,
+  GripVertical,
   Loader2,
   Pencil,
   Play,
@@ -50,12 +50,9 @@ import type { PlaygroundNodeData } from './playground-types.js';
 import {
   canPickFiles,
   downloadWorkflow,
-  listRecentWorkflows,
   parseWorkflowFile,
   pickOpenHandle,
   pickSaveHandle,
-  recordRecentWorkflow,
-  type RecentWorkflowEntry,
   type SavedWorkflow,
   writeWorkflowToHandle,
 } from './playground-workflow.js';
@@ -177,20 +174,6 @@ function PlaygroundCanvas() {
     document.addEventListener('mousedown', onPointerDown);
     return () => document.removeEventListener('mousedown', onPointerDown);
   }, [showFileMenu]);
-  // Loaded lazily (not on mount): reading localStorage during the initial render
-  // would differ between server and client and trip a hydration mismatch.
-  const [recentWorkflows, setRecentWorkflows] = useState<RecentWorkflowEntry[]>([]);
-  const [showRecent, setShowRecent] = useState(false);
-  const recentMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showRecent) return;
-    function onPointerDown(e: MouseEvent) {
-      if (e.target instanceof Node && recentMenuRef.current?.contains(e.target)) return;
-      setShowRecent(false);
-    }
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [showRecent]);
   // Session-only, never saved with the workflow: while enabled, fires a run on
   // the interval below. No OS-level scheduling (the app has to stay open),
   // a deliberate scope call, not an oversight; see playground.md.
@@ -625,7 +608,6 @@ function PlaygroundCanvas() {
     const workflow = buildWorkflow();
     if (!canPickFiles()) {
       downloadWorkflow(workflow);
-      recordRecentWorkflow(workflow);
       return;
     }
     if (!fileHandleRef.current) {
@@ -634,7 +616,6 @@ function PlaygroundCanvas() {
       fileHandleRef.current = handle;
     }
     await writeWorkflowToHandle(fileHandleRef.current, workflow);
-    recordRecentWorkflow(workflow);
   }, [buildWorkflow]);
 
   // Loaded nodes get fresh ids through the same nextId() every other node uses,
@@ -666,7 +647,6 @@ function PlaygroundCanvas() {
       setSelectedId(null);
       setEntries([]);
       setNodeErrors(new Set());
-      recordRecentWorkflow(workflow);
       centerOnStart(0);
     },
     [setNodes, setEdges, centerOnStart],
@@ -698,18 +678,6 @@ function PlaygroundCanvas() {
     await handleLoadWorkflowFile(await handle.getFile());
     fileHandleRef.current = handle;
   }, [handleLoadWorkflowFile]);
-
-  // The Recent list holds JSON snapshots, not file handles (see recordRecentWorkflow),
-  // so reopening one is a fresh in-memory copy: Ctrl/Cmd+S after this asks where to
-  // save, same as any workflow that's never been saved to a file yet.
-  const handleOpenRecent = useCallback(
-    (entry: RecentWorkflowEntry) => {
-      fileHandleRef.current = null;
-      applyLoadedWorkflow(entry.workflow);
-      setShowRecent(false);
-    },
-    [applyLoadedWorkflow],
-  );
 
   const [showPresets, setShowPresets] = useState(false);
   const handleLoadPreset = useCallback(
@@ -1021,40 +989,6 @@ function PlaygroundCanvas() {
           >
             <Sparkles className="size-4" />
           </button>
-          <div className="relative shrink-0" ref={recentMenuRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setRecentWorkflows(listRecentWorkflows());
-                setShowRecent((prev) => !prev);
-              }}
-              disabled={isRunning}
-              className="rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
-              title="Recent workflows"
-              aria-label="Recent workflows"
-            >
-              <History className="size-4" />
-            </button>
-            {showRecent && (
-              <div className="absolute right-0 top-full z-10 mt-1 w-64 rounded-md border border-canvas-border bg-canvas py-1 shadow-lg">
-                {recentWorkflows.length === 0 ? (
-                  <div className="px-3 py-2 text-xs text-canvas-muted-foreground">No recent workflows yet.</div>
-                ) : (
-                  recentWorkflows.map((entry) => (
-                    <button
-                      key={`${entry.name}-${entry.savedAt}`}
-                      type="button"
-                      onClick={() => handleOpenRecent(entry)}
-                      className="flex w-full flex-col items-start px-3 py-1.5 text-left text-xs hover:bg-canvas-muted"
-                    >
-                      <span className="truncate font-mono text-canvas-foreground">{entry.name}</span>
-                      <span className="text-canvas-muted-foreground">{new Date(entry.savedAt).toLocaleString()}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
           {/* Fallback only: used when the File System Access API isn't available.
            *  Extension-based accept, not a MIME type, which some OS file dialogs
            *  don't reliably match against an actual .json file's reported type. */}
@@ -1134,8 +1068,11 @@ function PlaygroundCanvas() {
           }}
           aria-label="Resize output panel"
           title="Drag to resize"
-          className="w-1 shrink-0 cursor-col-resize border-l border-canvas-border bg-transparent transition-colors hover:bg-emerald-500/50"
-        />
+          className="group relative flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent"
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-canvas-border" />
+          <GripVertical className="relative z-10 size-3 text-canvas-muted-foreground transition-colors group-hover:text-canvas-foreground" />
+        </button>
 
         <div style={{ width: panelWidth }} className="h-full shrink-0 bg-canvas">
           <PlaygroundConsole

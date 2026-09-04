@@ -10,18 +10,36 @@
       "fields": {}
     },
     {
-      "id": "agent1",
-      "kind": "ai-agent",
+      "id": "text1",
+      "kind": "text-input",
       "x": 0,
       "y": 120,
       "fields": {
-        "task": "Read these meeting notes and reply with a numbered list of action items, one per line, each with the owner if named:\n\nMeeting notes - product sync:\n- Sarah will finalize the pricing page copy by Friday.\n- Dev team is blocked on the payments API key, need it from finance by Wednesday.\n- Marketing wants a launch date decision by end of week.\n- Everyone agreed to push the beta invite list out this afternoon.\n"
+        "source": "Type text",
+        "text": "Meeting notes - product sync:\n- Sarah will finalize the pricing page copy by Friday.\n- Dev team is blocked on the payments API key, need it from finance by Wednesday.\n- Marketing wants a launch date decision by end of week.\n- Everyone agreed to push the beta invite list out this afternoon."
+      }
+    },
+    {
+      "id": "agent1",
+      "kind": "ai-agent",
+      "x": 0,
+      "y": 260,
+      "fields": {
+        "source": "Previous result",
+        "content": "",
+        "task": "Read these meeting notes and reply with a numbered list of action items, one per line, each with the owner if named."
       }
     }
   ],
   "edges": [
     {
       "source": "start",
+      "target": "text1",
+      "sourceHandle": null,
+      "targetHandle": null
+    },
+    {
+      "source": "text1",
       "target": "agent1",
       "sourceHandle": null,
       "targetHandle": null

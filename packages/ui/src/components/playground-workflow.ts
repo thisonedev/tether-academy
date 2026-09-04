@@ -94,41 +94,6 @@ export async function writeWorkflowToHandle(handle: FileSystemFileHandle, workfl
   await writable.close();
 }
 
-const RECENT_KEY = 'academy.playground.recentWorkflows';
-const MAX_RECENT = 8;
-
-export interface RecentWorkflowEntry {
-  name: string;
-  savedAt: number;
-  workflow: SavedWorkflow;
-}
-
-/** Local-only, per-browser convenience list, not a project file: reopening from
- *  it loads the JSON snapshot taken at save/open time, not the original file
- *  (no File System Access handle recall, so no stale-permission prompts). */
-export function listRecentWorkflows(): RecentWorkflowEntry[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(RECENT_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function recordRecentWorkflow(workflow: SavedWorkflow): void {
-  if (typeof window === 'undefined') return;
-  const existing = listRecentWorkflows().filter((e) => e.name !== workflow.name);
-  const next = [{ name: workflow.name, savedAt: Date.now(), workflow }, ...existing].slice(0, MAX_RECENT);
-  try {
-    window.localStorage.setItem(RECENT_KEY, JSON.stringify(next));
-  } catch {
-    // Storage full or disabled (private browsing): this list is a convenience,
-    // not durable state, so a write failure here is silently dropped.
-  }
-}
-
 /** Throws with a message meant to be shown to the user directly, not logged. */
 export function parseWorkflowFile(text: string): SavedWorkflow {
   let data: unknown;

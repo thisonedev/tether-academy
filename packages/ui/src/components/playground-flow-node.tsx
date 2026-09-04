@@ -5,6 +5,7 @@ import {
   Bot,
   CircleHelp,
   FileQuestion,
+  FileText,
   Filter,
   FolderOpen,
   GitBranch,
@@ -27,6 +28,7 @@ import type { PlaygroundDataType, PlaygroundNodeData } from './playground-types.
 
 const KIND_ICON: Record<string, LucideIcon> = {
   'read-file': FolderOpen,
+  'text-input': FileText,
   filter: Filter,
   'ai-agent': Bot,
   if: GitBranch,

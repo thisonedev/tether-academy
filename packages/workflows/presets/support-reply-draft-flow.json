@@ -10,18 +10,36 @@
       "fields": {}
     },
     {
-      "id": "agent1",
-      "kind": "ai-agent",
+      "id": "text1",
+      "kind": "text-input",
       "x": 0,
       "y": 120,
       "fields": {
-        "task": "Write a short, empathetic customer support reply to this complaint. Offer an expedited replacement. Keep it under 80 words.\n\nHi, I ordered a replacement charger two weeks ago and it still hasn't arrived. The tracking number hasn't updated in 9 days. This is the second time this has happened with your shipping. I'd like a refund or an expedited replacement.\n"
+        "source": "Type text",
+        "text": "Hi, I ordered a replacement charger two weeks ago and it still hasn't arrived. The tracking number hasn't updated in 9 days. This is the second time this has happened with your shipping. I'd like a refund or an expedited replacement."
+      }
+    },
+    {
+      "id": "agent1",
+      "kind": "ai-agent",
+      "x": 0,
+      "y": 260,
+      "fields": {
+        "source": "Previous result",
+        "content": "",
+        "task": "Write a short, empathetic customer support reply to this complaint. Offer an expedited replacement. Keep it under 80 words."
       }
     }
   ],
   "edges": [
     {
       "source": "start",
+      "target": "text1",
+      "sourceHandle": null,
+      "targetHandle": null
+    },
+    {
+      "source": "text1",
       "target": "agent1",
       "sourceHandle": null,
       "targetHandle": null
