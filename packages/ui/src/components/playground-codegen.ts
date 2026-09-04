@@ -240,7 +240,7 @@ export async function generateStandaloneScript(workflow: SavedWorkflow): Promise
         lines.push(`    const rl = require('node:readline/promises').createInterface({ input: process.stdin, output: process.stdout });`);
         lines.push(`    const answer = (await rl.question(${f('message') || jsString('Continue?')} + ' [y/n] ')).trim().toLowerCase();`);
         lines.push(`    rl.close();`);
-        lines.push(`    out[${jsString(node.id)}] = answer.startsWith('y') ? 'true' : 'false';`);
+        lines.push(`    out[${jsString(node.id)}] = answer.startsWith('y') ? 'yes' : 'no';`);
         lines.push(`  }`);
         break;
       }

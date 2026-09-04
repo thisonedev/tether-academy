@@ -615,9 +615,9 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     async run(ctx) {
       const message = ctx.fields.message || 'Continue?';
       const yes = await ctx.confirm(message);
-      // 'bool' output as the same string representation `if`'s branch-splitting
-      // already produces; nothing in the engine has a distinct boolean runtime type.
-      ctx.setOutput(yes ? 'true' : 'false');
+      // 'yes'/'no': what a user actually types into a downstream If's Value
+      // field, not the internal 'true'/'false' this used to emit.
+      ctx.setOutput(yes ? 'yes' : 'no');
     },
   },
 };

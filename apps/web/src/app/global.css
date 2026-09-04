@@ -16,12 +16,14 @@
   --color-fd-primary-foreground: oklch(0.97 0.01 162);
   --color-fd-ring: oklch(0.696 0.17 162);
 
-  /* Dark main canvas, the whole app lives on this */
-  --color-canvas: oklch(0.16 0.012 162);
-  --color-canvas-foreground: oklch(0.96 0.005 162);
-  --color-canvas-muted: oklch(0.22 0.012 162);
-  --color-canvas-muted-foreground: oklch(0.72 0.012 162);
-  --color-canvas-border: oklch(0.27 0.012 162);
+  /* Dark main canvas, the whole app lives on this. True black, zero chroma:
+     the old hue-162 tint at low chroma read as dirty green-grey everywhere
+     a muted surface showed, not just where the emerald accent was intended. */
+  --color-canvas: oklch(0.09 0 0);
+  --color-canvas-foreground: oklch(0.96 0 0);
+  --color-canvas-muted: oklch(0.15 0 0);
+  --color-canvas-muted-foreground: oklch(0.68 0 0);
+  --color-canvas-border: oklch(0.22 0 0);
 
   /* Geist, self-hosted via the `geist` package (layout.tsx sets the CSS vars). One family across prose, questions, code, and output. */
   --font-sans:

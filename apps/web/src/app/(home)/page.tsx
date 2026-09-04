@@ -373,26 +373,44 @@ function useIsDesktop(): boolean {
 }
 
 /** Per-course accent palette, used until real logos exist. Mirrors
- *  apps/web/src/app/courses/page.tsx so the two listings stay visually in sync. */
-function glyphPalette(slug: string): { bg: string; fg: string } {
+ *  apps/web/src/app/courses/page.tsx so the two listings stay visually in sync.
+ *  Same construction as the playground's own node-category colors
+ *  (CATEGORY_CLASSES): a flat color at 15% for the fill and 40% for the border. */
+function glyphPalette(slug: string): { bg: string; fg: string; border: string } {
   switch (slug) {
     case 'qvac':
-      return { bg: 'linear-gradient(135deg, #0d2620 0%, #1a5e4a 100%)', fg: '#34d399' };
+      return {
+        bg: 'color-mix(in oklab, #4ade80 15%, var(--color-canvas))',
+        fg: '#4ade80',
+        border: 'color-mix(in oklab, #4ade80 40%, transparent)',
+      };
     case 'wdk':
-      return { bg: 'linear-gradient(135deg, #1a1d2e 0%, #2d3050 100%)', fg: '#a5a8d4' };
+      return {
+        bg: 'color-mix(in oklab, #818cf8 15%, var(--color-canvas))',
+        fg: '#818cf8',
+        border: 'color-mix(in oklab, #818cf8 40%, transparent)',
+      };
     case 'pears':
-      return { bg: 'linear-gradient(135deg, #2e1a1d 0%, #5a2d30 100%)', fg: '#f5a5a5' };
+      return {
+        bg: 'color-mix(in oklab, #fca5a5 15%, var(--color-canvas))',
+        fg: '#fca5a5',
+        border: 'color-mix(in oklab, #fca5a5 40%, transparent)',
+      };
     default:
-      return { bg: 'var(--color-canvas)', fg: 'var(--color-canvas-foreground)' };
+      return {
+        bg: 'var(--color-canvas)',
+        fg: 'var(--color-canvas-foreground)',
+        border: 'var(--color-canvas-border)',
+      };
   }
 }
 
 function CourseGlyph({ slug }: { slug: string }) {
-  const { bg, fg } = glyphPalette(slug);
+  const { bg, fg, border } = glyphPalette(slug);
   return (
     <span
       className="flex size-12 items-center justify-center rounded-lg border text-sm font-bold sm:size-14 sm:text-base"
-      style={{ background: bg, color: fg, borderColor: 'transparent' }}
+      style={{ background: bg, color: fg, borderColor: border }}
       aria-hidden
     >
       {slug.slice(0, 3).toUpperCase()}

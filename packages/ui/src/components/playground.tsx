@@ -390,10 +390,16 @@ function PlaygroundCanvas({
       }
       try {
         const results = await window.academy.ragSearch(documents, query);
+        // Bold "Result N" labels, not a markdown ordered list: multi-paragraph
+        // result text breaks list continuation, which silently restarts the
+        // rendered numbering at 1 for every item after the first.
         const content =
           results.length === 0
-            ? 'No matching results.'
-            : results.map((r, i) => `${i + 1}. (score ${r.score.toFixed(3)}) ${r.content}`).join('\n\n');
+            ? `No matches for "${query}".`
+            : `**${results.length} result(s) for "${query}"**\n\n` +
+              results
+                .map((r, i) => `**Result ${i + 1}** (score ${r.score.toFixed(3)})\n\n${r.content}`)
+                .join('\n\n---\n\n');
         setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
         return content;
       } catch (err) {
@@ -437,6 +443,9 @@ function PlaygroundCanvas({
     // each run. Holds a table or plain text, whichever the upstream node actually produced.
     const nodeOutputs = new Map<string, PlaygroundTable | string>();
     const outKey = (nodeId: string, handle?: string | null) => `${nodeId}::${handle ?? ''}`;
+    // Nodes wired to the branch of an If that didn't match: skipped outright,
+    // not run with empty input, so "connect to No" actually means conditional.
+    const skippedNodes = new Set<string>();
     const pushResult = (content: string) =>
       setEntries((prev) => [
         ...prev,
@@ -449,6 +458,23 @@ function PlaygroundCanvas({
         if (stopRequestedRef.current) break;
         const node = nodes.find((n) => n.id === id);
         if (!node || node.data.kind === 'start') continue;
+        const incomingEdge = edges.find((e) => e.target === id);
+        if (incomingEdge) {
+          if (skippedNodes.has(incomingEdge.source)) {
+            skippedNodes.add(id);
+            continue;
+          }
+          if (incomingEdge.sourceHandle === 'true' || incomingEdge.sourceHandle === 'false') {
+            const branchValue = nodeOutputs.get(outKey(incomingEdge.source, incomingEdge.sourceHandle));
+            const branchEmpty =
+              branchValue === undefined ||
+              (typeof branchValue === 'string' ? branchValue.length === 0 : branchValue.rows.length === 0);
+            if (branchEmpty) {
+              skippedNodes.add(id);
+              continue;
+            }
+          }
+        }
         // Closes over this node's id so a failing `run` marks the node that
         // actually failed, not whichever one happens to run next.
         const pushRunLine = (status: 'ok' | 'err', line: string) => {

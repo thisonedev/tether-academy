@@ -4,15 +4,15 @@
 export const QVAC_THEME_NAME = 'qvac-dark';
 
 const C = {
-  // The app's own canvas, so the code well sits at the same temperature as the
-  // chrome around it. One Dark's #282c34 is blue-grey and read cold here.
-  bg: '090f0c',
+  // Matches --color-canvas/-muted/-border exactly (see apps/web/src/app/global.css),
+  // so the code well sits at the same true-black temperature as the chrome around it.
+  bg: '020202',
   fg: 'abb2bf',
   cursor: '528bff',
   selection: '3e4451',
-  lineHighlight: '0e1411',
-  widgetBg: '050a07',
-  widgetBorder: '181a1f',
+  lineHighlight: '0b0b0b',
+  widgetBg: '000000',
+  widgetBorder: '1b1b1b',
   comment: '5c6370',
   keyword: 'c678dd',
   string: '98c379',
