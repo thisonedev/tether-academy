@@ -13,6 +13,7 @@ import {
   type LucideIcon,
   Mic,
   Music,
+  Pencil,
   Repeat,
   ScanText,
   Search,
@@ -81,9 +82,23 @@ function groupByCategory(defs: PlaygroundNodeKindDef[]): [PlaygroundCategory, Pl
   return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c) ?? []]);
 }
 
+export interface PlaygroundPaletteProps {
+  workflowName: string;
+  editingName: boolean;
+  onStartEditing: () => void;
+  onNameChange: (value: string) => void;
+  onCommitName: () => void;
+}
+
 /** Icon-only grid grouped by category; the label only shows on hover/tap, so the
  *  palette stays compact as more node kinds land instead of growing a full-width row each time. */
-export function PlaygroundPalette() {
+export function PlaygroundPalette({
+  workflowName,
+  editingName,
+  onStartEditing,
+  onNameChange,
+  onCommitName,
+}: PlaygroundPaletteProps) {
   const [activeKind, setActiveKind] = useState<string | null>(null);
   // Portaled and fixed-positioned from the hovered icon's own rect: the sidebar's
   // overflow-y-auto also clips overflow-x per the CSS spec, which cut an absolutely
@@ -102,9 +117,35 @@ export function PlaygroundPalette() {
 
   return (
     <div className="flex w-60 shrink-0 flex-col gap-3 overflow-y-auto border-r border-canvas-border bg-canvas p-2.5 font-mono">
-      <div className="px-1.5 text-[11px] font-semibold uppercase tracking-wide text-canvas-muted-foreground">
-        Blocks
-      </div>
+      {editingName ? (
+        <input
+          // biome-ignore lint/a11y/noAutofocus: opened by the user's own click on the name right next to it
+          autoFocus
+          value={workflowName}
+          onChange={(e) => onNameChange(e.target.value)}
+          onBlur={onCommitName}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onCommitName();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              onCommitName();
+            }
+          }}
+          className="rounded border border-emerald-500/60 bg-canvas px-1.5 py-1 text-[13px] font-semibold text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={onStartEditing}
+          className="group flex items-center gap-1.5 rounded px-1.5 py-1 text-left transition-colors hover:bg-canvas-muted"
+          title="Rename workflow"
+        >
+          <span className="truncate text-[13px] font-semibold text-canvas-foreground">{workflowName}</span>
+          <Pencil className="size-3 shrink-0 text-canvas-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+        </button>
+      )}
       {groupByCategory(kinds).map(([category, defs]) => (
         <div key={category}>
           <div className="mb-1.5 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-canvas-muted-foreground/70">
@@ -146,7 +187,7 @@ export function PlaygroundPalette() {
             style={{ left: tooltipPos.left, top: tooltipPos.top }}
           >
             {activeDef.label}
-            {activeDef.kind === 'start' ? ' (already on your canvas)' : activeDef.inactive ? ' (coming soon)' : ''}
+            {activeDef.kind !== 'start' && activeDef.inactive ? ' (coming soon)' : ''}
           </div>,
           document.body,
         )}

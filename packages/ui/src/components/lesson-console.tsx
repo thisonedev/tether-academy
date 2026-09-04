@@ -11,6 +11,7 @@ import { type LessonProgress, parseProgress } from './lesson-progress.js';
 import { formatSeconds, type RunSegment, type StageSegment, splitStages } from './lesson-stages.js';
 import { QVAC_EDITOR_BACKGROUND } from './qvac-theme.js';
 import type { OutputLine } from './lesson-workspace.js';
+import { ThemedSelect } from './themed-select.js';
 
 export interface LessonConsoleLessonContext {
   chapter: string;
@@ -651,8 +652,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
 }
 
 // Same control as the run-mode and paired-device pickers in the editor
-// toolbar: a native select, so the three read as one family and the popup
-// this used to open is the platform's.
+// toolbar: a themed dropdown, so the three read as one family.
 function ModelSwitcher({
   modelName,
   options,
@@ -669,22 +669,16 @@ function ModelSwitcher({
   return (
     <div className="flex shrink-0 items-center gap-1">
       {busy ? <Loader2 className="size-2.5 shrink-0 animate-spin text-canvas-muted-foreground" /> : null}
-      <select
-        aria-label="Chat model"
+      <ThemedSelect
+        ariaLabel="Chat model"
         title="Chat model"
         value={modelName ?? ''}
-        onChange={(e) => onSelect(e.target.value)}
+        onChange={onSelect}
         disabled={busy || options.length === 0}
-        suppressHydrationWarning
-        className="min-w-0 max-w-[6rem] truncate rounded border border-canvas-border bg-transparent px-1.5 py-1 sm:max-w-[9rem] text-[10px] font-medium tracking-wider text-canvas-muted-foreground uppercase transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {modelName ? null : <option value="">Pick model</option>}
-        {options.map((name) => (
-          <option key={name} value={name}>
-            {shortName(name)}
-          </option>
-        ))}
-      </select>
+        placeholder="Pick model"
+        options={options.map((name) => ({ value: name, label: shortName(name) }))}
+        className="flex min-w-0 max-w-[6rem] items-center justify-between gap-1 rounded border border-canvas-border bg-transparent px-1.5 py-1 sm:max-w-[9rem] text-[10px] font-medium tracking-wider text-canvas-muted-foreground uppercase transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+      />
     </div>
   );
 }

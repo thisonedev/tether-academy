@@ -4,7 +4,7 @@ import { Paperclip, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { parsePickedFiles, type PickedFile, readFileAsDataUrl } from './playground-files.js';
 import { PLAYGROUND_NODE_DEFS } from './playground-node-defs.js';
-import { PlaygroundSelect } from './playground-select.js';
+import { ThemedSelect } from './themed-select.js';
 import { samplesFor } from './playground-sample-data.js';
 import type { PlaygroundDataType } from './playground-types.js';
 
@@ -199,7 +199,7 @@ export function PlaygroundConfigPopup({
       if (target.closest(`[data-id="${nodeId}"]`)) return;
       // A select field's open dropdown is portaled to <body>, outside both checks
       // above, so without this an option click closed the popup before it applied.
-      if (target.closest('[data-playground-select-menu]')) return;
+      if (target.closest('[data-themed-select-menu]')) return;
       onClose();
     }
     document.addEventListener('mousedown', onDocClick, true);
@@ -242,7 +242,7 @@ export function PlaygroundConfigPopup({
               {f.label}
             </label>
             {f.type === 'select' ? (
-              <PlaygroundSelect
+              <ThemedSelect
                 id={`${nodeId}-${f.key}`}
                 value={fields[f.key] ?? ''}
                 options={f.options ?? []}

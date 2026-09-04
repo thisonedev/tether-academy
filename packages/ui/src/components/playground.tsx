@@ -143,7 +143,15 @@ let heldState: {
   fileHandle: FileSystemFileHandle | null;
 } | null = null;
 
-function PlaygroundCanvas() {
+function PlaygroundCanvas({
+  workflowName,
+  setWorkflowName,
+  setEditingName,
+}: {
+  workflowName: string;
+  setWorkflowName: (value: string | ((prev: string) => string)) => void;
+  setEditingName: (value: boolean) => void;
+}) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<PlaygroundNodeData>>(
     heldState?.nodes ?? INITIAL_GRAPH.nodes,
   );
@@ -157,12 +165,6 @@ function PlaygroundCanvas() {
     formats: ExportFormat[];
     defaultName: string;
   } | null>(null);
-  const [workflowName, setWorkflowName] = useState(heldState?.workflowName ?? 'Untitled workflow');
-  const [editingName, setEditingName] = useState(false);
-  const commitWorkflowName = useCallback(() => {
-    setWorkflowName((prev) => prev.trim() || 'Untitled workflow');
-    setEditingName(false);
-  }, []);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const fileMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -579,7 +581,7 @@ function PlaygroundCanvas() {
     setSelectedId(null);
     setEntries([]);
     setNodeErrors(new Set());
-    setWorkflowName('Untitled workflow');
+    setWorkflowName('My Workflow');
     fileHandleRef.current = null;
     centerOnStart(200);
   }, [setNodes, setEdges, centerOnStart]);
@@ -826,30 +828,6 @@ function PlaygroundCanvas() {
     <div className="relative flex h-full min-h-0 flex-1 flex-col">
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-canvas-border bg-canvas px-3 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 text-sm">
-          <span
-            className={`size-2 shrink-0 rounded-full bg-emerald-500 ${isRunning ? 'animate-pulse' : ''}`}
-          />
-          {editingName ? (
-            <input
-              // biome-ignore lint/a11y/noAutofocus: opened by the user's own click on the edit icon right next to it
-              autoFocus
-              value={workflowName}
-              onChange={(e) => setWorkflowName(e.target.value)}
-              onBlur={commitWorkflowName}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  commitWorkflowName();
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setEditingName(false);
-                }
-              }}
-              className="min-w-0 flex-1 rounded border border-emerald-500/60 bg-canvas px-1.5 py-0.5 font-mono text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
-            />
-          ) : (
-            <span className="truncate font-mono text-canvas-foreground">{workflowName}</span>
-          )}
           <div className="relative shrink-0" ref={fileMenuRef}>
             <button
               type="button"
@@ -857,7 +835,7 @@ function PlaygroundCanvas() {
                 setShowSchedule(false);
                 setShowFileMenu((prev) => !prev);
               }}
-              className={`inline-flex items-center gap-1 rounded-md border border-canvas-border px-2 py-1 text-xs text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground ${showFileMenu ? 'bg-canvas-muted text-canvas-foreground' : ''}`}
+              className={`inline-flex items-center gap-1 rounded-md border border-canvas-border px-2 py-1 text-xs text-canvas-muted-foreground transition-colors hover:text-canvas-foreground ${showFileMenu ? 'text-canvas-foreground' : ''}`}
               title={schedule.enabled ? `File · running every ${schedule.intervalMinutes} min` : 'File'}
               aria-label="File menu"
             >
@@ -1106,11 +1084,27 @@ function PlaygroundCanvas() {
 }
 
 export function Playground() {
+  const [workflowName, setWorkflowName] = useState(heldState?.workflowName ?? 'My Workflow');
+  const [editingName, setEditingName] = useState(false);
+  const commitWorkflowName = useCallback(() => {
+    setWorkflowName((prev) => prev.trim() || 'My Workflow');
+    setEditingName(false);
+  }, []);
   return (
     <div className="flex h-[calc(100vh-56px)] w-full bg-canvas">
-      <PlaygroundPalette />
+      <PlaygroundPalette
+        workflowName={workflowName}
+        editingName={editingName}
+        onStartEditing={() => setEditingName(true)}
+        onNameChange={setWorkflowName}
+        onCommitName={commitWorkflowName}
+      />
       <ReactFlowProvider>
-        <PlaygroundCanvas />
+        <PlaygroundCanvas
+          workflowName={workflowName}
+          setWorkflowName={setWorkflowName}
+          setEditingName={setEditingName}
+        />
       </ReactFlowProvider>
     </div>
   );

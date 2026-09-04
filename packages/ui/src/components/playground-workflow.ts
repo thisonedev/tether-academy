@@ -129,5 +129,5 @@ export function parseWorkflowFile(text: string): SavedWorkflow {
       targetHandle: typeof edge.targetHandle === 'string' ? edge.targetHandle : null,
     };
   });
-  return { version: 1, name: typeof obj.name === 'string' ? obj.name : 'Untitled workflow', nodes, edges };
+  return { version: 1, name: typeof obj.name === 'string' ? obj.name : 'My Workflow', nodes, edges };
 }
