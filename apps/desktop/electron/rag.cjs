@@ -1,10 +1,8 @@
 'use strict';
 
-// Real retrieval for the playground's Search documents node: chunk + embed +
-// vector search via the SDK's ragIngest/ragSearch, not the whole-document-in-
-// prompt approach Ask about a document still uses. Each call gets its own
-// ephemeral workspace, ingested then searched then closed and deleted, so
-// nothing persists between runs.
+// Real chunk + embed + vector search via ragIngest/ragSearch, not the
+// whole-document prompt-stuffing Ask about a document uses. Each call
+// gets its own ephemeral workspace, closed and deleted after.
 
 const crypto = require('node:crypto');
 const { ensureModels } = require('../shared/model-fetch.cjs');

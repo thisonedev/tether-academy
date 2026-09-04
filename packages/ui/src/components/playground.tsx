@@ -15,12 +15,28 @@ import {
   useNodesState,
   useReactFlow,
 } from '@xyflow/react';
-import { Clock, Download, Eraser, FolderOpen, History, Loader2, Pencil, Play, RotateCcw, Save, Square } from 'lucide-react';
+import {
+  ChevronDown,
+  Clock,
+  Download,
+  Eraser,
+  FileCode,
+  FileText,
+  FolderOpen,
+  History,
+  Loader2,
+  Pencil,
+  Play,
+  RotateCcw,
+  Save,
+  Square,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConsoleEntry } from './lesson-console.js';
 import { PlaygroundConfigPopup } from './playground-config-popup.js';
 import { PlaygroundConsole } from './playground-console.js';
-import { buildConversationMarkdown, type ExportFormat } from './playground-export.js';
+import { generateStandaloneScript } from './playground-codegen.js';
+import { buildConversationMarkdown, downloadBlob, type ExportFormat, slugFilename } from './playground-export.js';
 import { PlaygroundExportPopup } from './playground-export-popup.js';
 import { PlaygroundFlowEdge } from './playground-flow-edge.js';
 import { PlaygroundFlowNode } from './playground-flow-node.js';
@@ -147,6 +163,17 @@ function PlaygroundCanvas() {
     setWorkflowName((prev) => prev.trim() || 'Untitled workflow');
     setEditingName(false);
   }, []);
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showFileMenu) return;
+    function onPointerDown(e: MouseEvent) {
+      if (e.target instanceof Node && fileMenuRef.current?.contains(e.target)) return;
+      setShowFileMenu(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [showFileMenu]);
   // Loaded lazily (not on mount): reading localStorage during the initial render
   // would differ between server and client and trip a hydration mismatch.
   const [recentWorkflows, setRecentWorkflows] = useState<RecentWorkflowEntry[]>([]);
@@ -266,11 +293,8 @@ function PlaygroundCanvas() {
   const pendingRequestIdRef = useRef<string | null>(null);
   const [stopRequested, setStopRequested] = useState(false);
 
-  // An agent node's reply is a model completion, not a code run, so it goes through the
-  // same `chat.send` bridge real lesson chat uses (already tuned: stripping, token budget,
-  // no leftover markers) rather than a hand-rolled `academy.run` snippet with none of that.
-  // Resolves with the final reply text (not just void) so a downstream node
-  // (If, another agent) can actually read what this one produced.
+  // Routes through the same `chat.send` bridge lesson chat uses (already
+  // tuned: stripping, token budget), not a hand-rolled `academy.run` call.
   const runAgentNode = useCallback(
     (task: string) =>
       new Promise<string>((resolve) => {
@@ -547,6 +571,11 @@ function PlaygroundCanvas() {
     [nodes, edges, workflowName],
   );
 
+  const handleExportCode = useCallback(() => {
+    const script = generateStandaloneScript(buildWorkflow());
+    downloadBlob(new Blob([script], { type: 'text/javascript' }), slugFilename(workflowName, 'cjs'));
+  }, [buildWorkflow, workflowName]);
+
   const handleSaveWorkflow = useCallback(async () => {
     const workflow = buildWorkflow();
     if (!canPickFiles()) {
@@ -673,10 +702,6 @@ function PlaygroundCanvas() {
     [nodes, nodeErrors],
   );
 
-  // A wire is colored by what's actually flowing through it, the same way its
-  // ports already are: the branch color for If's Yes/No, otherwise the source
-  // node's declared output type. Derived at render, not stored on the edge, so
-  // it stays correct even after the source node's kind changes underneath it.
   // Splits `edgeId` into source -> newNode -> target, dropping the old edge.
   // The new node lands at the midpoint between the two it now sits between.
   const handleInsertNode = useCallback(
@@ -708,6 +733,8 @@ function PlaygroundCanvas() {
     },
     [edges, nodes, setNodes, setEdges],
   );
+  // A wire is colored by what's actually flowing through it: the branch
+  // color for If's Yes/No, otherwise the source node's declared output type.
   const edgesForRender = useMemo(
     () =>
       edges.map((e) => {
@@ -724,6 +751,51 @@ function PlaygroundCanvas() {
         };
       }),
     [edges, nodes, handleInsertNode],
+  );
+  const fileMenuGroups = useMemo(
+    () => [
+      {
+        color: '#6ea8fe',
+        items: [
+          { label: 'Save', shortcut: '⌘S', icon: Save, disabled: isRunning, onSelect: () => void handleSaveWorkflow() },
+          { label: 'Open', icon: FolderOpen, disabled: isRunning, onSelect: () => void handleOpenWorkflow() },
+          { label: 'Rename', icon: Pencil, disabled: false, onSelect: () => setEditingName(true) },
+        ],
+      },
+      {
+        color: '#ff8fa3',
+        items: [
+          { label: 'Restart workflow', icon: RotateCcw, disabled: isRunning, onSelect: handleReset },
+          {
+            label: 'Export data',
+            icon: Download,
+            disabled: !hasExportableOutput || isRunning,
+            onSelect: () =>
+              setExportRequest({
+                title: 'Export conversation',
+                markdown: conversationMarkdown,
+                formats: CONVERSATION_FORMATS,
+                defaultName: workflowName,
+              }),
+          },
+          { label: 'Export as project', icon: FileCode, disabled: isRunning, onSelect: handleExportCode },
+        ],
+      },
+      {
+        color: '#34d399',
+        items: [{ label: 'Schedule a workflow', icon: Clock, disabled: false, onSelect: () => setShowSchedule(true) }],
+      },
+    ],
+    [
+      isRunning,
+      handleSaveWorkflow,
+      handleOpenWorkflow,
+      handleReset,
+      hasExportableOutput,
+      conversationMarkdown,
+      workflowName,
+      handleExportCode,
+    ],
   );
 
   return (
@@ -752,19 +824,88 @@ function PlaygroundCanvas() {
               className="min-w-0 flex-1 rounded border border-emerald-500/60 bg-canvas px-1.5 py-0.5 font-mono text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
             />
           ) : (
-            <>
-              <span className="truncate font-mono text-canvas-foreground">{workflowName}</span>
-              <button
-                type="button"
-                onClick={() => setEditingName(true)}
-                className="shrink-0 text-canvas-muted-foreground transition-colors hover:text-canvas-foreground"
-                title="Rename workflow"
-                aria-label="Rename workflow"
-              >
-                <Pencil className="size-3.5" />
-              </button>
-            </>
+            <span className="truncate font-mono text-canvas-foreground">{workflowName}</span>
           )}
+          <div className="relative shrink-0" ref={fileMenuRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowSchedule(false);
+                setShowFileMenu((prev) => !prev);
+              }}
+              className={`inline-flex items-center gap-1 rounded-md border border-canvas-border px-2 py-1 text-xs text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground ${showFileMenu ? 'bg-canvas-muted text-canvas-foreground' : ''}`}
+              title={schedule.enabled ? `File · running every ${schedule.intervalMinutes} min` : 'File'}
+              aria-label="File menu"
+            >
+              <FileText className="size-3.5" />
+              File
+              {schedule.enabled && <span className="size-1.5 rounded-full bg-emerald-500" />}
+              <ChevronDown className={`size-3 transition-transform ${showFileMenu ? 'rotate-180' : ''}`} />
+            </button>
+            {showFileMenu && (
+              <div className="absolute left-0 top-full z-10 mt-1 w-60 rounded-md border border-canvas-border bg-canvas p-1.5 shadow-lg">
+                {fileMenuGroups.map((group, groupIndex) => (
+                  <div key={group.items.map((item) => item.label).join('|')}>
+                    {groupIndex > 0 && <div className="my-1.5 h-px bg-canvas-border" />}
+                    {group.items.map((item) => (
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() => {
+                          setShowFileMenu(false);
+                          item.onSelect();
+                        }}
+                        disabled={item.disabled}
+                        className="flex w-full items-center gap-2.5 rounded px-1.5 py-1.5 text-left text-xs text-canvas-foreground hover:bg-canvas-muted disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <span
+                          className="flex size-6 shrink-0 items-center justify-center rounded-md"
+                          style={{ color: group.color, backgroundColor: `color-mix(in oklab, ${group.color} 16%, var(--color-canvas-muted))` }}
+                        >
+                          <item.icon className="size-3.5" />
+                        </span>
+                        <span className="flex-1">{item.label}</span>
+                        {item.shortcut && (
+                          <span className="text-[10px] text-canvas-muted-foreground">{item.shortcut}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            {showSchedule && (
+              <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-md border border-canvas-border bg-canvas p-3 shadow-lg" ref={scheduleMenuRef}>
+                <label className="flex items-center gap-2 text-xs text-canvas-foreground">
+                  Run every
+                  <input
+                    type="number"
+                    min={1}
+                    value={schedule.intervalMinutes}
+                    onChange={(e) =>
+                      setSchedule((prev) => ({ ...prev, intervalMinutes: Math.max(1, Number(e.target.value) || 1) }))
+                    }
+                    className="w-14 rounded border border-canvas-border bg-canvas px-1.5 py-0.5 font-mono text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+                  />
+                  min
+                </label>
+                <p className="mt-1.5 text-[10px] text-canvas-muted-foreground">
+                  Only while this tab stays open; not saved with the workflow.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSchedule((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                  className={`mt-2 w-full rounded px-2 py-1 text-xs font-semibold transition-colors ${
+                    schedule.enabled
+                      ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                      : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+                  }`}
+                >
+                  {schedule.enabled ? 'Stop scheduled runs' : 'Start scheduled runs'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex min-w-0 items-center gap-1 text-canvas-muted-foreground sm:gap-2">
           <button
@@ -814,43 +955,6 @@ function PlaygroundCanvas() {
           >
             <Eraser className="size-4" />
           </button>
-          <button
-            type="button"
-            onClick={() =>
-              setExportRequest({
-                title: 'Export conversation',
-                markdown: conversationMarkdown,
-                formats: CONVERSATION_FORMATS,
-                defaultName: workflowName,
-              })
-            }
-            disabled={!hasExportableOutput || isRunning}
-            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title="Export conversation"
-            aria-label="Export conversation"
-          >
-            <Download className="size-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSaveWorkflow()}
-            disabled={isRunning}
-            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title="Save workflow (⌘S)"
-            aria-label="Save workflow"
-          >
-            <Save className="size-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleOpenWorkflow()}
-            disabled={isRunning}
-            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title="Open workflow"
-            aria-label="Open workflow"
-          >
-            <FolderOpen className="size-4" />
-          </button>
           <div className="relative shrink-0" ref={recentMenuRef}>
             <button
               type="button"
@@ -882,50 +986,6 @@ function PlaygroundCanvas() {
                     </button>
                   ))
                 )}
-              </div>
-            )}
-          </div>
-          <div className="relative shrink-0" ref={scheduleMenuRef}>
-            <button
-              type="button"
-              onClick={() => setShowSchedule((prev) => !prev)}
-              className={`rounded p-1.5 transition-colors hover:bg-canvas-muted hover:text-canvas-foreground ${
-                schedule.enabled ? 'text-emerald-400' : 'text-canvas-muted-foreground'
-              }`}
-              title={schedule.enabled ? `Running every ${schedule.intervalMinutes} min` : 'Run on a schedule'}
-              aria-label="Run on a schedule"
-            >
-              <Clock className="size-4" />
-            </button>
-            {showSchedule && (
-              <div className="absolute right-0 top-full z-10 mt-1 w-56 rounded-md border border-canvas-border bg-canvas p-3 shadow-lg">
-                <label className="flex items-center gap-2 text-xs text-canvas-foreground">
-                  Run every
-                  <input
-                    type="number"
-                    min={1}
-                    value={schedule.intervalMinutes}
-                    onChange={(e) =>
-                      setSchedule((prev) => ({ ...prev, intervalMinutes: Math.max(1, Number(e.target.value) || 1) }))
-                    }
-                    className="w-14 rounded border border-canvas-border bg-canvas px-1.5 py-0.5 font-mono text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
-                  />
-                  min
-                </label>
-                <p className="mt-1.5 text-[10px] text-canvas-muted-foreground">
-                  Only while this tab stays open; not saved with the workflow.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setSchedule((prev) => ({ ...prev, enabled: !prev.enabled }))}
-                  className={`mt-2 w-full rounded px-2 py-1 text-xs font-semibold transition-colors ${
-                    schedule.enabled
-                      ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                      : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-                  }`}
-                >
-                  {schedule.enabled ? 'Stop scheduled runs' : 'Start scheduled runs'}
-                </button>
               </div>
             )}
           </div>

@@ -6,12 +6,9 @@
 
 const { ensureModels } = require('../shared/model-fetch.cjs');
 
-// Maps a language label (matches BERGAMOT_EN_TARGETS in playground-node-defs.ts)
-// to its @qvac/sdk registry constant name and the lowercase code loadModel's
-// `modelConfig.to` wants (schemas/translation-config.js's BERGAMOT_LANGUAGES
-// enum, not the registry constant's own casing). Both cross-checked against
-// the installed @qvac/sdk: every BERGAMOT_EN_* constant it exports, and every
-// code BERGAMOT_LANGUAGES accepts.
+// Maps a language label to its @qvac/sdk registry constant and the lowercase
+// code loadModel's `modelConfig.to` wants (translation-config.js's
+// BERGAMOT_LANGUAGES enum, not the registry constant's own casing).
 const NMT_PRESETS = {
   Arabic: { key: 'BERGAMOT_EN_AR', to: 'ar' },
   Azerbaijani: { key: 'BERGAMOT_EN_AZ', to: 'az' },

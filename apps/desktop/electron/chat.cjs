@@ -466,11 +466,9 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
         emitted = true;
         emitChunk({ requestId, delta: tail, done: false, error: null });
       }
-      // Replace the whole assistant message with the paragraph-split version
-      // so the user sees visible paragraph breaks even when the model emits
-      // one run-on paragraph. Skipped outside lessons: splitParagraphs collapses
-      // every internal newline, which shreds Markdown tables and lists that the
-      // no-lesson system prompt explicitly asked the model to produce.
+      // Splits run-on replies into paragraphs. Skipped outside lessons:
+      // splitParagraphs collapses newlines, which shreds the Markdown
+      // tables/lists the no-lesson system prompt asks the model to produce.
       const recapStripped = stripTurnRecap(assembled);
       const finalised = lessonKey ? splitParagraphs(recapStripped) : recapStripped;
       if (finalised.length > 0 && (finalised !== assembled || !emitted)) {
