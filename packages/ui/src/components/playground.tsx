@@ -29,6 +29,7 @@ import {
   Play,
   RotateCcw,
   Save,
+  Sparkles,
   Square,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -39,6 +40,8 @@ import { generateStandaloneScript } from './playground-codegen.js';
 import { buildConversationMarkdown, downloadBlob, type ExportFormat, slugFilename } from './playground-export.js';
 import { PlaygroundExportPopup } from './playground-export-popup.js';
 import { PlaygroundFlowEdge } from './playground-flow-edge.js';
+import type { PresetEntry } from './playground-preset-data.js';
+import { PlaygroundPresetsModal } from './playground-presets-modal.js';
 import { PlaygroundFlowNode } from './playground-flow-node.js';
 import { BRANCH_COLOR, PLAYGROUND_NODE_DEFS, PORT_COLOR, typesCompatible } from './playground-node-defs.js';
 import { PLAYGROUND_DRAG_MIME, PlaygroundPalette } from './playground-palette.js';
@@ -417,6 +420,23 @@ function PlaygroundCanvas() {
     [setAssistantEntry],
   );
 
+  // Reads window.academy fresh on every call, not captured at render time:
+  // the preload bridge can attach after this component's first render.
+  function bridgeCall<A extends unknown[], R>(pick: (api: AcademyAPI) => ((...args: A) => Promise<R>) | undefined, label: string) {
+    return async (...args: A): Promise<R> => {
+      const fn = window.academy && pick(window.academy);
+      if (typeof fn !== 'function') throw new Error(`${label} is only available in the desktop app.`);
+      return fn(...args);
+    };
+  }
+  const ocrNode = useCallback(bridgeCall((a) => a.ocr, 'Read text from image'), []);
+  const classifyImageNode = useCallback(bridgeCall((a) => a.classifyImage, 'Classify image'), []);
+  const textToSpeechNode = useCallback(bridgeCall((a) => a.textToSpeech, 'Text to speech'), []);
+  const speechToTextNode = useCallback(bridgeCall((a) => a.speechToText, 'Speech to text'), []);
+  const generateImageNode = useCallback(bridgeCall((a) => a.generateImage, 'Generate image'), []);
+  const generateVideoNode = useCallback(bridgeCall((a) => a.generateVideo, 'Generate video'), []);
+  const generateMusicNode = useCallback(bridgeCall((a) => a.generateMusic, 'Generate music'), []);
+
   const [isRunning, setIsRunning] = useState(false);
   // Which nodes' `run` reported an error on the run currently shown in the
   // output feed; render-only, cleared at the start of every run and reset.
@@ -437,6 +457,8 @@ function PlaygroundCanvas() {
         ...prev,
         { kind: 'chat-assistant', id: nextEntryId(), content, streaming: false },
       ]);
+    const pushMedia = (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) =>
+      setEntries((prev) => [...prev, { kind: 'media', id: nextEntryId(), mediaType, dataUrl, caption }]);
     try {
       for (const id of topoOrderIds(nodes, edges)) {
         if (stopRequestedRef.current) break;
@@ -484,6 +506,14 @@ function PlaygroundCanvas() {
             confirm: confirmNode,
             search: searchDocumentsNode,
             setOutput: (value, handle) => nodeOutputs.set(outKey(id, handle), value),
+            pushMedia,
+            ocr: ocrNode,
+            classifyImage: classifyImageNode,
+            textToSpeech: textToSpeechNode,
+            speechToText: speechToTextNode,
+            generateImage: generateImageNode,
+            generateVideo: generateVideoNode,
+            generateMusic: generateMusicNode,
             stopRequested: () => stopRequestedRef.current,
           });
         } catch (err) {
@@ -498,7 +528,21 @@ function PlaygroundCanvas() {
       setStopRequested(false);
       stopRequestedRef.current = false;
     }
-  }, [nodes, edges, runAgentNode, translateNode, confirmNode, searchDocumentsNode]);
+  }, [
+    nodes,
+    edges,
+    runAgentNode,
+    translateNode,
+    confirmNode,
+    searchDocumentsNode,
+    ocrNode,
+    classifyImageNode,
+    textToSpeechNode,
+    speechToTextNode,
+    generateImageNode,
+    generateVideoNode,
+    generateMusicNode,
+  ]);
 
   // Read inside the interval tick below instead of closing over `isRunning`
   // directly, so a long run in progress doesn't get a second one stacked on top.
@@ -523,6 +567,7 @@ function PlaygroundCanvas() {
     setStopRequested(true);
     const requestId = pendingRequestIdRef.current;
     if (requestId) void window.academy?.chat?.stop?.(requestId).catch(() => undefined);
+    void window.academy?.cancelGenerateVideo?.().catch(() => undefined);
     if (confirmResolversRef.current.size > 0) {
       const pendingIds = new Set(confirmResolversRef.current.keys());
       for (const resolve of confirmResolversRef.current.values()) resolve(false);
@@ -571,8 +616,8 @@ function PlaygroundCanvas() {
     [nodes, edges, workflowName],
   );
 
-  const handleExportCode = useCallback(() => {
-    const script = generateStandaloneScript(buildWorkflow());
+  const handleExportCode = useCallback(async () => {
+    const script = await generateStandaloneScript(buildWorkflow());
     downloadBlob(new Blob([script], { type: 'text/javascript' }), slugFilename(workflowName, 'cjs'));
   }, [buildWorkflow, workflowName]);
 
@@ -666,6 +711,16 @@ function PlaygroundCanvas() {
     [applyLoadedWorkflow],
   );
 
+  const [showPresets, setShowPresets] = useState(false);
+  const handleLoadPreset = useCallback(
+    (entry: PresetEntry) => {
+      fileHandleRef.current = null;
+      applyLoadedWorkflow(entry.workflow);
+      setShowPresets(false);
+    },
+    [applyLoadedWorkflow],
+  );
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -692,7 +747,8 @@ function PlaygroundCanvas() {
   const hasExportableOutput = entries.some(
     (e) =>
       (e.kind === 'chat-assistant' && e.content.trim().length > 0) ||
-      (e.kind === 'run' && e.lines.some((l) => l.line.trim().length > 0)),
+      (e.kind === 'run' && e.lines.some((l) => l.line.trim().length > 0)) ||
+      e.kind === 'media',
   );
 
   // `hasError` is render-only (never saved with the workflow); only the errored
@@ -778,7 +834,7 @@ function PlaygroundCanvas() {
                 defaultName: workflowName,
               }),
           },
-          { label: 'Export as project', icon: FileCode, disabled: isRunning, onSelect: handleExportCode },
+          { label: 'Export as project', icon: FileCode, disabled: isRunning, onSelect: () => void handleExportCode() },
         ],
       },
       {
@@ -799,7 +855,7 @@ function PlaygroundCanvas() {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col">
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-canvas-border bg-canvas px-3 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <span
@@ -955,6 +1011,16 @@ function PlaygroundCanvas() {
           >
             <Eraser className="size-4" />
           </button>
+          <button
+            type="button"
+            onClick={() => setShowPresets(true)}
+            disabled={isRunning}
+            className="shrink-0 rounded p-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            title="Presets"
+            aria-label="Presets"
+          >
+            <Sparkles className="size-4" />
+          </button>
           <div className="relative shrink-0" ref={recentMenuRef}>
             <button
               type="button"
@@ -1097,6 +1163,7 @@ function PlaygroundCanvas() {
           onClose={() => setExportRequest(null)}
         />
       )}
+      {showPresets && <PlaygroundPresetsModal onClose={() => setShowPresets(false)} onSelect={handleLoadPreset} />}
     </div>
   );
 }

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "meeting-notes-summary-flow",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "agent1",
+      "kind": "ai-agent",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "task": "Read these meeting notes and reply with a numbered list of action items, one per line, each with the owner if named:\n\nMeeting notes - product sync:\n- Sarah will finalize the pricing page copy by Friday.\n- Dev team is blocked on the payments API key, need it from finance by Wednesday.\n- Marketing wants a launch date decision by end of week.\n- Everyone agreed to push the beta invite list out this afternoon.\n"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "agent1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "audio-alert-flow",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "tts1",
+      "kind": "text-to-speech",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "source": "Custom text",
+        "text": "Warning: disk space is running low."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "tts1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

@@ -53,6 +53,13 @@ export type ConsoleEntry =
       message: string;
       /** null until answered; the playground's Ask-for-confirmation node awaits it. */
       answer: 'yes' | 'no' | null;
+    }
+  | {
+      kind: 'media';
+      id: string;
+      mediaType: 'image' | 'audio' | 'video';
+      dataUrl: string;
+      caption?: string;
     };
 
 /** Timeline panel. Typing happens in the separate `ChatInputBar`, which
@@ -328,6 +335,13 @@ export function LessonConsole({ entries, onStopCheck, emptyStateText, onConfirm 
           return (
             <TimelineRow key={entry.id} state={entry.answer === null ? 'thinking' : 'success'} card>
               <ConfirmCard entry={entry} onAnswer={(answer) => onConfirm?.(entry.id, answer)} />
+            </TimelineRow>
+          );
+        }
+        if (entry.kind === 'media') {
+          return (
+            <TimelineRow key={entry.id} state="success" card>
+              <MediaCard entry={entry} />
             </TimelineRow>
           );
         }
@@ -890,6 +904,28 @@ function ConfirmCard({
         ) : (
           <p className="mt-1.5 text-canvas-muted-foreground">Answered: {entry.answer === 'yes' ? 'Yes' : 'No'}</p>
         )}
+      </div>
+    </EntryCard>
+  );
+}
+
+function MediaCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'media' }> }) {
+  return (
+    <EntryCard label={entry.mediaType}>
+      <div className="font-mono text-xs">
+        {entry.mediaType === 'image' && (
+          // biome-ignore lint/performance/noImgElement: a data: URL from a local generation call, not a remote asset next/image would optimize
+          <img src={entry.dataUrl} alt={entry.caption ?? 'Generated image'} className="max-w-full rounded-md" />
+        )}
+        {entry.mediaType === 'audio' && (
+          // biome-ignore lint/a11y/useMediaCaption: synthesized/generated audio has no caption track to attach
+          <audio controls src={entry.dataUrl} className="w-full" />
+        )}
+        {entry.mediaType === 'video' && (
+          // biome-ignore lint/a11y/useMediaCaption: generated clip has no caption track to attach
+          <video controls src={entry.dataUrl} className="max-w-full rounded-md" />
+        )}
+        {entry.caption && <p className="mt-1.5 text-canvas-muted-foreground">{entry.caption}</p>}
       </div>
     </EntryCard>
   );

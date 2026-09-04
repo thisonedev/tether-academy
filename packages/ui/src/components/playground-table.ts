@@ -51,6 +51,28 @@ export function parseCsv(text: string): PlaygroundTable {
   return { headers: headers ?? [], rows: body };
 }
 
+/** Real file, not the sample: .csv/.txt parse directly, .xlsx/.xls go through
+ *  the `xlsx` package (already a dependency, used for export), first sheet only. */
+export async function parseSpreadsheetFile(fileName: string, dataUrl: string): Promise<PlaygroundTable> {
+  if (/\.xlsx?$/i.test(fileName)) {
+    const XLSX = await import('xlsx');
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    const workbook = XLSX.read(base64, { type: 'base64' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0] ?? ''];
+    const rows: string[][] = sheet
+      ? XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, raw: false })
+      : [];
+    const [headers, ...body] = rows;
+    return { headers: headers ?? [], rows: body };
+  }
+  const comma = dataUrl.indexOf(',');
+  const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return parseCsv(new TextDecoder('utf-8').decode(bytes));
+}
+
 export function filterTable(
   table: PlaygroundTable,
   column: string,

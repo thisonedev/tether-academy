@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "document-search-flow",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "search1",
+      "kind": "search-documents",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "source": "Choose files",
+        "files": "[{\"name\":\"doc-postgres.txt\",\"dataUrl\":\"data:text/plain;base64,UG9zdGdyZVNRTCBpcyBhbiBvcGVuLXNvdXJjZSByZWxhdGlvbmFsIGRhdGFiYXNlIHRoYXQgZXh0ZW5kcyBTUUwgd2l0aCBhZHZhbmNlZCBmZWF0dXJlcy4gSXQgc3VwcG9ydHMgSlNPTiwgZnVsbC10ZXh0IHNlYXJjaCwgYW5kIGN1c3RvbSBkYXRhIHR5cGVzLCBtYWtpbmcgaXQgc3VpdGFibGUgZm9yIGJvdGggdHJhbnNhY3Rpb25hbCBhbmQgYW5hbHl0aWNhbCB3b3JrbG9hZHMuCg==\"},{\"name\":\"doc-kubernetes.txt\",\"dataUrl\":\"data:text/plain;base64,S3ViZXJuZXRlcyBpcyBhbiBvcGVuLXNvdXJjZSBjb250YWluZXIgb3JjaGVzdHJhdGlvbiBwbGF0Zm9ybSB0aGF0IGF1dG9tYXRlcyB0aGUgZGVwbG95bWVudCwgc2NhbGluZywgYW5kIG1hbmFnZW1lbnQgb2YgY29udGFpbmVyaXplZCBhcHBsaWNhdGlvbnMgYWNyb3NzIGEgY2x1c3RlciBvZiBtYWNoaW5lcy4K\"}]",
+        "query": "container orchestration"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "search1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

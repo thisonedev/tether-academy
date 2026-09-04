@@ -562,6 +562,22 @@ export interface AcademyAPI {
   /** Real chunk + embed + vector search over `documents` for `query`, via a
    *  throwaway RAG workspace that's deleted after the call returns. */
   ragSearch?: (documents: string[], query: string, topK?: number) => Promise<AcademyRagSearchResult[]>;
+  /** `image` is a data: URL, as read from a picked file via FileReader. */
+  ocr?: (image: string) => Promise<string>;
+  classifyImage?: (image: string) => Promise<string>;
+  /** Returns a data: URL for a playable WAV. */
+  textToSpeech?: (text: string) => Promise<string>;
+  /** `audio` is a data: URL; WAV in, plain transcript text out. */
+  speechToText?: (audio: string) => Promise<string>;
+  /** Returns a data: URL for a PNG. */
+  generateImage?: (prompt: string, model?: string) => Promise<string>;
+  /** Returns a data: URL for the generated clip (typically AVI); can take minutes.
+   *  `frames` must be 4*k + 1 (Wan's constraint); `steps` is diffusion steps. */
+  generateVideo?: (prompt: string, model?: string, frames?: number, steps?: number) => Promise<string>;
+  /** Cancels whatever `generateVideo` call is currently in flight; a no-op if none is. */
+  cancelGenerateVideo?: () => Promise<void>;
+  /** Returns a data: URL for a playable WAV. */
+  generateMusic?: (caption: string, durationSec?: number) => Promise<string>;
 }
 
 export interface AcademyRagSearchResult {

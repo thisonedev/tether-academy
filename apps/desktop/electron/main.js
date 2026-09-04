@@ -77,6 +77,12 @@ const chat = require('./chat.cjs');
 const { createPlaygroundCredentials } = require('./playground-credentials.cjs');
 const translate = require('./translate.cjs');
 const rag = require('./rag.cjs');
+const ocr = require('./ocr.cjs');
+const classify = require('./classify.cjs');
+const tts = require('./tts.cjs');
+const transcribe = require('./transcribe.cjs');
+const diffusion = require('./diffusion.cjs');
+const audiogen = require('./audiogen.cjs');
 const { buildLesson } = require('./runner-process.cjs');
 const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
@@ -656,6 +662,14 @@ handle('academy:playground-credentials:delete', async (name) => playgroundCreden
 
 handle('academy:translate', async ({ text, language }) => translate.translateText(text, language));
 handle('academy:rag-search', async ({ documents, query, topK }) => rag.searchDocuments(documents, query, topK));
+handle('academy:ocr', async ({ image }) => ocr.readTextFromImage(image));
+handle('academy:classify-image', async ({ image }) => classify.classifyImage(image));
+handle('academy:text-to-speech', async ({ text }) => tts.speak(text));
+handle('academy:speech-to-text', async ({ audio }) => transcribe.transcribeAudio(audio));
+handle('academy:generate-image', async ({ prompt, model }) => diffusion.generateImage(prompt, model));
+handle('academy:generate-video', async ({ prompt, model, frames, steps }) => diffusion.generateVideo(prompt, model, frames, steps));
+handle('academy:generate-video:cancel', async () => diffusion.cancelVideo());
+handle('academy:generate-music', async ({ caption, durationSec }) => audiogen.generateMusic(caption, durationSec));
 
 handle('academy:device:info', async () => getDeviceInfo());
 

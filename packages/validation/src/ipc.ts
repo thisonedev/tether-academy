@@ -177,6 +177,36 @@ export const academyTranslateSchema = z.object({
   language: z.string().min(1).max(64),
 });
 
+/** A `data:` URL, as read from a picked file via FileReader in the renderer. */
+export const academyImageInputSchema = z.object({
+  image: z.string().min(1).max(25_000_000),
+});
+
+export const academyTextToSpeechSchema = z.object({
+  text: z.string().min(1).max(5_000),
+});
+
+export const academySpeechToTextSchema = z.object({
+  audio: z.string().min(1).max(60_000_000),
+});
+
+export const academyGenerateImageSchema = z.object({
+  prompt: z.string().min(1).max(2_000),
+  model: z.string().min(1).max(64).optional(),
+});
+
+export const academyGenerateVideoSchema = z.object({
+  prompt: z.string().min(1).max(2_000),
+  model: z.string().min(1).max(64).optional(),
+  frames: z.number().int().min(1).max(200).optional(),
+  steps: z.number().int().min(1).max(150).optional(),
+});
+
+export const academyGenerateMusicSchema = z.object({
+  caption: z.string().min(1).max(2_000),
+  durationSec: z.number().int().min(1).max(60).optional(),
+});
+
 /** A playground credential's name: the only thing a workflow JSON is ever allowed to store, never the secret itself. */
 export const playgroundCredentialNameSchema = z
   .string()

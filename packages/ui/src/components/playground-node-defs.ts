@@ -1,10 +1,10 @@
+import { dataUrlToText, parsePickedFiles } from './playground-files.js';
 import {
   filterTable,
   IF_OPERATORS,
   IF_UNARY_OPERATORS,
-  parseCsv,
+  parseSpreadsheetFile,
   rowToMarkdown,
-  SAMPLE_EXPENSES_CSV,
   splitLines,
   splitTable,
   tableToMarkdown,
@@ -62,7 +62,7 @@ function defaultsFrom(fields: PlaygroundNodeKindDef['fields']) {
 }
 
 const readFileFields: PlaygroundNodeKindDef['fields'] = [
-  { key: 'sheet', label: 'Sheet name', type: 'text' },
+  { key: 'file', label: 'Spreadsheet file', type: 'file', accept: '.csv,.txt,.xlsx,.xls' },
 ];
 const filterFields: PlaygroundNodeKindDef['fields'] = [
   {
@@ -145,12 +145,61 @@ const askDocFields: PlaygroundNodeKindDef['fields'] = [
 const confirmFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'message', label: 'Message to show', type: 'text' },
 ];
+// One entry per model this build knows how to load, matching diffusion.cjs's
+// IMAGE_MODELS/VIDEO_MODELS keys exactly. Add a model in both places, not just here.
+const IMAGE_MODEL_OPTIONS = ['sd2.1'];
+const VIDEO_MODEL_OPTIONS = ['wan2.1-1.3b'];
+const ttsFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'source', label: 'Text source', type: 'select', options: INPUT_SOURCE_OPTIONS },
+  { key: 'text', label: 'Text to speak', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+];
+const sttFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'file', label: 'Audio file (.wav)', type: 'file', accept: '.wav' },
+];
+const imageGenFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'source', label: 'Prompt source', type: 'select', options: INPUT_SOURCE_OPTIONS },
+  { key: 'prompt', label: 'Prompt', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'model', label: 'Model', type: 'select', options: IMAGE_MODEL_OPTIONS },
+];
+// Wan's frame count must be 4*k + 1; these are the SDK's own documented
+// checkpoints (17 through 81, the model's native training length).
+const VIDEO_LENGTH_OPTIONS = [
+  '17 frames (~1s, fast)',
+  '33 frames (~2s)',
+  '49 frames (~3s)',
+  '65 frames (~4s)',
+  '81 frames (~5s, best quality)',
+];
+const VIDEO_QUALITY_OPTIONS = ['15 steps (fast)', '30 steps (balanced)', '50 steps (high quality)'];
+const videoGenFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'source', label: 'Prompt source', type: 'select', options: INPUT_SOURCE_OPTIONS },
+  { key: 'prompt', label: 'Prompt', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'model', label: 'Model', type: 'select', options: VIDEO_MODEL_OPTIONS },
+  { key: 'length', label: 'Length', type: 'select', options: VIDEO_LENGTH_OPTIONS },
+  { key: 'quality', label: 'Quality', type: 'select', options: VIDEO_QUALITY_OPTIONS },
+];
+const musicGenFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'source', label: 'Description source', type: 'select', options: INPUT_SOURCE_OPTIONS },
+  { key: 'caption', label: 'Describe the music', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'duration', label: 'Duration (seconds, max 60)', type: 'text' },
+];
+const ocrFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'file', label: 'Image file', type: 'file', accept: 'image/*' },
+];
+const classifyFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'file', label: 'Image file', type: 'file', accept: 'image/*' },
+];
+// Real files, not typed-in text: a search index over documents the user
+// never actually has to paste is the whole point of the node.
+const SEARCH_SOURCE_OPTIONS = ['Choose files', 'Previous result'];
 const searchDocsFields: PlaygroundNodeKindDef['fields'] = [
-  { key: 'source', label: 'Document source', type: 'select', options: INPUT_SOURCE_OPTIONS },
+  { key: 'source', label: 'Document source', type: 'select', options: SEARCH_SOURCE_OPTIONS },
   {
-    key: 'documents',
-    label: 'Documents (one per line)',
-    type: 'textarea',
+    key: 'files',
+    label: 'Documents',
+    type: 'file',
+    accept: '.txt,.md,.csv',
+    multiple: true,
     hiddenWhen: (fields) => !usesCustomText(fields),
   },
   { key: 'query', label: 'Search query', type: 'text' },
@@ -177,10 +226,14 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     fields: readFileFields,
     defaultFields: defaultsFrom(readFileFields),
     async run(ctx) {
-      const table = parseCsv(SAMPLE_EXPENSES_CSV);
+      const picked = parsePickedFiles(ctx.fields.file)[0];
+      if (!picked) {
+        ctx.pushRunLine('err', 'No file selected: open this node and choose a spreadsheet.');
+        return;
+      }
+      const table = await parseSpreadsheetFile(picked.name, picked.dataUrl);
       ctx.setOutput(table);
-      const sheet = ctx.fields.sheet || 'Expenses';
-      ctx.pushResult(`**${sheet}** — ${table.rows.length} rows\n\n${tableToMarkdown(table)}`);
+      ctx.pushResult(`**${picked.name}**, ${table.rows.length} rows\n\n${tableToMarkdown(table)}`);
     },
   },
   filter: {
@@ -329,28 +382,43 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       );
     },
   },
-  // Inactive: placeholders so every chakra color actually shows up in the palette,
-  // not real node kinds yet. No handler in the run loop, can't be dragged onto
-  // the canvas (see PlaygroundPalette), and never claim otherwise.
   'text-to-speech': {
     kind: 'text-to-speech',
     label: 'Text to speech',
     category: 'ai-voice',
     input: 'any',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: ttsFields,
+    defaultFields: defaultsFrom(ttsFields),
+    async run(ctx) {
+      const text = ctx.resolveContent('text');
+      if (text === undefined) {
+        ctx.pushRunLine('err', 'Nothing to speak: the previous step produced no text, or nothing is connected.');
+        return;
+      }
+      const dataUrl = await ctx.textToSpeech(text);
+      ctx.setOutput(dataUrl);
+      ctx.pushMedia('audio', dataUrl, text);
+    },
   },
   'speech-to-text': {
     kind: 'speech-to-text',
     label: 'Speech to text',
     category: 'ai-voice',
-    input: 'any',
+    input: 'flow',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: sttFields,
+    defaultFields: defaultsFrom(sttFields),
+    async run(ctx) {
+      const picked = parsePickedFiles(ctx.fields.file)[0];
+      if (!picked) {
+        ctx.pushRunLine('err', 'No audio file selected: open this node and choose a .wav file.');
+        return;
+      }
+      const text = await ctx.speechToText(picked.dataUrl);
+      ctx.setOutput(text);
+      ctx.pushResult(text || '[no speech detected]');
+    },
   },
   'generate-image': {
     kind: 'generate-image',
@@ -358,9 +426,19 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     category: 'ai-media',
     input: 'any',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: imageGenFields,
+    defaultFields: defaultsFrom(imageGenFields),
+    async run(ctx) {
+      const prompt = ctx.resolveContent('prompt');
+      if (prompt === undefined) {
+        ctx.pushRunLine('err', 'Nothing to generate from: the previous step produced no text, or nothing is connected.');
+        return;
+      }
+      ctx.pushRunLine('ok', `Generating image with ${ctx.fields.model || IMAGE_MODEL_OPTIONS[0]}…`);
+      const dataUrl = await ctx.generateImage(prompt, ctx.fields.model);
+      ctx.setOutput(dataUrl);
+      ctx.pushMedia('image', dataUrl, prompt);
+    },
   },
   'generate-video': {
     kind: 'generate-video',
@@ -368,9 +446,24 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     category: 'ai-media',
     input: 'any',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: videoGenFields,
+    defaultFields: defaultsFrom(videoGenFields),
+    async run(ctx) {
+      const prompt = ctx.resolveContent('prompt');
+      if (prompt === undefined) {
+        ctx.pushRunLine('err', 'Nothing to generate from: the previous step produced no text, or nothing is connected.');
+        return;
+      }
+      const frames = Number.parseInt(ctx.fields.length, 10) || 17;
+      const steps = Number.parseInt(ctx.fields.quality, 10) || 30;
+      ctx.pushRunLine(
+        'ok',
+        `Generating video with ${ctx.fields.model || VIDEO_MODEL_OPTIONS[0]} (${frames} frames, ${steps} steps). This can take several minutes.`,
+      );
+      const dataUrl = await ctx.generateVideo(prompt, ctx.fields.model, frames, steps);
+      ctx.setOutput(dataUrl);
+      ctx.pushMedia('video', dataUrl, prompt);
+    },
   },
   'generate-music': {
     kind: 'generate-music',
@@ -378,29 +471,58 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     category: 'ai-media',
     input: 'any',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: musicGenFields,
+    defaultFields: defaultsFrom(musicGenFields),
+    async run(ctx) {
+      const caption = ctx.resolveContent('caption');
+      if (caption === undefined) {
+        ctx.pushRunLine('err', 'Nothing to generate from: the previous step produced no text, or nothing is connected.');
+        return;
+      }
+      const duration = Math.min(60, Math.max(1, Number(ctx.fields.duration) || 10));
+      ctx.pushRunLine('ok', `Generating ${duration}s of music…`);
+      const dataUrl = await ctx.generateMusic(caption, duration);
+      ctx.setOutput(dataUrl);
+      ctx.pushMedia('audio', dataUrl, caption);
+    },
   },
   ocr: {
     kind: 'ocr',
     label: 'Read text from image',
     category: 'ai-media',
-    input: 'any',
+    input: 'flow',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: ocrFields,
+    defaultFields: defaultsFrom(ocrFields),
+    async run(ctx) {
+      const picked = parsePickedFiles(ctx.fields.file)[0];
+      if (!picked) {
+        ctx.pushRunLine('err', 'No image selected: open this node and choose a file.');
+        return;
+      }
+      const text = await ctx.ocr(picked.dataUrl);
+      ctx.setOutput(text);
+      ctx.pushResult(text || '[no text found]');
+    },
   },
   'classify-image': {
     kind: 'classify-image',
     label: 'Classify image',
     category: 'ai-media',
-    input: 'any',
+    input: 'flow',
     output: 'value',
-    fields: [],
-    defaultFields: () => ({}),
-    inactive: true,
+    fields: classifyFields,
+    defaultFields: defaultsFrom(classifyFields),
+    async run(ctx) {
+      const picked = parsePickedFiles(ctx.fields.file)[0];
+      if (!picked) {
+        ctx.pushRunLine('err', 'No image selected: open this node and choose a file.');
+        return;
+      }
+      const text = await ctx.classifyImage(picked.dataUrl);
+      ctx.setOutput(text);
+      ctx.pushResult(text);
+    },
   },
   'search-documents': {
     kind: 'search-documents',
@@ -411,20 +533,27 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     fields: searchDocsFields,
     defaultFields: defaultsFrom(searchDocsFields),
     async run(ctx) {
-      const raw = ctx.resolveContent('documents');
-      if (raw === undefined) {
-        ctx.pushRunLine(
-          'err',
-          "Nothing to work with: the previous step produced no text, or nothing is connected.",
-        );
-        return;
+      let documents: string[];
+      if (usesCustomText(ctx.fields)) {
+        const picked = parsePickedFiles(ctx.fields.files);
+        if (picked.length === 0) {
+          ctx.pushRunLine('err', 'No documents selected: open this node and choose files.');
+          return;
+        }
+        documents = picked.map((f) => dataUrlToText(f.dataUrl)).filter((d) => d.trim().length > 0);
+      } else {
+        const raw = ctx.readInput();
+        if (!raw || typeof raw !== 'string') {
+          ctx.pushRunLine('err', 'Nothing to work with: the previous step produced no text, or nothing is connected.');
+          return;
+        }
+        documents = raw
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
       }
-      const documents = raw
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0);
       if (documents.length === 0) {
-        ctx.pushRunLine('err', 'No documents to search: nothing but blank lines.');
+        ctx.pushRunLine('err', 'No documents to search.');
         return;
       }
       ctx.setOutput(await ctx.search(documents, ctx.fields.query ?? ''));

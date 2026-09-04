@@ -21,6 +21,7 @@
     "@academy/core": "workspace:*",
     "@academy/courses": "workspace:*",
     "@academy/validation": "workspace:*",
+    "@academy/workflows": "workspace:*",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.11.6",
     "class-variance-authority": "^0.7.0",

@@ -319,6 +319,9 @@ importers:
       '@academy/validation':
         specifier: workspace:*
         version: link:../validation
+      '@academy/workflows':
+        specifier: workspace:*
+        version: link:../workflows
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.56.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -420,6 +423,8 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+
+  packages/workflows: {}
 
 packages:
 

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "research-notes-search-flow",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "search1",
+      "kind": "search-documents",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "source": "Choose files",
+        "files": "[{\"name\":\"doc-solar.txt\",\"dataUrl\":\"data:text/plain;base64,U29sYXIgcGFuZWxzIGNvbnZlcnQgc3VubGlnaHQgaW50byBlbGVjdHJpY2l0eSB1c2luZyBwaG90b3ZvbHRhaWMgY2VsbHMuIEVmZmljaWVuY3kgaGFzIGltcHJvdmVkIHN0ZWFkaWx5LCB3aXRoIHJlc2lkZW50aWFsIHBhbmVscyBub3cgY29tbW9ubHkgcmVhY2hpbmcgMjAtMjIlIGNvbnZlcnNpb24gZWZmaWNpZW5jeS4K\"},{\"name\":\"doc-wind.txt\",\"dataUrl\":\"data:text/plain;base64,V2luZCB0dXJiaW5lcyBnZW5lcmF0ZSBlbGVjdHJpY2l0eSBieSBjb252ZXJ0aW5nIGtpbmV0aWMgZW5lcmd5IGZyb20gbW92aW5nIGFpciBpbnRvIHJvdGF0aW9uYWwgZW5lcmd5LCB3aGljaCBhIGdlbmVyYXRvciB0aGVuIGNvbnZlcnRzIGludG8gZWxlY3RyaWNhbCBwb3dlci4gT2Zmc2hvcmUgdHVyYmluZXMgY2FuIGJlIHNpZ25pZmljYW50bHkgbGFyZ2VyIHRoYW4gb25zaG9yZSBvbmVzLgo=\"}]",
+        "query": "offshore turbine size"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "search1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

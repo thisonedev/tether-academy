@@ -33,6 +33,17 @@ export interface PlaygroundRunContext {
   /** Records this node's output for whatever's wired downstream. `handle`
    *  selects the output port for dual-output kinds (If's "true"/"false"). */
   setOutput: (value: PlaygroundTable | string, handle?: string) => void;
+  /** Appends an inline image/audio/video result to the output feed. `dataUrl`
+   *  is a full `data:` URL (already carries its own MIME type). */
+  pushMedia: (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) => void;
+  /** `image` is a data: URL. All six below throw when the desktop bridge isn't available (web). */
+  ocr: (image: string) => Promise<string>;
+  classifyImage: (image: string) => Promise<string>;
+  textToSpeech: (text: string) => Promise<string>;
+  speechToText: (audio: string) => Promise<string>;
+  generateImage: (prompt: string, model?: string) => Promise<string>;
+  generateVideo: (prompt: string, model?: string, frames?: number, steps?: number) => Promise<string>;
+  generateMusic: (caption: string, durationSec?: number) => Promise<string>;
   stopRequested: () => boolean;
 }
 
@@ -43,8 +54,12 @@ export type PlaygroundCategory = 'trigger' | 'data' | 'logic' | 'ai-text' | 'ai-
 export interface PlaygroundFieldDef {
   key: string;
   label: string;
-  type: 'text' | 'select' | 'textarea';
+  type: 'text' | 'select' | 'textarea' | 'file';
   options?: string[];
+  /** `type: 'file'` only: the `<input accept>` filter, and whether more than
+   *  one file can be picked at once (stored as a JSON-encoded array). */
+  accept?: string;
+  multiple?: boolean;
   /** Hides this field from the config popup when it doesn't apply: either based
    *  on another field's value (a value input for a unary operator), or on what's
    *  actually wired into this node (a table's "Column" picker, given plain text). */

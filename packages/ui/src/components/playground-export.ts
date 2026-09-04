@@ -107,6 +107,8 @@ export function buildConversationMarkdown(entries: ConsoleEntry[]): string {
     } else if (entry.kind === 'run') {
       const text = entry.lines.map((l) => l.line).join('\n').trim();
       if (text.length > 0) parts.push(`\`\`\`\n${text}\n\`\`\``);
+    } else if (entry.kind === 'media') {
+      parts.push(`[generated ${entry.mediaType}${entry.caption ? `: ${entry.caption}` : ''}]`);
     }
   }
   return parts.join('\n\n');

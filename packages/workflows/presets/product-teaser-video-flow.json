@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "product-teaser-video-flow",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "vid1",
+      "kind": "generate-video",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "source": "Custom text",
+        "prompt": "a red bicycle wheel spinning",
+        "model": "wan2.1-1.3b"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "vid1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+PostgreSQL is an open-source relational database that extends SQL with advanced features. It supports JSON, full-text search, and custom data types, making it suitable for both transactional and analytical workloads.

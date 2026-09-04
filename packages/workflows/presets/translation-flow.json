@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "name": "Translation Flow",
+  "nodes": [
+    {
+      "id": "n22",
+      "kind": "start",
+      "x": 117.05882352941177,
+      "y": 9.411764705882355,
+      "fields": {}
+    },
+    {
+      "id": "n23",
+      "kind": "ai-agent",
+      "x": 58.70588235294119,
+      "y": 116.35294117647061,
+      "fields": {
+        "task": "Give me 15 reasons why more people should be using Local AI instead of proprietarty LLMs. 5-11 should include QVAC (a solution built by Tether)."
+      }
+    },
+    {
+      "id": "n24",
+      "kind": "if",
+      "x": 88.11764705882351,
+      "y": 245.76470588235293,
+      "fields": {
+        "column": "Date",
+        "operator": "contains",
+        "value": "QVAC"
+      }
+    },
+    {
+      "id": "n25",
+      "kind": "translate",
+      "x": 189.29411764705878,
+      "y": 403.4117647058824,
+      "fields": {
+        "source": "Previous result",
+        "text": "",
+        "language": "Italian"
+      }
+    },
+    {
+      "id": "n26",
+      "kind": "ask-doc",
+      "x": -89.52941176470591,
+      "y": 399.8823529411764,
+      "fields": {
+        "source": "Previous result",
+        "document": "",
+        "question": "How many times QVAC was mentioned?"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "n22",
+      "target": "n23",
+      "sourceHandle": null,
+      "targetHandle": null
+    },
+    {
+      "source": "n23",
+      "target": "n24",
+      "sourceHandle": null,
+      "targetHandle": null
+    },
+    {
+      "source": "n24",
+      "target": "n25",
+      "sourceHandle": "true",
+      "targetHandle": null
+    },
+    {
+      "source": "n24",
+      "target": "n26",
+      "sourceHandle": "true",
+      "targetHandle": null
+    }
+  ]
+}

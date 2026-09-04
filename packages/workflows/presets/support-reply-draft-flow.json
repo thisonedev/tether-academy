@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "support-reply-draft-flow",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "agent1",
+      "kind": "ai-agent",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "task": "Write a short, empathetic customer support reply to this complaint. Offer an expedited replacement. Keep it under 80 words.\n\nHi, I ordered a replacement charger two weeks ago and it still hasn't arrived. The tracking number hasn't updated in 9 days. This is the second time this has happened with your shipping. I'd like a refund or an expedited replacement.\n"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "agent1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

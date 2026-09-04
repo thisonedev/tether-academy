@@ -8,10 +8,17 @@ import {
   Filter,
   FolderOpen,
   GitBranch,
+  Image,
   Languages,
   type LucideIcon,
+  Mic,
+  Music,
   Repeat,
+  ScanText,
   Search,
+  Tags,
+  Video,
+  Volume2,
   Zap,
 } from 'lucide-react';
 import { type CSSProperties, memo } from 'react';
@@ -28,6 +35,13 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'ask-doc': FileQuestion,
   'ask-confirmation': CircleHelp,
   'search-documents': Search,
+  'text-to-speech': Volume2,
+  'speech-to-text': Mic,
+  'generate-image': Image,
+  'generate-video': Video,
+  'generate-music': Music,
+  ocr: ScanText,
+  'classify-image': Tags,
 };
 
 function portStyle(type: PlaygroundDataType): CSSProperties {

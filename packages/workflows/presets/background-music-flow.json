@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "background-music-flow",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "music1",
+      "kind": "generate-music",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "source": "Custom text",
+        "caption": "calm lo-fi background music with soft piano",
+        "duration": "8"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "music1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

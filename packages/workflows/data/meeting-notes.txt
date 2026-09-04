@@ -1,0 +1,5 @@
+Meeting notes - product sync:
+- Sarah will finalize the pricing page copy by Friday.
+- Dev team is blocked on the payments API key, need it from finance by Wednesday.
+- Marketing wants a launch date decision by end of week.
+- Everyone agreed to push the beta invite list out this afternoon.
