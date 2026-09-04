@@ -15,7 +15,7 @@
       "x": 0,
       "y": 120,
       "fields": {
-        "source": "Custom text",
+        "source": "My input",
         "prompt": "a small cabin in a snowy forest at dusk, warm light in the windows",
         "model": "sd2.1"
       }

@@ -109,15 +109,15 @@ const BERGAMOT_EN_TARGETS = [
 ];
 // Shared by every node with a "content" field a wire could also feed: the user
 // picks explicitly rather than a connection silently overriding what they typed.
-const INPUT_SOURCE_OPTIONS = ['Custom text', 'Previous result'];
-const usesCustomText = (fields: Record<string, string>) => fields.source !== 'Previous result';
+const INPUT_SOURCE_OPTIONS = ['My input', 'Upstream input'];
+const usesStaticSource = (fields: Record<string, string>) => fields.source !== 'Upstream input';
 
 // `content` is its own field, separate from instructions: same source toggle
 // as translate/ask-doc below, so a Text or document node wired in has to be
-// picked explicitly via "Previous result" rather than silently overriding it.
+// picked explicitly via "Upstream input" rather than silently overriding it.
 const agentFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'source', label: 'Content source', type: 'select', options: INPUT_SOURCE_OPTIONS },
-  { key: 'content', label: 'Content', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'content', label: 'Content', type: 'textarea', hiddenWhen: (fields) => !usesStaticSource(fields) },
   { key: 'task', label: 'Instructions', type: 'textarea' },
 ];
 
@@ -140,7 +140,7 @@ const translateFields: PlaygroundNodeKindDef['fields'] = [
     key: 'text',
     label: 'Text to translate',
     type: 'textarea',
-    hiddenWhen: (fields) => !usesCustomText(fields),
+    hiddenWhen: (fields) => !usesStaticSource(fields),
   },
   {
     key: 'language',
@@ -155,7 +155,7 @@ const askDocFields: PlaygroundNodeKindDef['fields'] = [
     key: 'document',
     label: 'Source text',
     type: 'textarea',
-    hiddenWhen: (fields) => !usesCustomText(fields),
+    hiddenWhen: (fields) => !usesStaticSource(fields),
   },
   { key: 'question', label: 'Question', type: 'text' },
 ];
@@ -168,14 +168,14 @@ const IMAGE_MODEL_OPTIONS = ['sd2.1'];
 const VIDEO_MODEL_OPTIONS = ['wan2.1-1.3b'];
 const ttsFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'source', label: 'Text source', type: 'select', options: INPUT_SOURCE_OPTIONS },
-  { key: 'text', label: 'Text to speak', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'text', label: 'Text to speak', type: 'textarea', hiddenWhen: (fields) => !usesStaticSource(fields) },
 ];
 const sttFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'file', label: 'Audio file (.wav)', type: 'file', accept: '.wav' },
 ];
 const imageGenFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'source', label: 'Prompt source', type: 'select', options: INPUT_SOURCE_OPTIONS },
-  { key: 'prompt', label: 'Prompt', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'prompt', label: 'Prompt', type: 'textarea', hiddenWhen: (fields) => !usesStaticSource(fields) },
   { key: 'model', label: 'Model', type: 'select', options: IMAGE_MODEL_OPTIONS },
 ];
 // Wan's frame count must be 4*k + 1; these are the SDK's own documented
@@ -190,14 +190,14 @@ const VIDEO_LENGTH_OPTIONS = [
 const VIDEO_QUALITY_OPTIONS = ['15 steps (fast)', '30 steps (balanced)', '50 steps (high quality)'];
 const videoGenFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'source', label: 'Prompt source', type: 'select', options: INPUT_SOURCE_OPTIONS },
-  { key: 'prompt', label: 'Prompt', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'prompt', label: 'Prompt', type: 'textarea', hiddenWhen: (fields) => !usesStaticSource(fields) },
   { key: 'model', label: 'Model', type: 'select', options: VIDEO_MODEL_OPTIONS },
   { key: 'length', label: 'Length', type: 'select', options: VIDEO_LENGTH_OPTIONS },
   { key: 'quality', label: 'Quality', type: 'select', options: VIDEO_QUALITY_OPTIONS },
 ];
 const musicGenFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'source', label: 'Description source', type: 'select', options: INPUT_SOURCE_OPTIONS },
-  { key: 'caption', label: 'Describe the music', type: 'textarea', hiddenWhen: (fields) => !usesCustomText(fields) },
+  { key: 'caption', label: 'Describe the music', type: 'textarea', hiddenWhen: (fields) => !usesStaticSource(fields) },
   { key: 'duration', label: 'Duration (seconds, max 60)', type: 'text' },
 ];
 const ocrFields: PlaygroundNodeKindDef['fields'] = [
@@ -208,7 +208,7 @@ const classifyFields: PlaygroundNodeKindDef['fields'] = [
 ];
 // Real files, not typed-in text: a search index over documents the user
 // never actually has to paste is the whole point of the node.
-const SEARCH_SOURCE_OPTIONS = ['Choose files', 'Previous result'];
+const SEARCH_SOURCE_OPTIONS = ['Choose files', 'Upstream input'];
 const searchDocsFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'source', label: 'Document source', type: 'select', options: SEARCH_SOURCE_OPTIONS },
   {
@@ -217,7 +217,7 @@ const searchDocsFields: PlaygroundNodeKindDef['fields'] = [
     type: 'file',
     accept: '.txt,.md,.csv',
     multiple: true,
-    hiddenWhen: (fields) => !usesCustomText(fields),
+    hiddenWhen: (fields) => !usesStaticSource(fields),
   },
   { key: 'query', label: 'Search query', type: 'text' },
 ];
@@ -392,7 +392,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     label: 'Translate',
     category: 'ai-text',
     // 'any': a flow trigger to just sequence it after Start, or real text from an
-    // AI agent/If/etc. when "Previous result" is picked as the text source.
+    // AI agent/If/etc. when "Upstream input" is picked as the text source.
     input: 'any',
     output: 'value',
     fields: translateFields,
@@ -587,7 +587,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     defaultFields: defaultsFrom(searchDocsFields),
     async run(ctx) {
       let documents: string[];
-      if (usesCustomText(ctx.fields)) {
+      if (usesStaticSource(ctx.fields)) {
         const picked = parsePickedFiles(ctx.fields.files);
         if (picked.length === 0) {
           ctx.pushRunLine('err', 'No documents selected: open this node and choose files.');

@@ -218,9 +218,9 @@ export async function generateStandaloneScript(workflow: SavedWorkflow): Promise
         break;
       }
       case 'translate': {
-        const isCustom = node.fields.source !== 'Previous result';
+        const isStatic = node.fields.source !== 'Upstream input';
         const inEdge = edgeInto(workflow, node.id);
-        const src = isCustom ? f('text') : outKeyExpr(inEdge);
+        const src = isStatic ? f('text') : outKeyExpr(inEdge);
         lines.push(`  {`);
         lines.push(`    const text = ${src};`);
         lines.push(
@@ -232,9 +232,9 @@ export async function generateStandaloneScript(workflow: SavedWorkflow): Promise
         break;
       }
       case 'ask-doc': {
-        const isCustom = node.fields.source !== 'Previous result';
+        const isStatic = node.fields.source !== 'Upstream input';
         const inEdge = edgeInto(workflow, node.id);
-        const src = isCustom ? f('document') : outKeyExpr(inEdge);
+        const src = isStatic ? f('document') : outKeyExpr(inEdge);
         lines.push(`  {`);
         lines.push(`    const document = ${src};`);
         lines.push(

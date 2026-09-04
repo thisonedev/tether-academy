@@ -19,6 +19,5 @@
   { "file": "nature-clip-video-flow.json", "category": "Video", "description": "A second short text-to-video clip." },
   { "file": "background-music-flow.json", "category": "Music", "description": "Generate a short instrumental music bed." },
   { "file": "jingle-flow.json", "category": "Music", "description": "Generate a short cheerful jingle." },
-  { "file": "expense-spreadsheet-flow.json", "category": "Files", "description": "Read a real CSV and filter it by category." },
-  { "file": "translation-flow.json", "category": "Custom", "description": "Agent + branch + translate/ask-doc, hand-built as a live demo." }
+  { "file": "expense-spreadsheet-flow.json", "category": "Files", "description": "Read a real CSV and filter it by category." }
 ]

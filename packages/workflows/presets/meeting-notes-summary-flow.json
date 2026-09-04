@@ -25,7 +25,7 @@
       "x": 0,
       "y": 260,
       "fields": {
-        "source": "Previous result",
+        "source": "Upstream input",
         "content": "",
         "task": "Read these meeting notes and reply with a numbered list of action items, one per line, each with the owner if named."
       }

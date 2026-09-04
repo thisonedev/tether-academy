@@ -496,10 +496,10 @@ function PlaygroundCanvas({
           return edge ? nodeOutputs.get(outKey(edge.source, edge.sourceHandle)) : undefined;
         };
         // The explicit "Text source" choice, not a connection silently overriding what
-        // was typed: undefined means "Previous result" was picked but nothing usable is wired in.
+        // was typed: undefined means "Upstream input" was picked but nothing usable is wired in.
         const resolveContent = (manualKey: string) => {
           const fields = node.data.fields;
-          if ((fields.source ?? 'Custom text') !== 'Previous result') return fields[manualKey] ?? '';
+          if ((fields.source ?? 'My input') !== 'Upstream input') return fields[manualKey] ?? '';
           const upstream = readInput();
           // An empty string counts as "nothing usable" too: an upstream If with zero
           // matching items still writes '', which otherwise sailed through as real

@@ -12,7 +12,7 @@ export interface PlaygroundRunContext {
   fields: Record<string, string>;
   /** What's wired into this node's input, or undefined if nothing is connected. */
   readInput: () => PlaygroundTable | string | undefined;
-  /** The field named `manualFieldKey`, unless "Previous result" is the chosen
+  /** The field named `manualFieldKey`, unless "Upstream input" is the chosen
    *  source and produced non-empty text, in which case that text wins. */
   resolveContent: (manualFieldKey: string) => string | undefined;
   /** Appends a rendered table/text result to the output feed. */

@@ -25,7 +25,7 @@
       "x": 0,
       "y": 260,
       "fields": {
-        "source": "Previous result",
+        "source": "Upstream input",
         "content": "",
         "task": "Write a short, empathetic customer support reply to this complaint. Offer an expedited replacement. Keep it under 80 words."
       }
