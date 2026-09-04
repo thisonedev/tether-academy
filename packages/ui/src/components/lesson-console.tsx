@@ -377,6 +377,12 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
   const [useFullDocs, setUseFullDocs] = useState(true);
   const pendingChatRequestIdRef = useRef<string | null>(null);
   const pendingChatEntryIdRef = useRef<string | null>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const syncCursorIndex = useCallback((e: { currentTarget: HTMLTextAreaElement }) => {
+    setCursorIndex(e.currentTarget.selectionStart ?? 0);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.academy?.chat) {
@@ -567,29 +573,50 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
       {/* No box of its own: the editor's background carries through and only a
           rule above and below separates it, so it reads as part of the panel. */}
       <div
-        className="flex h-9 items-center gap-2 border-t border-canvas-border px-3"
+        className="flex min-h-9 items-center gap-2 border-t border-canvas-border px-3 py-2.5"
         title={disabledReason}
       >
         <span aria-hidden className="shrink-0 font-mono text-xs leading-4 text-canvas-muted-foreground/70">
           &rsaquo;
         </span>
-        <textarea
-          rows={1}
-          value={draft}
-          disabled={readOnly || !modelName}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void handleSend();
-            }
-          }}
-          // The `›` already says "type here", so the only placeholder left is
-          // the one that explains why you cannot.
-          placeholder={disabledReason ?? ''}
-          className="min-w-0 flex-1 resize-none bg-transparent font-mono text-xs leading-4 text-canvas-muted-foreground outline-none placeholder:text-canvas-muted-foreground/60 disabled:cursor-not-allowed"
-          style={{ height: '16px' }}
-        />
+        <div className="relative min-w-0 flex-1 overflow-hidden" style={{ maxHeight: 160 }}>
+          {/* Real inline cursor span, not a computed pixel offset: the browser
+              positions it exactly where a character would sit. The actual
+              textarea sits on top, fully transparent, for input/focus/selection. */}
+          <div
+            aria-hidden
+            className="whitespace-pre-wrap break-words font-mono text-xs leading-4 text-canvas-muted-foreground"
+            style={{ transform: `translateY(${-scrollTop}px)` }}
+          >
+            {draft.length === 0 && disabledReason && (
+              <span className="text-canvas-muted-foreground/60">{disabledReason}</span>
+            )}
+            {draft.slice(0, cursorIndex)}
+            {!readOnly && modelName && <span className="inline-block h-3.5 w-1.5 -translate-y-px bg-canvas-muted-foreground align-middle" />}
+            {draft.slice(cursorIndex)}
+          </div>
+          <textarea
+            ref={draftRef}
+            rows={1}
+            value={draft}
+            disabled={readOnly || !modelName}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              syncCursorIndex(e);
+            }}
+            onSelect={syncCursorIndex}
+            onClick={syncCursorIndex}
+            onKeyUp={syncCursorIndex}
+            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void handleSend();
+              }
+            }}
+            className="absolute inset-0 w-full resize-none overflow-y-auto whitespace-pre-wrap break-words bg-transparent font-mono text-xs leading-4 text-transparent caret-transparent outline-none disabled:cursor-not-allowed"
+          />
+        </div>
         <ModelSwitcher
           modelName={modelName}
           options={installedAiBotModels}
