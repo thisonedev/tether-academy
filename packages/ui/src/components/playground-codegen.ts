@@ -53,8 +53,12 @@ function jsString(value: string): string {
 
 const RUNTIME_HELPERS = `
 // ---- Runtime helpers (ported from playground-table.ts) ----
+function findColumnIndex(headers, column) {
+  const needle = column.trim().toLowerCase();
+  return headers.findIndex((h) => h.trim().toLowerCase() === needle);
+}
 function filterTable(table, column, value) {
-  const colIndex = table.headers.indexOf(column);
+  const colIndex = findColumnIndex(table.headers, column);
   if (colIndex === -1) return { headers: table.headers, rows: [] };
   const needle = value.trim().toLowerCase();
   const rows = needle ? table.rows.filter((r) => (r[colIndex] ?? '').trim().toLowerCase() === needle) : table.rows;
@@ -82,7 +86,7 @@ function matchesCondition(cell, operator, value) {
   }
 }
 function splitTable(table, column, operator, value) {
-  const colIndex = table.headers.indexOf(column);
+  const colIndex = findColumnIndex(table.headers, column);
   const matches = (r) => colIndex !== -1 && matchesCondition(r[colIndex] ?? '', operator, value);
   return { yes: { headers: table.headers, rows: table.rows.filter(matches) }, no: { headers: table.headers, rows: table.rows.filter((r) => !matches(r)) } };
 }
@@ -158,6 +162,9 @@ export async function generateStandaloneScript(workflow: SavedWorkflow): Promise
       case 'filter': {
         const inEdge = edgeInto(workflow, node.id);
         const src = outKeyExpr(inEdge);
+        lines.push(`  if (findColumnIndex(${src}.headers, ${f('column')}) === -1) {`);
+        lines.push(`    console.error('Column ' + ${f('column')} + ' not found. This table has: ' + ${src}.headers.join(', '));`);
+        lines.push(`  }`);
         lines.push(`  const ${varName} = filterTable(${src}, ${f('column')}, ${f('value')});`);
         lines.push(`  out[${jsString(node.id)}] = ${varName};`);
         lines.push(`  console.log(${varName}.rows.length, 'of', (${src} && ${src}.rows.length) || 0, 'rows match');`);
@@ -173,6 +180,9 @@ export async function generateStandaloneScript(workflow: SavedWorkflow): Promise
         lines.push(`      out[${jsString(node.id)} + '::true'] = yes.join('\\n');`);
         lines.push(`      out[${jsString(node.id)} + '::false'] = no.join('\\n');`);
         lines.push(`    } else {`);
+        lines.push(`      if (findColumnIndex(input.headers, ${f('column')}) === -1) {`);
+        lines.push(`        console.error('Column ' + ${f('column')} + ' not found. This table has: ' + input.headers.join(', '));`);
+        lines.push(`      }`);
         lines.push(`      const { yes, no } = splitTable(input, ${f('column')}, ${f('operator')}, ${f('value')});`);
         lines.push(`      out[${jsString(node.id)} + '::true'] = yes;`);
         lines.push(`      out[${jsString(node.id)} + '::false'] = no;`);

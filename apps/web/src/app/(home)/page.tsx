@@ -29,11 +29,6 @@ const INSTALL_TABS = [
 ];
 const THISONEDEV_URL = 'https://github.com/thisonedev';
 
-const CARD_GLOW =
-  'radial-gradient(120% 80% at 100% 0%, rgba(52,211,153,0.10), var(--color-canvas-muted) 60%), var(--color-canvas-muted)';
-const CARD_GLOW_FAINT =
-  'radial-gradient(120% 80% at 100% 0%, rgba(52,211,153,0.05), transparent 60%), var(--color-canvas-muted)';
-
 interface FeatureItem {
   icon: LucideIcon;
   title: string;
@@ -96,7 +91,7 @@ function HeroWithInstall() {
 function Hero() {
   return (
     <div className="flex flex-1 flex-col justify-center space-y-6 sm:space-y-8">
-      <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-emerald-400">
+      <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-emerald-400">
         <Sparkles className="size-3" strokeWidth={2.5} />
         The first P2P code academy
       </p>
@@ -163,11 +158,8 @@ function FeatureCards() {
 
 function FeatureCard({ icon: Icon, title, body }: FeatureItem) {
   return (
-    <div
-      className="group flex h-full cursor-pointer flex-col rounded-2xl border border-canvas-border p-6 transition-colors hover:border-emerald-500/60 sm:p-7"
-      style={{ background: CARD_GLOW }}
-    >
-      <div className="flex size-11 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 transition-colors group-hover:border-emerald-500/60 group-hover:bg-emerald-500/15">
+    <div className="group flex h-full cursor-pointer flex-col rounded-2xl border border-canvas-border bg-canvas-muted p-6 transition-colors hover:border-emerald-500/60 sm:p-7">
+      <div className="flex size-11 items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-500/15 transition-colors group-hover:border-emerald-500/60 group-hover:bg-emerald-500/15">
         <Icon className="size-5 text-emerald-400" strokeWidth={2} aria-hidden />
       </div>
       <h3 className="mt-5 text-lg font-semibold leading-snug tracking-tight text-canvas-foreground sm:text-xl">
@@ -259,10 +251,7 @@ function FeatureBlocks() {
 
 function ExploreCta() {
   return (
-    <div
-      className="rounded-2xl border border-canvas-border p-6 sm:p-8"
-      style={{ background: CARD_GLOW }}
-    >
+    <div className="rounded-2xl border border-canvas-border bg-canvas-muted p-6 sm:p-8">
       <div className="grid grid-cols-1 gap-6 items-center md:grid-cols-[1fr_auto]">
         <div className="min-w-0">
           <p className="font-mono text-xs font-semibold uppercase tracking-widest text-emerald-400">
@@ -295,7 +284,7 @@ function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number 
       }`}
     >
       <div className="flex items-center justify-between gap-3">
-        <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-400">
+        <p className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-400">
           <Icon className="size-3" strokeWidth={2.5} aria-hidden />
           {feature.category} — {String(index + 1).padStart(2, '0')}
         </p>
@@ -315,7 +304,7 @@ function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number 
             >
               <span
                 aria-hidden
-                className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-400"
               >
                 <Check className="size-3" strokeWidth={3} />
               </span>
@@ -335,21 +324,11 @@ function FeatureBlock({ feature, index }: { feature: FeatureShot; index: number 
     >
       {/* biome-ignore lint/performance/noImgElement: the home page is short, the screenshots are static, and next/image is not used anywhere else in apps/web/src/ */}
       <img src={feature.src} alt={feature.alt ?? ''} loading="lazy" className="block w-full" />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100"
-        style={{
-          background: `radial-gradient(60% 80% at ${reverse ? '100%' : '0%'} 50%, rgba(52,211,153,0.12), transparent 60%)`,
-        }}
-      />
     </div>
   ) : null;
 
   return (
-    <article
-      className="group overflow-hidden rounded-2xl border border-canvas-border transition-colors hover:border-emerald-500/60"
-      style={{ background: CARD_GLOW }}
-    >
+    <article className="group overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted transition-colors hover:border-emerald-500/60">
       <div
         className={`grid grid-cols-1 items-center ${
           hasImage ? (reverse ? 'md:grid-cols-[1fr_1.4fr]' : 'md:grid-cols-[1.4fr_1fr]') : ''
@@ -380,21 +359,21 @@ function glyphPalette(slug: string): { bg: string; fg: string; border: string } 
   switch (slug) {
     case 'qvac':
       return {
-        bg: 'color-mix(in oklab, #4ade80 15%, var(--color-canvas))',
+        bg: 'color-mix(in oklab, #4ade80 10%, var(--color-canvas))',
         fg: '#4ade80',
-        border: 'color-mix(in oklab, #4ade80 40%, transparent)',
+        border: 'color-mix(in oklab, #4ade80 30%, transparent)',
       };
     case 'wdk':
       return {
-        bg: 'color-mix(in oklab, #818cf8 15%, var(--color-canvas))',
+        bg: 'color-mix(in oklab, #818cf8 10%, var(--color-canvas))',
         fg: '#818cf8',
-        border: 'color-mix(in oklab, #818cf8 40%, transparent)',
+        border: 'color-mix(in oklab, #818cf8 30%, transparent)',
       };
     case 'pears':
       return {
-        bg: 'color-mix(in oklab, #fca5a5 15%, var(--color-canvas))',
+        bg: 'color-mix(in oklab, #fca5a5 10%, var(--color-canvas))',
         fg: '#fca5a5',
-        border: 'color-mix(in oklab, #fca5a5 40%, transparent)',
+        border: 'color-mix(in oklab, #fca5a5 30%, transparent)',
       };
     default:
       return {
@@ -509,8 +488,7 @@ function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean 
     return (
       <div
         aria-disabled
-        className="flex h-full flex-col rounded-2xl border border-dashed border-canvas-border p-4 opacity-70 sm:p-5"
-        style={{ background: CARD_GLOW_FAINT }}
+        className="flex h-full flex-col rounded-2xl border border-dashed border-canvas-border bg-canvas-muted p-4 opacity-70 sm:p-5"
       >
         {body}
       </div>
@@ -521,8 +499,7 @@ function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean 
     return (
       <div
         title="Install the desktop app to start this course"
-        className="flex h-full flex-col rounded-2xl border border-canvas-border p-4 opacity-80 sm:p-5"
-        style={{ background: CARD_GLOW }}
+        className="flex h-full flex-col rounded-2xl border border-canvas-border bg-canvas-muted p-4 opacity-80 sm:p-5"
       >
         {body}
       </div>
@@ -532,8 +509,7 @@ function CourseCard({ course, isDesktop }: { course: Course; isDesktop: boolean 
   return (
     <Link
       href={course.href}
-      className="group flex h-full flex-col rounded-2xl border border-canvas-border p-4 transition-colors hover:border-emerald-500/60 sm:p-5"
-      style={{ background: CARD_GLOW }}
+      className="group flex h-full flex-col rounded-2xl border border-canvas-border bg-canvas-muted p-4 transition-colors hover:border-emerald-500/60 sm:p-5"
     >
       {body}
     </Link>

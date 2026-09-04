@@ -414,7 +414,7 @@ export function SettingsPage() {
 
           <section className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">
                 <Bot className="size-4" />
               </div>
               <div className="min-w-0">
@@ -524,7 +524,7 @@ export function SettingsPage() {
 
           <section className="rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">
                 <HardDrive className="size-4" />
               </div>
               <div className="min-w-0 flex-1">

@@ -1,6 +1,7 @@
 import { dataUrlToText, parsePickedFiles } from './playground-files.js';
 import {
   filterTable,
+  findColumnIndex,
   IF_OPERATORS,
   IF_UNARY_OPERATORS,
   parseSpreadsheetFile,
@@ -64,21 +65,18 @@ function defaultsFrom(fields: PlaygroundNodeKindDef['fields']) {
 const readFileFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'file', label: 'Spreadsheet file', type: 'file', accept: '.csv,.txt,.xlsx,.xls' },
 ];
+// 'column' is free text, not a picker: no list here would reflect the real
+// table's actual headers anyway, so the node's own run() validates it against
+// the real headers at run time and errors clearly if it doesn't match.
 const filterFields: PlaygroundNodeKindDef['fields'] = [
-  {
-    key: 'column',
-    label: 'Column',
-    type: 'select',
-    options: ['Date', 'Category', 'Description', 'Amount'],
-  },
+  { key: 'column', label: 'Column', type: 'text' },
   { key: 'value', label: 'Equals', type: 'text' },
 ];
 const ifFields: PlaygroundNodeKindDef['fields'] = [
   {
     key: 'column',
     label: 'Column',
-    type: 'select',
-    options: ['Date', 'Category', 'Description', 'Amount'],
+    type: 'text',
     // Only meaningful when a real table is actually wired in; hidden otherwise
     // (including nothing connected yet) rather than shown-but-ignored.
     hiddenWhen: (_fields, inputKind) => inputKind !== 'table',
@@ -282,7 +280,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   filter: {
     kind: 'filter',
-    label: 'Filter rows',
+    label: 'Filter table',
     category: 'logic',
     input: 'table',
     output: 'table',
@@ -294,7 +292,12 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
         ctx.pushRunLine('err', 'No table connected in.');
         return;
       }
-      const filtered = filterTable(input, ctx.fields.column ?? '', ctx.fields.value ?? '');
+      const column = ctx.fields.column ?? '';
+      if (findColumnIndex(input.headers, column) === -1) {
+        ctx.pushRunLine('err', `Column "${column}" not found. This table has: ${input.headers.join(', ')}.`);
+        return;
+      }
+      const filtered = filterTable(input, column, ctx.fields.value ?? '');
       ctx.setOutput(filtered);
       ctx.pushResult(`${filtered.rows.length} of ${input.rows.length} rows match\n\n${tableToMarkdown(filtered)}`);
     },
@@ -348,7 +351,12 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
         ctx.pushResult(`${yes.length} of ${yes.length + no.length} item(s) matched the condition.`);
         return;
       }
-      const { yes, no } = splitTable(input, ctx.fields.column ?? '', operator, value);
+      const column = ctx.fields.column ?? '';
+      if (findColumnIndex(input.headers, column) === -1) {
+        ctx.pushRunLine('err', `Column "${column}" not found. This table has: ${input.headers.join(', ')}.`);
+        return;
+      }
+      const { yes, no } = splitTable(input, column, operator, value);
       ctx.setOutput(yes, 'true');
       ctx.setOutput(no, 'false');
       ctx.pushResult(`${yes.rows.length} row(s) yes, ${no.rows.length} row(s) no`);

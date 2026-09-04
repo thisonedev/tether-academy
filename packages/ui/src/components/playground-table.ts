@@ -73,12 +73,19 @@ export async function parseSpreadsheetFile(fileName: string, dataUrl: string): P
   return parseCsv(new TextDecoder('utf-8').decode(bytes));
 }
 
+/** Case-insensitive: a user typing the column name shouldn't have to match
+ *  the source file's exact capitalization. */
+export function findColumnIndex(headers: string[], column: string): number {
+  const needle = column.trim().toLowerCase();
+  return headers.findIndex((h) => h.trim().toLowerCase() === needle);
+}
+
 export function filterTable(
   table: PlaygroundTable,
   column: string,
   value: string,
 ): PlaygroundTable {
-  const colIndex = table.headers.indexOf(column);
+  const colIndex = findColumnIndex(table.headers, column);
   if (colIndex === -1) return { headers: table.headers, rows: [] };
   const needle = value.trim().toLowerCase();
   const rows = needle
@@ -151,7 +158,7 @@ export function splitTable(
   operator: string,
   value: string,
 ): { yes: PlaygroundTable; no: PlaygroundTable } {
-  const colIndex = table.headers.indexOf(column);
+  const colIndex = findColumnIndex(table.headers, column);
   const matches = (r: string[]) => colIndex !== -1 && matchesCondition(r[colIndex] ?? '', operator, value);
   return {
     yes: { headers: table.headers, rows: table.rows.filter(matches) },

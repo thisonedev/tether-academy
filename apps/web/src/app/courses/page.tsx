@@ -67,7 +67,7 @@ function LiveCourseCard({ course }: { course: Course }) {
       className={`group flex h-full flex-col rounded-xl border bg-canvas-muted p-4 transition-colors sm:p-5 ${
         isDone
           ? 'border-emerald-500/35 hover:border-emerald-500/60'
-          : 'border-canvas-border hover:border-emerald-500/50 hover:bg-canvas'
+          : 'border-canvas-border hover:border-emerald-500/50'
       }`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -175,21 +175,21 @@ function glyphPalette(slug: string): { bg: string; fg: string; border: string } 
   switch (slug) {
     case 'qvac':
       return {
-        bg: 'color-mix(in oklab, #4ade80 15%, var(--color-canvas))',
+        bg: 'color-mix(in oklab, #4ade80 10%, var(--color-canvas))',
         fg: '#4ade80',
-        border: 'color-mix(in oklab, #4ade80 40%, transparent)',
+        border: 'color-mix(in oklab, #4ade80 30%, transparent)',
       };
     case 'wdk':
       return {
-        bg: 'color-mix(in oklab, #818cf8 15%, var(--color-canvas))',
+        bg: 'color-mix(in oklab, #818cf8 10%, var(--color-canvas))',
         fg: '#818cf8',
-        border: 'color-mix(in oklab, #818cf8 40%, transparent)',
+        border: 'color-mix(in oklab, #818cf8 30%, transparent)',
       };
     case 'pears':
       return {
-        bg: 'color-mix(in oklab, #fca5a5 15%, var(--color-canvas))',
+        bg: 'color-mix(in oklab, #fca5a5 10%, var(--color-canvas))',
         fg: '#fca5a5',
-        border: 'color-mix(in oklab, #fca5a5 40%, transparent)',
+        border: 'color-mix(in oklab, #fca5a5 30%, transparent)',
       };
     default:
       return {

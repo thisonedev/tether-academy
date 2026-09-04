@@ -173,8 +173,10 @@ function PlaygroundCanvas({
       if (e.target instanceof Node && fileMenuRef.current?.contains(e.target)) return;
       setShowFileMenu(false);
     }
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
+    // Capture phase: the React Flow canvas stops propagation on its own pane
+    // clicks, so a bubble-phase listener never sees a click on the canvas.
+    document.addEventListener('mousedown', onPointerDown, true);
+    return () => document.removeEventListener('mousedown', onPointerDown, true);
   }, [showFileMenu]);
   // Session-only, never saved with the workflow: while enabled, fires a run on
   // the interval below. No OS-level scheduling (the app has to stay open),
@@ -191,8 +193,8 @@ function PlaygroundCanvas({
       if (e.target instanceof Node && scheduleMenuRef.current?.contains(e.target)) return;
       setShowSchedule(false);
     }
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
+    document.addEventListener('mousedown', onPointerDown, true);
+    return () => document.removeEventListener('mousedown', onPointerDown, true);
   }, [showSchedule]);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
@@ -861,7 +863,7 @@ function PlaygroundCanvas({
                 setShowSchedule(false);
                 setShowFileMenu((prev) => !prev);
               }}
-              className={`inline-flex items-center gap-1 rounded-md border border-canvas-border px-2 py-1 text-xs text-canvas-muted-foreground transition-colors hover:text-canvas-foreground ${showFileMenu ? 'text-canvas-foreground' : ''}`}
+              className={`inline-flex items-center gap-1 rounded-md border border-canvas-border px-2 py-1 text-xs text-canvas-muted-foreground outline-none transition-colors hover:text-canvas-foreground focus-visible:border-emerald-500/60 focus-visible:ring-1 focus-visible:ring-emerald-500/30 ${showFileMenu ? 'text-canvas-foreground' : ''}`}
               title={schedule.enabled ? `File · running every ${schedule.intervalMinutes} min` : 'File'}
               aria-label="File menu"
             >
