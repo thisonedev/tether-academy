@@ -4,6 +4,7 @@ import { Handle, type NodeProps, Position } from '@xyflow/react';
 import {
   Bot,
   CircleHelp,
+  Dices,
   FileQuestion,
   FileText,
   Filter,
@@ -33,6 +34,7 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'ai-agent': Bot,
   if: GitBranch,
   'iterate-ai': Repeat,
+  randomize: Dices,
   translate: Languages,
   'ask-doc': FileQuestion,
   'ask-confirmation': CircleHelp,
@@ -46,15 +48,10 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'classify-image': Tags,
 };
 
+// One shape (a plain circle) for every port, color-coded by type only: the
+// notch/diamond/dashed variants had no discoverable logic to a real user.
 function portStyle(type: PlaygroundDataType): CSSProperties {
-  const color = PORT_COLOR[type];
-  const base: CSSProperties = { background: '#1b1f27', border: `2px solid ${color}` };
-  if (type === 'table') return { ...base, width: 14, height: 10, borderRadius: 2 };
-  if (type === 'value') return { ...base, width: 13, height: 13, borderRadius: '50%' };
-  if (type === 'bool') return { ...base, width: 11, height: 11, transform: 'rotate(45deg)' };
-  // Dashed to visually flag "accepts/forwards whichever type actually connects".
-  if (type === 'any') return { ...base, width: 12, height: 12, borderRadius: '50%', borderStyle: 'dashed' };
-  return { ...base, width: 10, height: 10, borderRadius: '50%' };
+  return { background: '#1b1f27', border: `2px solid ${PORT_COLOR[type]}`, width: 12, height: 12, borderRadius: '50%' };
 }
 
 // A branch's color says "which path," not "what data type": a dashed `any`-colored
@@ -113,7 +110,7 @@ export const PlaygroundFlowNode = memo(function PlaygroundFlowNode({
       <div
         className={`flex size-9 shrink-0 items-center justify-center rounded-lg border ${CATEGORY_CLASSES[def.category]}`}
       >
-        {Icon ? <Icon className="size-4.5" strokeWidth={2} /> : null}
+        {Icon ? <Icon className="size-3" strokeWidth={2} /> : null}
       </div>
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-canvas-foreground">{title}</div>

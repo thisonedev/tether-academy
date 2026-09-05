@@ -559,6 +559,18 @@ export interface AcademyAPI {
   /** English -> target only, via the SDK's dedicated per-language Bergamot NMT
    *  models, not the general chat model. Throws for an unsupported language. */
   translate?: (text: string, language: string) => Promise<string>;
+  /** Turns a plain-language request into a workflow graph, via the chat model.
+   *  `catalogue` is the live node-kind/field list from PLAYGROUND_NODE_DEFS;
+   *  the caller still validates the raw `text` before touching the canvas. */
+  workflow?: {
+    /** `currentWorkflow` is the canvas's own graph (summarizeCurrentWorkflow),
+     *  so a follow-up prompt can edit it instead of building something unrelated. */
+    generate: (
+      prompt: string,
+      catalogue: string,
+      currentWorkflow?: string,
+    ) => Promise<{ modelName: string | null; text: string }>;
+  };
   /** Real chunk + embed + vector search over `documents` for `query`, via a
    *  throwaway RAG workspace that's deleted after the call returns. */
   ragSearch?: (documents: string[], query: string, topK?: number) => Promise<AcademyRagSearchResult[]>;
@@ -578,6 +590,8 @@ export interface AcademyAPI {
   cancelGenerateVideo?: () => Promise<void>;
   /** Returns a data: URL for a playable WAV. */
   generateMusic?: (caption: string, durationSec?: number) => Promise<string>;
+  /** Cancels whatever `generateMusic` call is currently in flight; a no-op if none is. */
+  cancelGenerateMusic?: () => Promise<void>;
 }
 
 export interface AcademyRagSearchResult {

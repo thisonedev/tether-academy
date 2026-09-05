@@ -177,6 +177,15 @@ export const academyTranslateSchema = z.object({
   language: z.string().min(1).max(64),
 });
 
+export const academyWorkflowGenerateSchema = z.object({
+  prompt: z.string().min(1).max(2_000),
+  /** Rendered from PLAYGROUND_NODE_DEFS by playground-generate.ts, not user text. */
+  catalogue: z.string().min(1).max(8_000),
+  /** The canvas's own current workflow (stripped, via summarizeCurrentWorkflow),
+   *  so a follow-up request can edit it instead of building something unrelated. */
+  currentWorkflow: z.string().max(20_000).optional(),
+});
+
 /** A `data:` URL, as read from a picked file via FileReader in the renderer. */
 export const academyImageInputSchema = z.object({
   image: z.string().min(1).max(25_000_000),

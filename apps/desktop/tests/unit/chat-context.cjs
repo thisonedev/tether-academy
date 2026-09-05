@@ -3,6 +3,7 @@
 const test = require('brittle');
 const {
   buildSystemPrompt,
+  buildWorkflowGenerationPrompt,
   trimLessonContext,
   trimDocs,
   MAX_LESSON_CONTEXT_BYTES,
@@ -69,4 +70,13 @@ test('chat-context - the prompt tells the model to refuse typo chiding', (t) => 
   t.ok(/ignore typos/i.test(prompt), 'instructs the model to ignore typos');
   t.ok(/do not invent/i.test(prompt), 'instructs the model not to invent APIs');
   t.ok(/do not mention or correct spelling/i.test(prompt), 'instructs the model not to chide spelling');
+});
+
+test('chat-context - the workflow prompt demands bare JSON and echoes the real catalogue', (t) => {
+  const catalogue = '- start [none -> flow]\n- read-file [flow -> table]: file:file';
+  const prompt = buildWorkflowGenerationPrompt(catalogue);
+  t.ok(/ONLY minified JSON/.test(prompt), 'demands bare JSON, no fences or commentary');
+  t.ok(prompt.includes(catalogue), 'includes the caller-supplied catalogue verbatim, not a hardcoded one');
+  t.ok(/exactly one node of kind "start"/.test(prompt), 'requires a real start node');
+  t.ok(/never invent a kind or field/i.test(prompt), 'forbids inventing kinds/fields outside the catalogue');
 });

@@ -661,6 +661,7 @@ handle('academy:playground-credentials:set', async ({ name, value }) => {
 handle('academy:playground-credentials:delete', async (name) => playgroundCredentials().delete(name));
 
 handle('academy:translate', async ({ text, language }) => translate.translateText(text, language));
+handle('academy:workflow:generate', async ({ prompt, catalogue, currentWorkflow }) => chat.generateWorkflow({ prompt, catalogue, currentWorkflow }));
 handle('academy:rag-search', async ({ documents, query, topK }) => rag.searchDocuments(documents, query, topK));
 handle('academy:ocr', async ({ image }) => ocr.readTextFromImage(image));
 handle('academy:classify-image', async ({ image }) => classify.classifyImage(image));
@@ -670,6 +671,7 @@ handle('academy:generate-image', async ({ prompt, model }) => diffusion.generate
 handle('academy:generate-video', async ({ prompt, model, frames, steps }) => diffusion.generateVideo(prompt, model, frames, steps));
 handle('academy:generate-video:cancel', async () => diffusion.cancelVideo());
 handle('academy:generate-music', async ({ caption, durationSec }) => audiogen.generateMusic(caption, durationSec));
+handle('academy:generate-music:cancel', async () => audiogen.cancelMusic());
 
 handle('academy:device:info', async () => getDeviceInfo());
 
@@ -968,14 +970,14 @@ async function createWindow() {
   if (process.env.PEAR_DEV_SERVER_URL || process.env.NODE_ENV === 'development') {
     win.webContents.openDevTools({ mode: 'detach' });
   }
-  win.webContents.on('console-message', (_e, level, message, line, source) => {
+  win.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
     // Chromium's own resize-loop guard, not a page error: it reports through this
     // channel directly rather than as a catchable window 'error' event, so it has
     // to be filtered here rather than from renderer-side JS.
     if (message === 'ResizeObserver loop completed with undelivered notifications.') return;
     // pnpm closes stdout once the launcher exits; a later write throws EPIPE.
     try {
-      console.log(`[renderer ${level}] ${source}:${line} ${message}`);
+      console.log(`[renderer ${level}] ${sourceId}:${lineNumber} ${message}`);
     } catch (err) {
       if (err?.code !== 'EPIPE') throw err;
     }
@@ -985,11 +987,21 @@ async function createWindow() {
   const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
   const staticExists = fsSync().existsSync(outIndex);
   const academyOrigin = 'academy://app/';
+  // A static build left in web/out used to win unconditionally, silently
+  // serving stale code. Only runs unpackaged, so it can't affect what ships.
+  const autoDevUrl = 'http://localhost:3000';
+  const localDevServerUp = !app.isPackaged && !process.env.PEAR_DEV_URL
+    ? await net.fetch(autoDevUrl, { signal: AbortSignal.timeout(300) }).then(() => true).catch(() => false)
+    : false;
   if (process.env.PEAR_DEV_URL) {
     const devUrl = process.env.PEAR_DEV_URL;
     console.log('[tether-academy-desktop] loading', devUrl);
     installNavigationHardening(win, [devUrl]);
     await win.loadURL(devUrl);
+  } else if (localDevServerUp) {
+    console.log('[tether-academy-desktop] dev server detected, loading', autoDevUrl, '(delete web/out or set PEAR_DEV_URL to override)');
+    installNavigationHardening(win, [autoDevUrl]);
+    await win.loadURL(autoDevUrl);
   } else if (staticExists) {
     console.log('[tether-academy-desktop] serving', staticDir, 'on', academyOrigin);
     installNavigationHardening(win, [academyOrigin]);

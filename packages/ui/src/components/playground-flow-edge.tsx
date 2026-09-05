@@ -35,8 +35,10 @@ export const PlaygroundFlowEdge = memo(function PlaygroundFlowEdge({
       if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
       setOpen(false);
     }
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
+    // Capture phase: the React Flow canvas stops propagation on its own pane
+    // clicks, so a bubble-phase listener never sees a click on the canvas.
+    document.addEventListener('mousedown', onPointerDown, true);
+    return () => document.removeEventListener('mousedown', onPointerDown, true);
   }, [open]);
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,

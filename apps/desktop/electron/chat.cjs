@@ -9,6 +9,7 @@ const {
   buildVerifySystemPrompt,
   buildSecuritySystemPrompt,
   buildCompactSecurityPrompt,
+  buildWorkflowGenerationPrompt,
 } = require('./chat-context.cjs');
 const { refreshDocs, getCachedDocs } = require('./chat-docs.cjs');
 const { createMarkdownStripper } = require('./chat-strip-markdown.cjs');
@@ -202,7 +203,6 @@ async function ensureLoaded(filename) {
   if (current.modelId && current.filename !== filename) {
     await unload();
   }
-  console.log('[chat] ensureLoaded start', { filename, preset: modelSrc.name });
   const sdk = require('@qvac/sdk');
   if (typeof sdk.loadModel !== 'function') {
     throw new Error('@qvac/sdk does not export loadModel in this build');
@@ -643,6 +643,73 @@ function onVerifyResult(callback) {
   return () => events.off('verifyResult', callback);
 }
 
+// A multi-branch workflow is a much bigger JSON object than a security
+// verdict, and a truncated one is unparseable, not just short.
+const WORKFLOW_PREDICT_CAP = 2000;
+const WORKFLOW_PREDICT_FLOOR = 500;
+const WORKFLOW_TEMPLATE_OVERHEAD = 64;
+
+// Directly awaitable like runSecurityScan, not requestId/event plumbing: the
+// caller just awaits it, same as translate(). Returns raw text; the renderer
+// validates it against the real PLAYGROUND_NODE_DEFS.
+async function generateWorkflow({ prompt, catalogue, currentWorkflow, modelHint }) {
+  const sdk = require('@qvac/sdk');
+  if (typeof sdk.completion !== 'function') {
+    throw new Error('@qvac/sdk does not export completion in this build');
+  }
+
+  const modelName = await resolveModel(modelHint);
+  const ctxWindow = approxContextWindow(modelName);
+  const fits = Math.max(256, ctxWindow - WORKFLOW_TEMPLATE_OVERHEAD);
+  const predictBudget = Math.max(
+    WORKFLOW_PREDICT_FLOOR,
+    Math.min(WORKFLOW_PREDICT_CAP, Math.floor(fits / 2)),
+  );
+  const promptTokens = approxTokens(prompt);
+
+  // Below this the catalogue is too short to be reliable; a half-shown
+  // current workflow would mislead the model more than none at all.
+  const MIN_CATALOGUE_TOKENS = 200;
+  let workflowContext = currentWorkflow || null;
+  let overhead = approxTokens(buildWorkflowGenerationPrompt('', workflowContext));
+  let catalogueBudget = fits - predictBudget - overhead - promptTokens;
+  if (workflowContext && catalogueBudget < MIN_CATALOGUE_TOKENS) {
+    workflowContext = null;
+    overhead = approxTokens(buildWorkflowGenerationPrompt(''));
+    catalogueBudget = fits - predictBudget - overhead - promptTokens;
+  }
+  const catalogueCapped = catalogue.slice(0, Math.max(0, catalogueBudget) * 4);
+  const systemPrompt = buildWorkflowGenerationPrompt(catalogueCapped, workflowContext);
+
+  const history = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `${prompt}\n/no_think` },
+  ];
+
+  const thinkingFilter = createThinkingFilter();
+  let assembled = '';
+  const result = sdk.completion({
+    modelId: current.modelId,
+    history,
+    stream: true,
+    captureThinking: false,
+    // Low, like the security scan's 0.2: strict JSON syntax benefits from
+    // less randomness than free-text generation does.
+    generationParams: { predict: predictBudget, temp: 0.15 },
+  });
+  for await (const event of result.events) {
+    if (!event || typeof event !== 'object') continue;
+    const type = event.type;
+    if ((type === 'contentDelta' || type === 'rawDelta') && typeof event.text === 'string' && event.text.length > 0) {
+      assembled += thinkingFilter.push(event.text);
+    } else if (type === 'toolError' && typeof event.error === 'string') {
+      throw new Error(`tool error: ${event.error}`);
+    }
+  }
+  assembled += thinkingFilter.flush();
+  return { modelName, text: assembled };
+}
+
 const SECURITY_VERDICTS = new Set(['clean', 'suspicious', 'malicious']);
 // The wire value the model is prompted to return when it found nothing. Named
 // here so the checks below read as intent instead of a bare string compare.
@@ -922,6 +989,7 @@ module.exports = {
   load,
   send,
   verify,
+  generateWorkflow,
   securityScan,
   // Called by electron/pear-end/worker-client.cjs, which bridges it to the pear-end worker.
   runSecurityScan,

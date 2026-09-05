@@ -17,7 +17,6 @@ import {
 } from '@xyflow/react';
 import {
   ChevronDown,
-  Clock,
   Download,
   Eraser,
   FileCode,
@@ -43,6 +42,7 @@ import { PlaygroundFlowEdge } from './playground-flow-edge.js';
 import type { PresetEntry } from './playground-preset-data.js';
 import { PlaygroundPresetsModal } from './playground-presets-modal.js';
 import { PlaygroundFlowNode } from './playground-flow-node.js';
+import { buildNodeCatalogue, parseGeneratedWorkflow, summarizeCurrentWorkflow } from './playground-generate.js';
 import { BRANCH_COLOR, PLAYGROUND_NODE_DEFS, PORT_COLOR, typesCompatible } from './playground-node-defs.js';
 import { PLAYGROUND_DRAG_MIME, PlaygroundPalette } from './playground-palette.js';
 import type { PlaygroundTable } from './playground-table.js';
@@ -72,6 +72,9 @@ const VIEWPORT_ZOOM = 0.85;
 // below the node keeps it horizontally centered but pushes it up into the
 // canvas's upper portion instead of dead center.
 const VIEWPORT_FOCUS = { x: START_NODE_CENTER.x, y: START_NODE_CENTER.y + 220 };
+// The SDK gives these calls no requestId/signal to cancel; once started, only
+// letting the current step finish (never starting the next) is possible.
+const UNCANCELABLE_KINDS = new Set(['ocr', 'classify-image', 'generate-image']);
 const MIN_PANEL_WIDTH = 340;
 const DEFAULT_PANEL_WIDTH = 410;
 const MAX_PANEL_WIDTH = 720;
@@ -178,29 +181,11 @@ function PlaygroundCanvas({
     document.addEventListener('mousedown', onPointerDown, true);
     return () => document.removeEventListener('mousedown', onPointerDown, true);
   }, [showFileMenu]);
-  // Session-only, never saved with the workflow: while enabled, fires a run on
-  // the interval below. No OS-level scheduling (the app has to stay open),
-  // a deliberate scope call, not an oversight; see playground.md.
-  const [schedule, setSchedule] = useState<{ enabled: boolean; intervalMinutes: number }>({
-    enabled: false,
-    intervalMinutes: 60,
-  });
-  const [showSchedule, setShowSchedule] = useState(false);
-  const scheduleMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showSchedule) return;
-    function onPointerDown(e: MouseEvent) {
-      if (e.target instanceof Node && scheduleMenuRef.current?.contains(e.target)) return;
-      setShowSchedule(false);
-    }
-    document.addEventListener('mousedown', onPointerDown, true);
-    return () => document.removeEventListener('mousedown', onPointerDown, true);
-  }, [showSchedule]);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
-  const { screenToFlowPosition, setCenter } = useReactFlow();
+  const { screenToFlowPosition, setCenter, fitView } = useReactFlow();
   const centerOnStart = useCallback(
     (duration?: number) =>
       setCenter(VIEWPORT_FOCUS.x, VIEWPORT_FOCUS.y, { zoom: VIEWPORT_ZOOM, duration }),
@@ -282,6 +267,10 @@ function PlaygroundCanvas({
   const stopRequestedRef = useRef(false);
   const pendingRequestIdRef = useRef<string | null>(null);
   const [stopRequested, setStopRequested] = useState(false);
+  // Which node kind is inside its own `run` right now, so Stop can tell the
+  // user when a kind has no way to interrupt an already-started call (the
+  // SDK gives ocr/classify-image/generate-image no requestId to cancel).
+  const runningKindRef = useRef<string | null>(null);
 
   // Routes through the same `chat.send` bridge lesson chat uses (already
   // tuned: stripping, token budget), not a hand-rolled `academy.run` call.
@@ -392,6 +381,10 @@ function PlaygroundCanvas({
       }
       try {
         const results = await window.academy.ragSearch(documents, query);
+        // A source document's own text can start a line with "- " or "1. ",
+        // which markdown reads as a real list; escaping it keeps a quoted
+        // passage as plain text instead of turning into a one-item bullet.
+        const escapeMarkdownList = (text: string) => text.replace(/^([ \t]*)([-*+]|\d+[.)])(\s)/gm, '$1\\$2$3');
         // Bold "Result N" labels, not a markdown ordered list: multi-paragraph
         // result text breaks list continuation, which silently restarts the
         // rendered numbering at 1 for every item after the first.
@@ -400,7 +393,7 @@ function PlaygroundCanvas({
             ? `No matches for "${query}".`
             : `**${results.length} result(s) for "${query}"**\n\n` +
               results
-                .map((r, i) => `**Result ${i + 1}** (score ${r.score.toFixed(3)})\n\n${r.content}`)
+                .map((r, i) => `**Result ${i + 1}** (score ${r.score.toFixed(3)})\n\n${escapeMarkdownList(r.content)}`)
                 .join('\n\n---\n\n');
         setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
         return content;
@@ -448,10 +441,10 @@ function PlaygroundCanvas({
     // Nodes wired to the branch of an If that didn't match: skipped outright,
     // not run with empty input, so "connect to No" actually means conditional.
     const skippedNodes = new Set<string>();
-    const pushResult = (content: string) =>
+    const pushResult = (content: string, opts?: { raw?: boolean }) =>
       setEntries((prev) => [
         ...prev,
-        { kind: 'chat-assistant', id: nextEntryId(), content, streaming: false },
+        { kind: 'chat-assistant', id: nextEntryId(), content, streaming: false, raw: opts?.raw },
       ]);
     const pushMedia = (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) =>
       setEntries((prev) => [...prev, { kind: 'media', id: nextEntryId(), mediaType, dataUrl, caption }]);
@@ -507,6 +500,7 @@ function PlaygroundCanvas({
           if (typeof upstream !== 'string' || upstream.trim().length === 0) return undefined;
           return upstream;
         };
+        runningKindRef.current = node.data.kind;
         try {
           await def.run({
             fields: node.data.fields,
@@ -534,6 +528,8 @@ function PlaygroundCanvas({
           // unexpected exception, not a modeled "nothing connected" case) still
           // has to mark its node and keep the run going for whatever's left.
           pushRunLine('err', err instanceof Error ? err.message : 'This step failed.');
+        } finally {
+          runningKindRef.current = null;
         }
       }
     } finally {
@@ -563,15 +559,6 @@ function PlaygroundCanvas({
   useEffect(() => {
     isRunningRef.current = isRunning;
   }, [isRunning]);
-  useEffect(() => {
-    if (!schedule.enabled) return;
-    const ms = Math.max(1, schedule.intervalMinutes) * 60_000;
-    const id = window.setInterval(() => {
-      if (!isRunningRef.current) void handleRun();
-    }, ms);
-    return () => window.clearInterval(id);
-  }, [schedule.enabled, schedule.intervalMinutes, handleRun]);
-
   // Stops the queue between nodes; the in-flight agent call itself only stops
   // early when the desktop bridge can actually abort it.
   const handleStop = useCallback(() => {
@@ -581,6 +568,18 @@ function PlaygroundCanvas({
     const requestId = pendingRequestIdRef.current;
     if (requestId) void window.academy?.chat?.stop?.(requestId).catch(() => undefined);
     void window.academy?.cancelGenerateVideo?.().catch(() => undefined);
+    void window.academy?.cancelGenerateMusic?.().catch(() => undefined);
+    if (runningKindRef.current && UNCANCELABLE_KINDS.has(runningKindRef.current)) {
+      setEntries((prev) => [
+        ...prev,
+        {
+          kind: 'run',
+          id: nextEntryId(),
+          lines: [{ stream: 'stdout', line: "This step can't be interrupted mid-run; it'll stop right after it finishes." }],
+          status: 'ok',
+        },
+      ]);
+    }
     if (confirmResolversRef.current.size > 0) {
       const pendingIds = new Set(confirmResolversRef.current.keys());
       for (const resolve of confirmResolversRef.current.values()) resolve(false);
@@ -652,14 +651,17 @@ function PlaygroundCanvas({
   // never the saved ones directly: those came from a different session's counter
   // and could collide with whatever's minted next in this one.
   const applyLoadedWorkflow = useCallback(
-    (workflow: ReturnType<typeof parseWorkflowFile>) => {
+    (workflow: ReturnType<typeof parseWorkflowFile>, options?: { keepConsole?: boolean }) => {
       const idMap = new Map(workflow.nodes.map((n) => [n.id, nextId()]));
       setNodes(
         workflow.nodes.map((n) => ({
           id: idMap.get(n.id) ?? n.id,
           type: 'playgroundNode',
           position: { x: n.x, y: n.y },
-          data: { kind: n.kind, fields: n.fields },
+          // A workflow saved before a field existed on this kind won't have
+          // it in `n.fields`; back-filling with the kind's current default
+          // keeps an old preset's select from landing on a blank value.
+          data: { kind: n.kind, fields: { ...(PLAYGROUND_NODE_DEFS[n.kind]?.defaultFields?.() ?? {}), ...n.fields } },
         })),
       );
       setEdges(
@@ -675,11 +677,72 @@ function PlaygroundCanvas({
       );
       setWorkflowName(workflow.name);
       setSelectedId(null);
-      setEntries([]);
+      // A generated workflow's own console entries (the prompt, "Built...")
+      // are worth keeping so the user can see which request produced it.
+      if (!options?.keepConsole) setEntries([]);
       setNodeErrors(new Set());
       centerOnStart(0);
     },
     [setNodes, setEdges, centerOnStart],
+  );
+
+  // Reuses applyLoadedWorkflow, the same "replace the whole canvas" path a
+  // file open or a preset already goes through: nothing about landing a
+  // workflow on the canvas is new here, only where it comes from.
+  const handleGenerateWorkflow = useCallback(
+    async (prompt: string) => {
+      const entryId = nextEntryId();
+      setEntries((prev) => [
+        ...prev,
+        { kind: 'chat-user', id: nextEntryId(), content: prompt },
+        { kind: 'chat-assistant', id: entryId, content: 'Building your workflow…', streaming: true },
+      ]);
+      if (typeof window.academy?.workflow?.generate !== 'function') {
+        setAssistantEntry(entryId, (e) => ({
+          ...e,
+          content: 'Building a workflow from a prompt is only available in the desktop app.',
+          streaming: false,
+        }));
+        return;
+      }
+      // Only sent when the canvas already has real content: an empty "just
+      // start" graph is nothing worth describing, and omitting it keeps a
+      // genuinely fresh request from being second-guessed against it.
+      const existing = buildWorkflow();
+      const currentWorkflow = existing.nodes.length > 1 ? summarizeCurrentWorkflow(existing) : undefined;
+      const tryGenerate = async () => {
+        const { text } = await window.academy!.workflow!.generate(prompt, buildNodeCatalogue(), currentWorkflow);
+        return parseGeneratedWorkflow(text);
+      };
+      try {
+        // A small local model occasionally emits a syntax slip (a missing
+        // brace, a stray comma); one retry costs a few seconds and clears
+        // most of those without bothering the user to re-type the request.
+        let workflow;
+        try {
+          workflow = await tryGenerate();
+        } catch {
+          setAssistantEntry(entryId, (e) => ({ ...e, content: 'That attempt had a glitch, trying once more…' }));
+          workflow = await tryGenerate();
+        }
+        applyLoadedWorkflow(workflow, { keepConsole: true });
+        // Node cards need a render pass before React Flow knows their real size,
+        // so fitView is scheduled a tick after the load rather than called inline.
+        window.setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 50);
+        setAssistantEntry(entryId, (e) => ({
+          ...e,
+          content: `Built "${workflow.name}" with ${workflow.nodes.length} node(s). Review it, then Save when it looks right.`,
+          streaming: false,
+        }));
+      } catch (err) {
+        setAssistantEntry(entryId, (e) => ({
+          ...e,
+          content: err instanceof Error ? err.message : "Couldn't build that workflow. Try rephrasing the request.",
+          streaming: false,
+        }));
+      }
+    },
+    [applyLoadedWorkflow, setAssistantEntry, fitView, buildWorkflow],
   );
 
   const handleLoadWorkflowFile = useCallback(
@@ -819,7 +882,7 @@ function PlaygroundCanvas({
       {
         color: '#ff8fa3',
         items: [
-          { label: 'Restart workflow', icon: RotateCcw, disabled: isRunning, onSelect: handleReset },
+          { label: 'Reset workflow', icon: RotateCcw, disabled: isRunning, onSelect: handleReset },
           {
             label: 'Export data',
             icon: Download,
@@ -834,10 +897,6 @@ function PlaygroundCanvas({
           },
           { label: 'Export as project', icon: FileCode, disabled: isRunning, onSelect: () => void handleExportCode() },
         ],
-      },
-      {
-        color: '#34d399',
-        items: [{ label: 'Schedule a workflow', icon: Clock, disabled: false, onSelect: () => setShowSchedule(true) }],
       },
     ],
     [
@@ -859,17 +918,13 @@ function PlaygroundCanvas({
           <div className="relative shrink-0" ref={fileMenuRef}>
             <button
               type="button"
-              onClick={() => {
-                setShowSchedule(false);
-                setShowFileMenu((prev) => !prev);
-              }}
+              onClick={() => setShowFileMenu((prev) => !prev)}
               className={`inline-flex items-center gap-1 rounded-md border border-canvas-border px-2 py-1 text-xs text-canvas-muted-foreground outline-none transition-colors hover:text-canvas-foreground focus-visible:border-emerald-500/60 focus-visible:ring-1 focus-visible:ring-emerald-500/30 ${showFileMenu ? 'text-canvas-foreground' : ''}`}
-              title={schedule.enabled ? `File · running every ${schedule.intervalMinutes} min` : 'File'}
+              title="File"
               aria-label="File menu"
             >
               <FileText className="size-3.5" />
               File
-              {schedule.enabled && <span className="size-1.5 rounded-full bg-emerald-500" />}
               <ChevronDown className={`size-3 transition-transform ${showFileMenu ? 'rotate-180' : ''}`} />
             </button>
             {showFileMenu && (
@@ -902,37 +957,6 @@ function PlaygroundCanvas({
                     ))}
                   </div>
                 ))}
-              </div>
-            )}
-            {showSchedule && (
-              <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-md border border-canvas-border bg-canvas p-3 shadow-lg" ref={scheduleMenuRef}>
-                <label className="flex items-center gap-2 text-xs text-canvas-foreground">
-                  Run every
-                  <input
-                    type="number"
-                    min={1}
-                    value={schedule.intervalMinutes}
-                    onChange={(e) =>
-                      setSchedule((prev) => ({ ...prev, intervalMinutes: Math.max(1, Number(e.target.value) || 1) }))
-                    }
-                    className="w-14 rounded border border-canvas-border bg-canvas px-1.5 py-0.5 font-mono text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
-                  />
-                  min
-                </label>
-                <p className="mt-1.5 text-[10px] text-canvas-muted-foreground">
-                  Only while this tab stays open; not saved with the workflow.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setSchedule((prev) => ({ ...prev, enabled: !prev.enabled }))}
-                  className={`mt-2 w-full rounded px-2 py-1 text-xs font-semibold transition-colors ${
-                    schedule.enabled
-                      ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                      : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-                  }`}
-                >
-                  {schedule.enabled ? 'Stop scheduled runs' : 'Start scheduled runs'}
-                </button>
               </div>
             )}
           </div>
@@ -1093,6 +1117,9 @@ function PlaygroundCanvas({
               })
             }
             onConfirm={handleConfirmAnswer}
+            // onBuildWorkflow intentionally not wired up: chat-driven workflow
+            // building isn't ready to ship yet. Leaving handleGenerateWorkflow
+            // itself in place (unused) so this is a one-line re-enable later.
           />
         </div>
       </div>
