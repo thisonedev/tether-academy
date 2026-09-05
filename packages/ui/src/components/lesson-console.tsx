@@ -11,6 +11,7 @@ import { type LessonProgress, parseProgress } from './lesson-progress.js';
 import { formatSeconds, type RunSegment, type StageSegment, splitStages } from './lesson-stages.js';
 import { QVAC_EDITOR_BACKGROUND } from './qvac-theme.js';
 import type { OutputLine } from './lesson-workspace.js';
+import { saveMediaFile } from './playground-workflow.js';
 import { ThemedSelect } from './themed-select.js';
 
 export interface LessonConsoleLessonContext {
@@ -28,7 +29,7 @@ export interface ConsoleCheckResult {
 
 export type ConsoleEntry =
   | { kind: 'chat-user'; id: string; content: string }
-  | { kind: 'chat-assistant'; id: string; content: string; streaming: boolean }
+  | { kind: 'chat-assistant'; id: string; content: string; streaming: boolean; raw?: boolean }
   | {
       kind: 'run';
       id: string;
@@ -82,6 +83,10 @@ export interface ChatInputBarProps {
   setEntries: React.Dispatch<React.SetStateAction<ConsoleEntry[]>>;
   lessonContext: LessonConsoleLessonContext | null;
   readOnly?: boolean;
+  /** When set, a Chat/Build toggle appears and a submit in Build mode calls
+   *  this instead of the normal chat.send path. Playground-only; lesson pages
+   *  never pass this, so their input bar is unchanged. */
+  onBuildSubmit?: (prompt: string) => void;
 }
 
 // Turns a cache filename like "Qwen3-4B-Q4_K_M.gguf" into "Qwen3 4B" for display.
@@ -325,7 +330,7 @@ export function LessonConsole({ entries, onStopCheck, emptyStateText, onConfirm 
           if (entry.streaming && entry.content.length === 0) return null;
           return (
             <TimelineRow key={entry.id} state={entry.streaming ? 'thinking' : 'success'} card>
-              <AssistantBubble content={entry.content} />
+              {entry.raw ? <RawContent content={entry.content} /> : <AssistantBubble content={entry.content} />}
             </TimelineRow>
           );
         }
@@ -366,7 +371,8 @@ export function LessonConsole({ entries, onStopCheck, emptyStateText, onConfirm 
   );
 }
 
-export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: ChatInputBarProps) {
+export function ChatInputBar({ entries, setEntries, lessonContext, readOnly, onBuildSubmit }: ChatInputBarProps) {
+  const [buildMode, setBuildMode] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [chatUnavailable, setChatUnavailable] = useState(false);
@@ -516,6 +522,11 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
     setChatError(null);
     setDraft('');
 
+    if (buildMode && onBuildSubmit) {
+      onBuildSubmit(content);
+      return;
+    }
+
     const history: AcademyChatMessage[] = [
       ...entries
         .filter((e): e is Extract<ConsoleEntry, { kind: 'chat-user' | 'chat-assistant' }> =>
@@ -548,7 +559,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         prev.map((e) => (e.id === assistantId && e.kind === 'chat-assistant' ? { ...e, streaming: false } : e)),
       );
     }
-  }, [draft, entries, lessonContext, modelName, readOnly, useFullDocs, setEntries]);
+  }, [draft, entries, lessonContext, modelName, readOnly, useFullDocs, setEntries, buildMode, onBuildSubmit]);
 
   const handleStop = useCallback(() => {
     const requestId = pendingChatRequestIdRef.current;
@@ -577,9 +588,25 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         className="flex min-h-9 items-center gap-2 border-t border-canvas-border px-3 py-2.5"
         title={disabledReason}
       >
-        <span aria-hidden className="shrink-0 font-mono text-xs leading-4 text-canvas-muted-foreground/70">
-          &rsaquo;
-        </span>
+        {onBuildSubmit ? (
+          <button
+            type="button"
+            onClick={() => setBuildMode((v) => !v)}
+            aria-pressed={buildMode}
+            title={buildMode ? 'Building a workflow from your next message' : 'Chatting; click to build a workflow instead'}
+            className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] leading-4 transition-colors ${
+              buildMode
+                ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-400'
+                : 'border-canvas-border text-canvas-muted-foreground/70 hover:text-canvas-muted-foreground'
+            }`}
+          >
+            {buildMode ? 'Build' : 'Chat'}
+          </button>
+        ) : (
+          <span aria-hidden className="shrink-0 font-mono text-xs leading-4 text-canvas-muted-foreground/70">
+            &rsaquo;
+          </span>
+        )}
         <div className="relative min-w-0 flex-1 overflow-hidden" style={{ maxHeight: 160 }}>
           {/* Real inline cursor span, not a computed pixel offset: the browser
               positions it exactly where a character would sit. The actual
@@ -718,12 +745,109 @@ export const TableExportContext = createContext<((markdown: string) => void) | n
 // component below can slice out its own source instead of re-serializing.
 const RawMarkdownContext = createContext('');
 
+/** One line of a real CSV field-by-field, honoring quoted fields with an
+ *  embedded comma or a doubled `""` escaped quote. */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"' && line[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') {
+        inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      fields.push(field);
+      field = '';
+    } else {
+      field += c;
+    }
+  }
+  fields.push(field);
+  return fields;
+}
+
+/** An "Ask an AI agent" node set to CSV output replies with bare comma rows,
+ *  no markdown table syntax, so the reply renders as a plain paragraph with
+ *  no export button. A consistent comma count across every line is the
+ *  closest a plain-text reply gets to declaring "I am CSV". */
+function looksLikeCsv(text: string): boolean {
+  if (text.includes('|')) return false;
+  const lines = text
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return false;
+  const counts = lines.map((l) => parseCsvLine(l).length);
+  // A single ordinary sentence can have one comma; a real one-row CSV
+  // reply (our common case, no header) needs at least 3 fields to tell
+  // the two apart with just this.
+  const minFields = lines.length === 1 ? 3 : 2;
+  if (counts[0] < minFields || !counts.every((c) => c === counts[0])) return false;
+  // A CSV field is a short value (a name, a number); a comma-split clause
+  // of an ordinary paragraph is a run of several words. Word count per
+  // field separates "a row of data" from "a sentence that happens to
+  // have enough commas."
+  const wordCount = text.trim().split(/\s+/).length;
+  const totalFields = counts.reduce((sum, c) => sum + c, 0);
+  return wordCount / totalFields <= 4;
+}
+
+/** Reuses the table export popup by faking up the one bit of markdown syntax
+ *  it actually parses: a header row, a separator, then the data rows. A
+ *  single headerless CSV row (the common case here) still round-trips
+ *  correctly, since it becomes that "header" and there are no body rows. */
+function csvToMarkdownTable(text: string): string {
+  const rows = text
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .map(parseCsvLine);
+  const escape = (cell: string) => cell.replace(/\|/g, '\\|');
+  const [header, ...body] = rows;
+  return [
+    `| ${header.map(escape).join(' | ')} |`,
+    `| ${header.map(() => '---').join(' | ')} |`,
+    ...body.map((r) => `| ${r.map(escape).join(' | ')} |`),
+  ].join('\n');
+}
+
 // Prose stays stripped to plain sentences server-side; GFM tables survive that
 // stripping (it never touches `|`), so this is the one construct worth parsing.
 const MARKDOWN_COMPONENTS = {
-  p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="wrap-anywhere whitespace-pre-wrap first:mt-0 last:mb-0 my-1.5">{children}</p>
-  ),
+  // biome-ignore lint/suspicious/noExplicitAny: react-markdown's mdast `node` prop
+  p: ({ children, node }: { children?: React.ReactNode; node?: any }) => {
+    const onExportTable = useContext(TableExportContext);
+    const raw = useContext(RawMarkdownContext);
+    const source = node?.position && raw ? raw.slice(node.position.start.offset, node.position.end.offset) : null;
+    const isCsv = onExportTable && source && looksLikeCsv(source);
+    return (
+      <div className="group relative">
+        {isCsv ? (
+          <button
+            type="button"
+            onClick={() => onExportTable(csvToMarkdownTable(source))}
+            className="absolute top-0 right-0 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+            title="Export this CSV"
+            aria-label="Export this CSV"
+          >
+            <Download className="size-3" />
+          </button>
+        ) : null}
+        <p className="wrap-anywhere whitespace-pre-wrap first:mt-0 last:mb-0 my-1.5">{children}</p>
+      </div>
+    );
+  },
   // biome-ignore lint/suspicious/noExplicitAny: react-markdown's mdast `node` prop
   table: ({ children, node }: { children?: React.ReactNode; node?: any }) => {
     const onExportTable = useContext(TableExportContext);
@@ -744,7 +868,10 @@ const MARKDOWN_COMPONENTS = {
           </button>
         ) : null}
         <div className="overflow-x-auto rounded-md">
-          <table className="w-full border-collapse text-left">{children}</table>
+          {/* min-w-full, not w-full: a wide column (a long description) can push the
+           *  table past its container instead of every other column getting crushed
+           *  down to a letter-wrapped sliver; the wrapper above scrolls the overflow. */}
+          <table className="min-w-full border-collapse text-left">{children}</table>
         </div>
       </div>
     );
@@ -753,10 +880,10 @@ const MARKDOWN_COMPONENTS = {
     <thead className="bg-canvas-muted text-canvas-muted-foreground">{children}</thead>
   ),
   th: ({ children }: { children?: React.ReactNode }) => (
-    <th className="border border-canvas-border px-2 py-1 font-semibold">{children}</th>
+    <th className="min-w-16 whitespace-nowrap border border-canvas-border px-2 py-1 font-semibold">{children}</th>
   ),
   td: ({ children }: { children?: React.ReactNode }) => (
-    <td className="border border-canvas-border px-2 py-1">{children}</td>
+    <td className="min-w-16 border border-canvas-border px-2 py-1">{children}</td>
   ),
   code: ({ children }: { children?: React.ReactNode }) => (
     <code className="rounded bg-canvas-muted px-1 py-0.5">{children}</code>
@@ -785,6 +912,97 @@ function AssistantBubble({ content }: { content: string }) {
       </RawMarkdownContext.Provider>
     </div>
   );
+}
+
+// A `| cell | cell |` line from ocr.cjs's own table rows, not general markdown:
+// no header/separator row, so a plain `|`-bounded line is the whole signal.
+function splitRawTableRow(line: string): string[] {
+  const inner = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  return inner.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
+}
+const isRawTableLine = (line: string) => /^\|.*\|$/.test(line.trim());
+
+/** `RawContent` below treats a bare `| cell | cell |` line as a whole table
+ *  row on its own, no separator needed, since it does its own parsing. A real
+ *  Markdown consumer (the conversation exporter's own remark-gfm pass) only
+ *  recognizes a GFM table with one, so anywhere OCR's raw text is exported as
+ *  Markdown needs this run first to get a real table instead of literal pipes. */
+export function normalizeRawTableRows(content: string): string {
+  const lines = content.split('\n');
+  const out: string[] = [];
+  let columnCount = 0;
+  for (const line of lines) {
+    if (isRawTableLine(line)) {
+      out.push(line);
+      if (columnCount === 0) {
+        columnCount = splitRawTableRow(line).length;
+        out.push(`| ${Array(columnCount).fill('---').join(' | ')} |`);
+      }
+    } else {
+      out.push(line);
+      columnCount = 0;
+    }
+  }
+  return out.join('\n');
+}
+
+/** Renders OCR's raw text as literal preformatted text, except for `|`-rowed
+ *  table lines: those render as an actual table so a scanned invoice's item
+ *  rows and totals stand apart from the surrounding prose instead of reading
+ *  as one more line of it. */
+function RawContent({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const blocks: React.ReactNode[] = [];
+  let textLines: string[] = [];
+  let tableRows: string[][] = [];
+  const flushText = () => {
+    if (textLines.length === 0) return;
+    blocks.push(
+      <div
+        key={blocks.length}
+        className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-muted-foreground"
+      >
+        {textLines.join('\n')}
+      </div>,
+    );
+    textLines = [];
+  };
+  const flushTable = () => {
+    if (tableRows.length === 0) return;
+    const colCount = Math.max(...tableRows.map((row) => row.length));
+    blocks.push(
+      <div key={blocks.length} className="overflow-x-auto rounded-md">
+        <table className="my-1.5 min-w-full border-collapse text-left font-mono text-xs">
+          <tbody>
+            {tableRows.map((row, r) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: rows never reorder within one render
+              <tr key={r}>
+                {Array.from({ length: colCount }, (_, c) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: cells never reorder within one render
+                  <td key={c} className="border border-canvas-border px-2 py-1 align-top text-canvas-muted-foreground">
+                    {row[c] ?? ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>,
+    );
+    tableRows = [];
+  };
+  for (const line of lines) {
+    if (isRawTableLine(line)) {
+      flushText();
+      tableRows.push(splitRawTableRow(line));
+    } else {
+      flushTable();
+      textLines.push(line);
+    }
+  }
+  flushText();
+  flushTable();
+  return <>{blocks}</>;
 }
 
 // Label shown for each whole-submission verdict. 'match' is set client-side
@@ -934,18 +1152,29 @@ function MediaCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'media' }> 
   return (
     <EntryCard label={entry.mediaType}>
       <div className="font-mono text-xs">
-        {entry.mediaType === 'image' && (
-          // biome-ignore lint/performance/noImgElement: a data: URL from a local generation call, not a remote asset next/image would optimize
-          <img src={entry.dataUrl} alt={entry.caption ?? 'Generated image'} className="max-w-full rounded-md" />
-        )}
-        {entry.mediaType === 'audio' && (
-          // biome-ignore lint/a11y/useMediaCaption: synthesized/generated audio has no caption track to attach
-          <audio controls src={entry.dataUrl} className="w-full" />
-        )}
-        {entry.mediaType === 'video' && (
-          // biome-ignore lint/a11y/useMediaCaption: generated clip has no caption track to attach
-          <video controls src={entry.dataUrl} className="max-w-full rounded-md" />
-        )}
+        <div className="group relative">
+          <button
+            type="button"
+            onClick={() => void saveMediaFile(entry.dataUrl, entry.caption || `generated-${entry.mediaType}`)}
+            className="absolute top-1.5 right-1.5 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+            title="Save this file"
+            aria-label="Save this file"
+          >
+            <Download className="size-3" />
+          </button>
+          {entry.mediaType === 'image' && (
+            // biome-ignore lint/performance/noImgElement: a data: URL from a local generation call, not a remote asset next/image would optimize
+            <img src={entry.dataUrl} alt={entry.caption ?? 'Generated image'} className="max-w-full rounded-md" />
+          )}
+          {entry.mediaType === 'audio' && (
+            // biome-ignore lint/a11y/useMediaCaption: synthesized/generated audio has no caption track to attach
+            <audio controls src={entry.dataUrl} className="w-full" />
+          )}
+          {entry.mediaType === 'video' && (
+            // biome-ignore lint/a11y/useMediaCaption: generated clip has no caption track to attach
+            <video controls src={entry.dataUrl} className="max-w-full rounded-md" />
+          )}
+        </div>
         {entry.caption && <p className="mt-1.5 text-canvas-muted-foreground">{entry.caption}</p>}
       </div>
     </EntryCard>

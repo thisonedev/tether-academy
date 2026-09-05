@@ -1,7 +1,7 @@
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
-import type { ConsoleEntry } from './lesson-console.js';
+import { type ConsoleEntry, normalizeRawTableRows } from './lesson-console.js';
 
 export type ExportFormat = 'pdf' | 'markdown' | 'txt' | 'csv' | 'docx' | 'xlsx';
 
@@ -103,7 +103,8 @@ export function buildConversationMarkdown(entries: ConsoleEntry[]): string {
   for (const entry of entries) {
     if (entry.kind === 'chat-user' || entry.kind === 'chat-assistant') {
       if (entry.kind === 'chat-assistant' && entry.content.trim().length === 0) continue;
-      parts.push(entry.content.trim());
+      const content = entry.kind === 'chat-assistant' && entry.raw ? normalizeRawTableRows(entry.content) : entry.content;
+      parts.push(content.trim());
     } else if (entry.kind === 'run') {
       const text = entry.lines.map((l) => l.line).join('\n').trim();
       if (text.length > 0) parts.push(`\`\`\`\n${text}\n\`\`\``);

@@ -9,6 +9,40 @@ const { ensureModels } = require('../shared/model-fetch.cjs');
 
 const EMBED_PRESET_KEY = 'GTE_LARGE_FP16';
 const IDLE_UNLOAD_MS = 20 * 60 * 1000;
+// Generous margin under the embedder's 512-token window (roughly 4 chars/token
+// for English), sized in characters so it doesn't depend on any tokenizer.
+const MAX_CHUNK_CHARS = 1200;
+
+function splitIntoSentences(text) {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// The SDK's own chunker counts chunkSize in splitStrategy units, not
+// characters, which let one chunk run to 25000+ tokens on a real document.
+function chunkDocument(text) {
+  const chunks = [];
+  let current = '';
+  const flush = () => {
+    if (current) {
+      chunks.push(current);
+      current = '';
+    }
+  };
+  for (const sentence of splitIntoSentences(text)) {
+    if (sentence.length > MAX_CHUNK_CHARS) {
+      flush();
+      for (let i = 0; i < sentence.length; i += MAX_CHUNK_CHARS) chunks.push(sentence.slice(i, i + MAX_CHUNK_CHARS));
+      continue;
+    }
+    if (current && current.length + sentence.length + 1 > MAX_CHUNK_CHARS) flush();
+    current = current ? `${current} ${sentence}` : sentence;
+  }
+  flush();
+  return chunks;
+}
 
 let current = { modelId: null };
 let idleTimer = null;
@@ -72,7 +106,12 @@ async function searchDocuments(documents, query, topK) {
   const modelId = await ensureEmbedModel();
   const workspace = `playground-${crypto.randomUUID()}`;
   try {
-    await sdk.ragIngest({ modelId, documents, workspace });
+    await sdk.ragIngest({
+      modelId,
+      documents: documents.flatMap(chunkDocument),
+      workspace,
+      chunk: false,
+    });
     return await sdk.ragSearch({ modelId, query, topK: topK || 5, workspace });
   } finally {
     if (typeof sdk.ragCloseWorkspace === 'function') {
