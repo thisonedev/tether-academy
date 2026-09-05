@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "product-mockup-flow",
+  "name": "Photo Maker",
   "nodes": [
     {
       "id": "start",

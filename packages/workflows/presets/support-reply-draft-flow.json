@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "support-reply-draft-flow",
+  "name": "Customer Reply Writer",
   "nodes": [
     {
       "id": "start",
@@ -15,7 +15,7 @@
       "x": 0,
       "y": 120,
       "fields": {
-        "source": "Type text",
+        "source": "My input",
         "text": "Hi, I ordered a replacement charger two weeks ago and it still hasn't arrived. The tracking number hasn't updated in 9 days. This is the second time this has happened with your shipping. I'd like a refund or an expedited replacement."
       }
     },

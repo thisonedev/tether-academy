@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "product-listing-translate-flow",
+  "name": "Product Translator",
   "nodes": [
     {
       "id": "start",

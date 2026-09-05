@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "meeting-notes-summary-flow",
+  "name": "Meeting Notes Taker",
   "nodes": [
     {
       "id": "start",
@@ -15,7 +15,7 @@
       "x": 0,
       "y": 120,
       "fields": {
-        "source": "Type text",
+        "source": "My input",
         "text": "Meeting notes - product sync:\n- Sarah will finalize the pricing page copy by Friday.\n- Dev team is blocked on the payments API key, need it from finance by Wednesday.\n- Marketing wants a launch date decision by end of week.\n- Everyone agreed to push the beta invite list out this afternoon."
       }
     },

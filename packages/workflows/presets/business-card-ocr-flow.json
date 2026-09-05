@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "business-card-ocr-flow",
+  "name": "Business Card Reader",
   "nodes": [
     {
       "id": "start",

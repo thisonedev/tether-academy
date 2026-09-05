@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "document-search-flow",
+  "name": "Document Search Assistant",
   "nodes": [
     {
       "id": "start",

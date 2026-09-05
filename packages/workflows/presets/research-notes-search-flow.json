@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "research-notes-search-flow",
+  "name": "Research Notes Finder",
   "nodes": [
     {
       "id": "start",

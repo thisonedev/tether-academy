@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "true"
+    "build": "node scripts/build-presets.mjs"
   }
 }

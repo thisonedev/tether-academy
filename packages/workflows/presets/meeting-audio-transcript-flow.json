@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "meeting-audio-transcript-flow",
+  "name": "Meeting Recording Transcriber",
   "nodes": [
     {
       "id": "start",

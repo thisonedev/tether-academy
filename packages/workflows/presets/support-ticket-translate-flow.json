@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "support-ticket-translate-flow",
+  "name": "Customer Reply Translator",
   "nodes": [
     {
       "id": "start",

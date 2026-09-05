@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "product-teaser-video-flow",
+  "name": "Video Maker",
   "nodes": [
     {
       "id": "start",

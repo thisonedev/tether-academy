@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "Expense Filter",
+  "name": "Expense Row Summarizer",
   "nodes": [
     {
       "id": "start",
@@ -19,13 +19,12 @@
       }
     },
     {
-      "id": "filter1",
-      "kind": "filter",
+      "id": "iter1",
+      "kind": "iterate-ai",
       "x": 0,
       "y": 260,
       "fields": {
-        "column": "Category",
-        "value": "Travel"
+        "task": "Summarize this expense in one short sentence, including the amount."
       }
     }
   ],
@@ -38,7 +37,7 @@
     },
     {
       "source": "read1",
-      "target": "filter1",
+      "target": "iter1",
       "sourceHandle": null,
       "targetHandle": null
     }
