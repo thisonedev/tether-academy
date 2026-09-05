@@ -484,15 +484,12 @@ function PlaygroundCanvas({
           pushRunLine('ok', '[not wired up yet]');
           continue;
         }
-        // Lessons get the pinned "Thinking…" line the instant a check starts;
-        // a workflow node calling a slow model deserves the same signal
-        // instead of a blank console until it finishes. Removed again below
-        // regardless of outcome: the node's own pushRunLine/pushResult/pushMedia
-        // calls already say what actually happened.
+        // Same pinned "Thinking…" bar a lesson check gets, not a blank
+        // console; an empty line renders nothing of its own in the log.
         const runningEntryId = nextEntryId();
         setEntries((prev) => [
           ...prev,
-          { kind: 'run', id: runningEntryId, lines: [{ stream: 'stdout', line: `Running ${def.label}…` }], status: 'running' },
+          { kind: 'run', id: runningEntryId, lines: [{ stream: 'stdout', line: '' }], status: 'running' },
         ]);
         const readInput = () => {
           const edge = edges.find((e) => e.target === id);

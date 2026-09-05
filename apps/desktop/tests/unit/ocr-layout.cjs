@@ -72,10 +72,9 @@ test('ocr-layout - a wrapped sentence spanning several lines reads as one paragr
 });
 
 test('ocr-layout - a total/tax/balance label bleeding into unrelated prose renders as its own table row', (t) => {
-  // A two-column layout (a totals box next to a legal paragraph) can land a
-  // label and unrelated prose on the same detected line; the label (with its
-  // value) must come out as its own table row, set off from the prose on
-  // both sides, not merged into the sentence before or after it.
+  // A totals box beside a legal paragraph can land a label and unrelated
+  // prose on one detected line; the label must come out as its own table
+  // row, set off from the prose on both sides.
   const text = layoutOcrBlocks([
     block('hereby authorize the repair work', 439, 3101, 987, 3161),
     block('herein set forth to be done along', 984, 3079, 1526, 3145),
@@ -137,13 +136,9 @@ test('ocr-layout - a continuation line starting with a digit still joins the sen
 });
 
 test('ocr-layout - a shorter table row still lines up under the full row above it', (t) => {
-  // Same y-range within each row (isolated from the full page, a shared
-  // tolerance can't be computed the same way it is for a real 100+-block
-  // page), well clear of the other row's, so the grouping itself isn't in
-  // question here. Row two has no rate/amount fields at all (blank cells on
-  // the real form, not a detection miss); it should still land under the
-  // row above it (id under id, description under description), rather than
-  // read as a two-column row that happens to share a table with a four-column one.
+  // Row two has no price fields at all (blank cells on the real form, not
+  // a detection miss); it should still land under row one, id under id,
+  // not read as a two-column row sharing a table with a four-column one.
   const text = layoutOcrBlocks([
     block('11427721779', 406, 2290, 645, 2334),
     block('oil filter', 1146, 2290, 1288, 2334),
@@ -156,11 +151,9 @@ test('ocr-layout - a shorter table row still lines up under the full row above i
 });
 
 test('ocr-layout - a header row too tight to split on its own borrows the row below it', (t) => {
-  // From a real receipt: "QTY" to "Description" is an 8px gap and "Unit
-  // Price" to "Amount" is 54px, both under this page's own column-gap
-  // threshold, while the field row right below splits into three real
-  // columns. The header must still land as one column per real field
-  // ("Unit Price" and "Amount" apart), not fewer columns than the data below it.
+  // From a real receipt: "QTY"-"Description" is 8px and "Unit Price"-"Amount"
+  // is 54px, both under this page's own threshold, while the row below
+  // splits into three real columns. The header must match that.
   const text = layoutOcrBlocks([
     block('QTY', 90, 616, 135, 637),
     block('Description', 143, 616, 270, 641),
@@ -210,4 +203,35 @@ test('ocr-layout - a street number never splits off as if it were a quantity', (
     block('Upload Logo', 756, 141, 927, 164),
   ]);
   t.is(text, '| 1234 Company St, | Upload Logo |');
+});
+
+test('ocr-layout - a numbered list item never renders as a two-column table', (t) => {
+  // From a real form: "1" (OCR drops the period) sits a real column-gap
+  // away from the item text, same shape as a quantity glued to a short
+  // name. Length tells them apart: this text runs a whole sentence.
+  const text = layoutOcrBlocks([
+    block('1', 136, 814, 155, 855),
+    block('If you were in hospital at the time of', 245, 822, 793, 855),
+    block('service; the Medicare AND private Health', 789, 824, 1359, 855),
+    block('Insurance refund', 1356, 825, 1575, 855),
+  ]);
+  t.is(text, '1 If you were in hospital at the time of service; the Medicare AND private Health Insurance refund');
+});
+
+test('ocr-layout - a numbered list item never glues onto the heading above it', (t) => {
+  // Real coordinates: "1" sits only 84px from the item text, under this
+  // page's own ~86px column threshold, so it never splits into 2 columns at
+  // all; it still must not read as a mid-sentence continuation of the
+  // heading above it just because it starts with a digit.
+  const text = layoutOcrBlocks([
+    block('Health Care Card Holders Only :', 662, 740, 1213, 790),
+    block('1', 136, 802, 155, 826),
+    block('If you were in hospital at the time of', 239, 800, 737, 844),
+    block('service; the Medicare AND private Health', 734, 802, 1308, 845),
+    block('Insurance refund', 1308, 808, 1555, 841),
+  ]);
+  t.is(
+    text,
+    'Health Care Card Holders Only :\n1 If you were in hospital at the time of service; the Medicare AND private Health Insurance refund',
+  );
 });

@@ -44,13 +44,9 @@ const columnCenter = (group) => {
   return (x0 + x1) / 2;
 };
 
-/** Splits a column's blocks in two at a total/tax/balance label's start,
- *  mirroring `columnText`'s own `join(' ')` so the character offset a regex
- *  match reports lines up with the real text. The label doesn't always start
- *  a fresh block (an OCR detection can glue "...necessary Total" into one),
- *  so a match landing inside a block's own text splits that block itself,
- *  dividing its bbox by the same fraction as the character split. The regex
- *  only fires on a short label word, so this stays a small, local estimate. */
+/** Splits a column's blocks at a character index (matching `columnText`'s
+ *  `join(' ')`). A match landing inside one block splits that block's own
+ *  bbox by the same fraction as the character split. */
 function splitColumnAtChar(group, charIndex) {
   let pos = 0;
   for (let i = 0; i < group.length; i++) {
@@ -73,10 +69,9 @@ function splitColumnAtChar(group, charIndex) {
   return [group, []];
 }
 
-/** A two-column layout (a totals box beside unrelated prose at the same
- *  height) can land a label right after prose text with too small a gap to
- *  read as its own column; splits that column in two wherever the label
- *  itself starts, so the later column-start check below still finds it. */
+/** A totals box beside unrelated prose at the same height can land a label
+ *  right after that prose with too small a gap to read as its own column;
+ *  splits it off wherever the label itself starts. */
 function explodeLabelWithinColumns(columns) {
   const exploded = [];
   for (const col of columns) {
@@ -92,12 +87,9 @@ function explodeLabelWithinColumns(columns) {
   return exploded;
 }
 
-/** Splits a row's columns wherever a total/tax/balance label starts one of
- *  them, since a two-column layout (this label's box next to unrelated prose
- *  at the same height) can land them on one geometric line with no
- *  position-based way to tell them apart. The label (with its own value) is
- *  marked `isolated`: never a real continuation of what came before it, nor
- *  continued by what follows. */
+/** Splits a row wherever a total/tax/balance label starts a column, since a
+ *  two-column layout can land it beside unrelated prose with no position-based
+ *  way to tell them apart. The label piece is marked `isolated`. */
 function splitFinancialLabelColumns(columns) {
   const exploded = explodeLabelWithinColumns(columns);
   const idx = exploded.findIndex((c) => FINANCIAL_LABEL_START_RE.test(columnText(c).trim()));
@@ -108,19 +100,32 @@ function splitFinancialLabelColumns(columns) {
   return pieces;
 }
 
-// A quantity glued straight onto the item name it counts ("2 Custom
-// product/service A") detects as one OCR block with no gap at all to split
-// on; a short digit run immediately followed by a capital letter is the one
-// text-level signal available that a real column boundary sits there, the
-// same way reading the words tells a person "2" is a count and not part of
-// the name. Capped at 2 digits so it reads a quantity, not a street number
-// or a year ("1234 Company St," must never split on this).
+// A quantity glued to its item name ("2 Custom product/service A") is one
+// OCR block with no gap to split on; a digit run before a capital letter is
+// the only signal left. Capped at 2 digits so a street number never splits.
 const LEADING_QUANTITY_RE = /^\d{1,2}\s+(?=[A-Z])/;
 
-/** Splits a column's own leading quantity off from the item name it counts,
- *  for the same reason `explodeLabelWithinColumns` splits a label out of a
- *  column it's glued to: no gap in the geometry marks the boundary, only
- *  the text itself does. */
+// A numbered list marker looks just like a glued quantity once OCR drops
+// the period. Length tells them apart: a real item name runs a few words,
+// a list item's own first line alone runs a whole sentence.
+const LIST_MARKER_RE = /^[A-Za-z0-9]{1,2}[.):]?\s+(?=[A-Z])/;
+const LIST_MARKER_TEXT_WORDS = 8;
+
+/** A bare marker paired with a long run of prose is a list item, not a
+ *  table row; rejoins it into one column so it wraps like real prose. */
+function isListMarkerRow(columns) {
+  // A wide enough gap splits marker from text into 2 real columns; too
+  // narrow a gap (still under the same regex, still a real list item) leaves
+  // them glued in column 0 alone. Either way it's the joined text that matters.
+  if (columns.length > 2) return false;
+  const text = columns.map(columnText).join(' ');
+  const match = LIST_MARKER_RE.exec(text);
+  if (!match) return false;
+  return text.slice(match[0].length).trim().split(/\s+/).length > LIST_MARKER_TEXT_WORDS;
+}
+
+/** Splits a leading quantity off an item name, same reason as
+ *  `explodeLabelWithinColumns`: no gap marks the boundary, only the text does. */
 function explodeLeadingQuantity(columns) {
   const exploded = [];
   for (const col of columns) {
@@ -136,16 +141,9 @@ function explodeLeadingQuantity(columns) {
   return exploded;
 }
 
-/** A table row that under-split (fewer columns than its neighbors) reads
- *  wrong next to them: a header whose short labels sat too close together to
- *  clear `TABULAR_GAP_RATIO`, or a Subtotal/Total row (already isolated above)
- *  whose label sits further right than a real field row's first column ever
- *  does. Realigns each such row onto the block's real column count, taken
- *  from whichever row split into the most columns:
- *  - an isolated label row always anchors its label to the first column and
- *    its value to the last, since it names a total, not this row's own field;
- *  - anything else (like that header) gets re-bucketed block by block, each
- *    one joining whichever reference column its center sits closest to. */
+/** An under-split row (fewer columns than its neighbors) is realigned onto
+ *  the block's real column count: an isolated label spans first column to
+ *  last, anything else re-buckets by nearest reference column center. */
 function realignTableBlock(blockPieces, tabularGap) {
   const maxColumns = Math.max(...blockPieces.map((p) => p.columns.length));
   const reference =
@@ -156,18 +154,16 @@ function realignTableBlock(blockPieces, tabularGap) {
   const refFirstX0 = Math.min(...reference.columns[0].map((b) => b.bbox[0]));
   for (const piece of blockPieces) {
     if (piece.columns.length >= maxColumns) continue;
-    // A form can stack two unrelated small tables with no prose between them
-    // (a vehicle-info row directly above an item table, say); nothing here
-    // says they're the same table except both being tabular. A row that
-    // doesn't even start near the reference's own first column isn't a
-    // short row of the same table, it's a different one: leave it alone
-    // rather than pad it into a shape that was never really there.
+    // Two unrelated small tables can stack with no prose between them. A row
+    // that doesn't start near the reference's own first column is a
+    // different table, not a short row of this one: leave it alone.
     if (!piece.isolated) {
       const pieceFirstX0 = Math.min(...piece.columns[0].map((b) => b.bbox[0]));
       if (Math.abs(pieceFirstX0 - refFirstX0) > tabularGap * 2) continue;
     }
     const buckets = Array.from({ length: maxColumns }, () => []);
     if (piece.isolated) {
+      // Names a total, not this row's own field: label to first, value to last.
       buckets[0] = piece.columns[0];
       buckets[maxColumns - 1] = piece.columns[piece.columns.length - 1];
     } else {
@@ -195,26 +191,18 @@ function realignTableBlock(blockPieces, tabularGap) {
 const endsASentence = (text) => /[.!?]\s*$/.test(text);
 
 // A real word or a mid-sentence reference ("1&4.", "#4?") continuing the
-// previous line; a genuinely new field starts with a capital letter instead
-// ("Sales Tax", "Item", "Subtotal"), but only once the row itself isn't
-// already ruled a table row, so this never overrides that stronger signal.
+// previous line; a new field starts with a capital letter instead, but only
+// when the row isn't already ruled a table row.
 const startsLikeContinuation = (text) => /^[a-z0-9]/.test(text);
 
-// A table row's fields (item code, description, rate, amount) sit far apart;
-// a wrapped sentence's words sit right next to each other. A fixed pixel gap
-// can't tell them apart on its own: the renderer normalizes every image to
-// its own scale before OCR (up for a small image, down for a large one), so
-// the same physical layout lands at very different pixel gaps depending on
-// the source image's own resolution. Measured across two real documents at
-// two different normalized scales, the tightest real column gap seen was
-// 2.16x the page's own median block height, and the widest gap within one
-// column was 0.32x it, so the gap is measured against that, not raw pixels.
+// A table row's fields sit far apart; a wrapped sentence's words sit close.
+// A fixed pixel gap can't tell them apart since each image rescales
+// differently before OCR; measured against the page's own median height instead.
 const TABULAR_GAP_RATIO = 2;
 
-/** Groups a line's left-to-right blocks into columns: a new column starts
- *  wherever the gap to the previous block clears `tabularGap`, so a table
- *  row's real fields (item code, description, rate, amount) split apart
- *  while a wrapped sentence's tightly-packed words stay one column. */
+/** Groups a line's blocks into columns: a new one starts wherever the gap
+ *  clears `tabularGap`, so real table fields split apart while a wrapped
+ *  sentence's tightly-packed words stay one column. */
 function splitIntoColumns(lineBlocks, tabularGap) {
   const columns = [[lineBlocks[0]]];
   for (let i = 1; i < lineBlocks.length; i++) {
@@ -231,12 +219,9 @@ const escapeTableCell = (text) => text.replace(/\|/g, '\\|').trim();
  *  surrounding prose, instead of blending into it as one more line of text. */
 const tableRowLine = (columns) => `| ${columns.map((group) => escapeTableCell(columnText(group))).join(' | ')} |`;
 
-/** Blocks arrive in detection order, not reading order, one line often split
- *  into several. Groups by vertical overlap into real lines, joins a
- *  wrapped sentence's continuation lines with a space (never a table row,
- *  which always keeps its own line), starts a new paragraph at a real
- *  sentence end or an unusually wide vertical gap, and renders any row with
- *  real column structure (2+ fields far apart) as a table instead of text. */
+/** Groups blocks into lines (detection order isn't reading order), joins a
+ *  wrapped sentence with spaces, breaks paragraphs at a real sentence end or
+ *  wide gap, and renders a real table row (2+ far-apart fields) as a table. */
 function layoutOcrBlocks(blocks) {
   const withBbox = blocks.filter((b) => Array.isArray(b.bbox) && b.bbox.length === 4);
   if (withBbox.length === 0) return blocks.map((b) => b.text).join('\n');
@@ -276,6 +261,19 @@ function layoutOcrBlocks(blocks) {
     // open with a number ("2 Reasons this works...") is not a quantity column.
     const columns = row.columns.length > 1 ? explodeLeadingQuantity(row.columns) : row.columns;
     for (const piece of splitFinancialLabelColumns(columns)) {
+      if (!piece.isolated && isListMarkerRow(piece.columns)) {
+        // Starts with a digit, so it reads like a mid-sentence continuation
+        // of whatever came before; it's a new item, not a continuation.
+        pieces.push({
+          columns: [piece.columns.flat()],
+          isolated: false,
+          blockIncomingJoin: true,
+          top: row.top,
+          bottom: row.bottom,
+          tabular: false,
+        });
+        continue;
+      }
       pieces.push({ ...piece, top: row.top, bottom: row.bottom, tabular: piece.columns.length > 1 });
     }
   }
@@ -316,7 +314,7 @@ function layoutOcrBlocks(blocks) {
       const wideGap = typicalGap > 0 && gap > typicalGap * 2.5;
       const sentenceEnd = endsASentence(prevText) && currText.length > 3;
       if (wideGap || sentenceEnd) separator = '\n\n';
-      else if (!prev.isolated && startsLikeContinuation(currText)) separator = ' ';
+      else if (!prev.isolated && !curr.blockIncomingJoin && startsLikeContinuation(currText)) separator = ' ';
       else separator = '\n';
     }
     text += separator;
