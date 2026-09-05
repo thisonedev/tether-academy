@@ -16,6 +16,18 @@ const IMAGE_MODELS = {
       modelConfig: { prediction: 'v' },
     }),
   },
+  'flux2-klein': {
+    label: 'FLUX.2 [klein] (higher quality, slower)',
+    registryKeys: ['FLUX_2_KLEIN_4B_Q4_0', 'QWEN3_4B_Q4_K_M', 'FLUX_2_KLEIN_4B_VAE'],
+    buildLoadArgs: (sdk) => ({
+      modelSrc: sdk.FLUX_2_KLEIN_4B_Q4_0,
+      modelType: 'sdcpp-generation',
+      modelConfig: { llmModelSrc: sdk.QWEN3_4B_Q4_K_M, vaeModelSrc: sdk.FLUX_2_KLEIN_4B_VAE },
+    }),
+    // FLUX's guidance-distilled sampling needs its own cfg_scale/guidance
+    // pair; SD 2.1's classifier-free defaults would wash the image out.
+    genArgs: { guidance: 3.5, cfg_scale: 1 },
+  },
 };
 
 const VIDEO_MODELS = {
@@ -66,7 +78,7 @@ async function generateImage(prompt, modelKey) {
   const key = modelKey && IMAGE_MODELS[modelKey] ? modelKey : Object.keys(IMAGE_MODELS)[0];
   const sdk = require('@qvac/sdk');
   const modelId = await lazyFor(IMAGE_MODELS, imageLazyByKey, key, 'image').ensureLoaded();
-  const { outputs } = sdk.diffusion({ modelId, prompt });
+  const { outputs } = sdk.diffusion({ modelId, prompt, ...IMAGE_MODELS[key].genArgs });
   const buffers = await outputs;
   const png = buffers[0];
   return `data:image/png;base64,${Buffer.from(png).toString('base64')}`;

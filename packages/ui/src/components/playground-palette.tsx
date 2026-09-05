@@ -3,6 +3,7 @@
 import {
   Bot,
   CircleCheck,
+  Dices,
   FileQuestion,
   FileText,
   Filter,
@@ -35,6 +36,7 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'ai-agent': Bot,
   if: GitBranch,
   'iterate-ai': Repeat,
+  randomize: Dices,
   translate: Languages,
   'ask-doc': FileQuestion,
   'search-documents': Search,
@@ -168,11 +170,12 @@ export function PlaygroundPalette({
                   onMouseEnter={(e) => showTooltip(def.kind, e.currentTarget)}
                   onMouseLeave={() => setActiveKind((k) => (k === def.kind ? null : k))}
                   onClick={(e) => showTooltip(activeKind === def.kind ? '' : def.kind, e.currentTarget)}
-                  className={`flex size-11 items-center justify-center rounded-lg border ${CATEGORY_CLASSES[def.category]} ${
+                  className={`flex size-11 items-center justify-center border ${def.kind === 'start' ? 'rounded-full' : 'rounded-lg'} ${CATEGORY_CLASSES[def.category]} ${
                     canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-not-allowed'
                   } ${def.inactive ? 'opacity-40' : ''}`}
                 >
-                  {Icon ? <Icon className="size-5" strokeWidth={2} /> : null}
+                  {/* Matches the canvas node icon size (playground-flow-node.tsx) so a kind reads the same in both places. */}
+                  {Icon ? <Icon className="size-3" strokeWidth={2} /> : null}
                 </div>
               );
             })}

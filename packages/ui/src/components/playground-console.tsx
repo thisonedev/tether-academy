@@ -8,11 +8,13 @@ export interface PlaygroundConsoleProps {
   onExportTable: (markdown: string) => void;
   /** Answers a pending Ask-for-confirmation node's entry. */
   onConfirm?: (entryId: string, answer: 'yes' | 'no') => void;
+  /** Builds a workflow from a typed prompt; see the Chat/Build toggle in ChatInputBar. */
+  onBuildWorkflow?: (prompt: string) => void;
 }
 
 /** The same timeline used in lessons, not a lookalike: run output and chat share one
  *  feed there, so they share one here too, with no lesson context to ground the chat. */
-export function PlaygroundConsole({ entries, setEntries, onExportTable, onConfirm }: PlaygroundConsoleProps) {
+export function PlaygroundConsole({ entries, setEntries, onExportTable, onConfirm, onBuildWorkflow }: PlaygroundConsoleProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TableExportContext.Provider value={onExportTable}>
@@ -25,7 +27,7 @@ export function PlaygroundConsole({ entries, setEntries, onExportTable, onConfir
           />
         </RailHiddenContext.Provider>
       </TableExportContext.Provider>
-      <ChatInputBar entries={entries} setEntries={setEntries} lessonContext={null} />
+      <ChatInputBar entries={entries} setEntries={setEntries} lessonContext={null} onBuildSubmit={onBuildWorkflow} />
     </div>
   );
 }

@@ -45,14 +45,29 @@ function wavFromPcm(pcm, sampleRate, channels, bitsPerSample) {
   return Buffer.concat([header, Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength)]);
 }
 
+let currentRequestId = null;
+
 /** @param {string} caption @param {number} [durationSec] */
 async function generateMusic(caption, durationSec) {
   const sdk = require('@qvac/sdk');
   const modelId = await lazy.ensureLoaded();
   const run = sdk.audioGen({ modelId, caption, lyrics: '[Instrumental]', seed: 42, duration: durationSec ?? 10 });
-  const { pcm, sampleRate, channels, bitsPerSample } = await run.audio;
-  const wav = wavFromPcm(pcm, sampleRate, channels, bitsPerSample);
-  return `data:audio/wav;base64,${wav.toString('base64')}`;
+  currentRequestId = run.requestId;
+  try {
+    const { pcm, sampleRate, channels, bitsPerSample } = await run.audio;
+    const wav = wavFromPcm(pcm, sampleRate, channels, bitsPerSample);
+    return `data:audio/wav;base64,${wav.toString('base64')}`;
+  } finally {
+    currentRequestId = null;
+  }
 }
 
-module.exports = { generateMusic, unload: lazy.unload };
+/** Cancels whatever music generation is in flight; a no-op when nothing is
+ *  running is required since the Stop button calls this unconditionally. */
+async function cancelMusic() {
+  if (!currentRequestId) return;
+  const sdk = require('@qvac/sdk');
+  await sdk.cancel({ requestId: currentRequestId }).catch(() => {});
+}
+
+module.exports = { generateMusic, cancelMusic, unload: lazy.unload };

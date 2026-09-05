@@ -16,7 +16,7 @@ export interface PlaygroundRunContext {
    *  source and produced non-empty text, in which case that text wins. */
   resolveContent: (manualFieldKey: string) => string | undefined;
   /** Appends a rendered table/text result to the output feed. */
-  pushResult: (content: string) => void;
+  pushResult: (content: string, opts?: { raw?: boolean }) => void;
   /** Appends a structured status line (stdout on success, stderr on failure). */
   pushRunLine: (status: 'ok' | 'err', line: string) => void;
   /** Sends one prompt through the desktop chat bridge and returns the reply. */
@@ -55,7 +55,13 @@ export interface PlaygroundFieldDef {
   key: string;
   label: string;
   type: 'text' | 'select' | 'textarea' | 'file';
-  options?: string[];
+  /** A plain string is both the stored value and the shown label; use
+   *  `{ value, label }` when the stored value (a model key, say) shouldn't
+   *  be what the user reads in the dropdown. */
+  options?: (string | { value: string; label: string })[];
+  /** A fresh (non-preset) node's starting value for this field. Defaults to
+   *  `options[0]` for a select, or `''` otherwise, when omitted. */
+  default?: string;
   /** `type: 'file'` only: the `<input accept>` filter, and whether more than
    *  one file can be picked at once (stored as a JSON-encoded array). */
   accept?: string;

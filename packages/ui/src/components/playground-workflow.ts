@@ -76,6 +76,49 @@ export async function pickSaveHandle(suggestedName: string): Promise<FileSystemF
   }
 }
 
+const MEDIA_EXT: Partial<Record<string, string>> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'audio/wav': 'wav',
+  'video/avi': 'avi',
+  'video/mp4': 'mp4',
+};
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(',');
+  const mime = /^data:(.*?);base64$/.exec(dataUrl.slice(0, comma))?.[1] ?? 'application/octet-stream';
+  const binary = atob(dataUrl.slice(comma + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+/** Saves a generated image/audio/video: a real file picker when the API is
+ *  there, a plain browser download otherwise. Never written to disk on its
+ *  own, so this is the only way a generation outlives the console. */
+export async function saveMediaFile(dataUrl: string, suggestedBaseName: string): Promise<void> {
+  const blob = dataUrlToBlob(dataUrl);
+  const ext = MEDIA_EXT[blob.type] ?? blob.type.split('/')[1] ?? 'bin';
+  const filename = slugFilename(suggestedBaseName, ext);
+  if (canPickFiles()) {
+    let handle: FileSystemFileHandle;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'Generated file', accept: { [blob.type]: [`.${ext}`] } }],
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      throw err;
+    }
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return;
+  }
+  downloadBlob(blob, filename);
+}
+
 export async function pickOpenHandle(): Promise<FileSystemFileHandle | null> {
   try {
     const [handle] = await window.showOpenFilePicker({
@@ -94,14 +137,10 @@ export async function writeWorkflowToHandle(handle: FileSystemFileHandle, workfl
   await writable.close();
 }
 
-/** Throws with a message meant to be shown to the user directly, not logged. */
-export function parseWorkflowFile(text: string): SavedWorkflow {
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error('Not valid JSON.');
-  }
+/** Coerces already-parsed JSON into a `SavedWorkflow`, shared by `parseWorkflowFile`
+ *  (a file the user opened) and the prompt-generated workflow parser in
+ *  `playground-generate.ts`. Throws with a message meant to be shown to the user directly. */
+export function parseWorkflowShape(data: unknown): SavedWorkflow {
   if (typeof data !== 'object' || data === null) throw new Error('Not a workflow file.');
   const obj = data as Record<string, unknown>;
   if (!Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) {
@@ -130,4 +169,15 @@ export function parseWorkflowFile(text: string): SavedWorkflow {
     };
   });
   return { version: 1, name: typeof obj.name === 'string' ? obj.name : 'My Workflow', nodes, edges };
+}
+
+/** Throws with a message meant to be shown to the user directly, not logged. */
+export function parseWorkflowFile(text: string): SavedWorkflow {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('Not valid JSON.');
+  }
+  return parseWorkflowShape(data);
 }

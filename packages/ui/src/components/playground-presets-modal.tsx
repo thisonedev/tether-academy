@@ -1,6 +1,26 @@
 'use client';
 
-import { Search, X } from 'lucide-react';
+import {
+  ClipboardList,
+  FileQuestion,
+  FileSearch,
+  Filter,
+  Image as ImageIcon,
+  Languages,
+  type LucideIcon,
+  Mic,
+  MessagesSquare,
+  Music,
+  Receipt,
+  Repeat,
+  ScanText,
+  Search,
+  Sparkles,
+  Tags,
+  Video,
+  Volume2,
+  X,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { loadPresets, type PresetEntry } from './playground-preset-data.js';
 
@@ -15,7 +35,28 @@ const CATEGORY_COLOR: Record<string, string> = {
   Video: '#818cf8',
   Music: '#818cf8',
   Files: '#fb923c',
+  Logic: '#fbbf24',
   Custom: '#c9a5f8',
+};
+
+// Keyed by manifest.json's `icon` field; Sparkles is the fallback for a name
+// that doesn't match, not a sign every preset needs a bespoke icon.
+const PRESET_ICON: Record<string, LucideIcon> = {
+  ClipboardList,
+  MessagesSquare,
+  Languages,
+  FileQuestion,
+  FileSearch,
+  Receipt,
+  ScanText,
+  Tags,
+  Volume2,
+  Mic,
+  Image: ImageIcon,
+  Video,
+  Music,
+  Filter,
+  Repeat,
 };
 
 export function PlaygroundPresetsModal({
@@ -45,7 +86,7 @@ export function PlaygroundPresetsModal({
     return (presets ?? []).filter((p) => {
       if (category !== 'All' && p.category !== category) return false;
       if (!q) return true;
-      return p.workflow.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
+      return p.title.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
     });
   }, [presets, query, category]);
 
@@ -91,6 +132,7 @@ export function PlaygroundPresetsModal({
           )}
           {filtered.map((p) => {
             const color = CATEGORY_COLOR[p.category] ?? '#9aa4af';
+            const Icon = PRESET_ICON[p.icon] ?? Sparkles;
             return (
               <button
                 key={p.file}
@@ -98,13 +140,10 @@ export function PlaygroundPresetsModal({
                 onClick={() => onSelect(p)}
                 className="rounded-lg border border-canvas-border p-3 text-left transition-colors hover:border-emerald-500/40 hover:bg-canvas-muted"
               >
-                <span
-                  className="mb-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                  style={{ color, backgroundColor: `color-mix(in oklab, ${color} 16%, transparent)` }}
-                >
-                  {p.category}
-                </span>
-                <div className="mb-1 truncate text-[12.5px] font-semibold text-canvas-foreground">{p.workflow.name}</div>
+                <div className="mb-2 flex items-center gap-2">
+                  <Icon className="size-4.5 shrink-0" style={{ color }} strokeWidth={2} />
+                  <div className="truncate text-[12.5px] font-semibold text-canvas-foreground">{p.title}</div>
+                </div>
                 <div className="text-[11px] leading-snug text-canvas-muted-foreground">{p.description}</div>
               </button>
             );
