@@ -18,9 +18,8 @@ export function readFileAsDataUrl(file: File): Promise<string> {
 const MAX_UPSCALE_DIMENSION = 2200;
 
 /** Redraws an image through a canvas, scaled by up to `factor`x and capped at
- *  `MAX_UPSCALE_DIMENSION` either way. Always re-encoding as JPEG (even at
- *  1x) is what matters for a `.jpeg`-named WebP: the SDK's vision models only
- *  decode JPEG/PNG/BMP, and this normalizes any browser-decodable format. */
+ *  `MAX_UPSCALE_DIMENSION`. Re-encoding as JPEG even at 1x fixes a `.jpeg`-named
+ *  WebP: the SDK's vision models only decode JPEG/PNG/BMP. */
 export function normalizeImageForModel(dataUrl: string, factor = 2): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new window.Image();
@@ -125,12 +124,9 @@ async function extractPdfText(dataUrl: string): Promise<string> {
     const content = await page.getTextContent();
     const pageHeight = page.view[3] - page.view[1];
 
-    // Group runs into visual lines. `hasEOL` marks a line's last run, but
-    // some generators (seen on a real footer: a title run at the left margin
-    // and a page number run at the right, both `hasEOL: false`) never set it
-    // at all, which would otherwise fuse a whole page's body text and its
-    // footer into one "line" the margin filter below never gets a chance to
-    // see. A real jump in baseline Y is the more reliable signal.
+    // Group runs into visual lines. `hasEOL` marks a line's last run, but a
+    // real footer's runs both had `hasEOL: false`, fusing the whole page
+    // into one "line"; a real jump in baseline Y is the reliable signal.
     const lines: { runs: PdfRun[]; y: number; rightEdge: number }[] = [];
     let current: PdfRun[] = [];
     let currentY: number | null = null;
@@ -141,12 +137,9 @@ async function extractPdfText(dataUrl: string): Promise<string> {
       current = [];
     };
     for (const item of content.items) {
-      // A real line's own `hasEOL` sometimes lands on a separate, empty-text
-      // marker item instead of the line's last real run (seen right at the
-      // start of the next line, same Y as its real content, zero width).
-      // Included as real content it reads as a one-word line of its own and
-      // forces a paragraph break after almost every line. It carries no text
-      // either way, so it's dropped outright rather than specially handled.
+      // `hasEOL` sometimes lands on a separate empty-text marker item, not
+      // the line's last real run; kept as content it reads as its own
+      // one-word line and forces a break after almost every line.
       if (!('str' in item) || item.str.length === 0) continue;
       const y = item.transform[5];
       if (currentY !== null && Math.abs(y - currentY) > 2) flushLine();

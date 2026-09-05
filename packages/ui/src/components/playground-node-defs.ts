@@ -35,10 +35,8 @@ function truncateForLimit(text: string, maxChars: number): { text: string; trunc
   return { text: text.slice(0, Math.max(0, maxChars)), truncated: true };
 }
 
-/** OCR's own `| cell | cell |` table rows are a display-only convention for
- *  the console (see ocr.cjs's `layoutOcrBlocks`); a downstream node (an AI
- *  agent, translate, ask-about-a-document) should see plain OCR text, not
- *  markdown table syntax it never asked for. */
+/** OCR's `| cell | cell |` rows are a display-only convention (ocr.cjs); a
+ *  downstream node should see plain OCR text, not markdown it never asked for. */
 function stripOcrTableMarkup(text: string): string {
   return text
     .split('\n')

@@ -107,12 +107,8 @@ function fixContentSource(nodes: SavedWorkflowNode[], edges: SavedWorkflowEdge[]
 }
 
 /** A model asked for "the same task over N inputs" reliably wires N repeats
- *  of the same 1-2 node pattern one after another instead of N branches off
- *  start, even when told not to (chat-context.cjs asks for branches
- *  explicitly). Detected here instead: an unbranched chain whose kinds are
- *  a short pattern repeated 2+ times gets each repeat's first node rewired
- *  to hang off start directly, so layoutByDepth fans them out like the
- *  independent jobs they are. Left alone if the model already branched. */
+ *  of one pattern in a chain, not N branches, even when told not to. An
+ *  unbranched chain whose kinds repeat gets each repeat rewired off start. */
 function branchOutRepeatedChain(nodes: SavedWorkflowNode[], edges: SavedWorkflowEdge[]): void {
   const start = nodes.find((n) => n.kind === 'start');
   if (!start) return;
@@ -183,11 +179,9 @@ export function buildNodeCatalogue(): string {
     .join('\n');
 }
 
-/** Walks from the first `{` tracking brace depth (skipping braces inside
- *  string literals) to find its real matching close, rather than trusting
- *  `lastIndexOf('}')` (wrong the moment there's trailing prose, or the JSON
- *  itself got cut off mid-object). Returns null when the object never closes,
- *  the signal a truncated/over-budget response left behind. */
+/** Walks from the first `{` tracking brace depth to find its real matching
+ *  close, unlike `lastIndexOf('}')` (wrong with trailing prose or a
+ *  truncated object). Returns null when the object never closes. */
 function findJsonObject(text: string): string | null {
   const start = text.indexOf('{');
   if (start === -1) return null;
@@ -212,12 +206,9 @@ function findJsonObject(text: string): string | null {
   return null;
 }
 
-// Reproduced with unrelated prompts, two variants of the same slip right
-// after a short/empty "fields": dropping the next object's opening brace
-// entirely (`}},"id":"n2"`) or leaving a stray quote in front of a brace
-// that IS there (`}},"{"id":"n2"`). Both edits are safe to apply
-// unconditionally: valid JSON never has either shape, so each can only ever
-// match a real mistake, never a correctly-formed transition.
+// Two real variants of the same slip after a short/empty "fields": a
+// dropped opening brace (`}},"id":"n2"`) or a stray quote before one that's
+// there (`}},"{"id":"n2"`). Valid JSON never has either shape.
 function repairMissingBraces(text: string): string {
   return text
     .replace(/([}\]])(\s*,\s*)("(?:id|source)":)/g, '$1$2{$3')
@@ -241,10 +232,9 @@ function extractJson(raw: string): string {
   return found.replace(/,(\s*[}\]])/g, '$1');
 }
 
-/** Repairs a generated workflow against the real node contracts before it
- *  reaches the canvas: drops an invented kind or field, coerces a `select`
- *  value to a real option, fixes a wired-but-unset content source, lays out
- *  branches by depth, and guarantees a `start` node exists. */
+/** Repairs a generated workflow against the real node contracts: drops an
+ *  invented kind/field, coerces bad `select` values, fixes an unset content
+ *  source, lays out branches by depth, guarantees a `start` node exists. */
 export function parseGeneratedWorkflow(raw: string): SavedWorkflow {
   const extracted = extractJson(raw);
   let data: unknown;

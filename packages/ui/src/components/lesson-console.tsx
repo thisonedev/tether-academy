@@ -775,10 +775,8 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-/** An "Ask an AI agent" node set to CSV output replies with bare comma rows,
- *  no markdown table syntax, so the reply renders as a plain paragraph with
- *  no export button. A consistent comma count across every line is the
- *  closest a plain-text reply gets to declaring "I am CSV". */
+/** A CSV-formatted agent reply is bare comma rows, no markdown table syntax,
+ *  so it renders as a plain paragraph with no export button by default. */
 function looksLikeCsv(text: string): boolean {
   if (text.includes('|')) return false;
   const lines = text
@@ -793,19 +791,15 @@ function looksLikeCsv(text: string): boolean {
   // the two apart with just this.
   const minFields = lines.length === 1 ? 3 : 2;
   if (counts[0] < minFields || !counts.every((c) => c === counts[0])) return false;
-  // A CSV field is a short value (a name, a number); a comma-split clause
-  // of an ordinary paragraph is a run of several words. Word count per
-  // field separates "a row of data" from "a sentence that happens to
-  // have enough commas."
+  // A CSV field is a short value; a comma-split paragraph clause is a run
+  // of several words. Words per field tells a real row from a long sentence.
   const wordCount = text.trim().split(/\s+/).length;
   const totalFields = counts.reduce((sum, c) => sum + c, 0);
   return wordCount / totalFields <= 4;
 }
 
-/** Reuses the table export popup by faking up the one bit of markdown syntax
- *  it actually parses: a header row, a separator, then the data rows. A
- *  single headerless CSV row (the common case here) still round-trips
- *  correctly, since it becomes that "header" and there are no body rows. */
+/** Reuses the table export popup by faking a header row and separator; a
+ *  single headerless CSV row still round-trips, becoming that "header". */
 function csvToMarkdownTable(text: string): string {
   const rows = text
     .trim()
@@ -922,11 +916,9 @@ function splitRawTableRow(line: string): string[] {
 }
 const isRawTableLine = (line: string) => /^\|.*\|$/.test(line.trim());
 
-/** `RawContent` below treats a bare `| cell | cell |` line as a whole table
- *  row on its own, no separator needed, since it does its own parsing. A real
- *  Markdown consumer (the conversation exporter's own remark-gfm pass) only
- *  recognizes a GFM table with one, so anywhere OCR's raw text is exported as
- *  Markdown needs this run first to get a real table instead of literal pipes. */
+/** `RawContent` parses a bare `| cell | cell |` line itself, no separator
+ *  needed; a real Markdown consumer (the exporter's remark-gfm pass) does
+ *  need one, so exporting OCR's raw text runs this first. */
 export function normalizeRawTableRows(content: string): string {
   const lines = content.split('\n');
   const out: string[] = [];
@@ -946,10 +938,8 @@ export function normalizeRawTableRows(content: string): string {
   return out.join('\n');
 }
 
-/** Renders OCR's raw text as literal preformatted text, except for `|`-rowed
- *  table lines: those render as an actual table so a scanned invoice's item
- *  rows and totals stand apart from the surrounding prose instead of reading
- *  as one more line of it. */
+/** Renders OCR's raw text as preformatted text, except `|`-rowed lines,
+ *  which render as an actual table set apart from the surrounding prose. */
 function RawContent({ content }: { content: string }) {
   const lines = content.split('\n');
   const blocks: React.ReactNode[] = [];

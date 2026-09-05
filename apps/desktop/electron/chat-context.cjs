@@ -126,12 +126,9 @@ function buildSecuritySystemPrompt(lessonKey, lessonContext) {
   ].filter(Boolean).join('\n');
 }
 
-// `catalogue` is the live node kind/field list from playground-generate.ts's
-// buildNodeCatalogue, never hardcoded here, so this prompt can't fall out of
-// sync with the node contracts the canvas will validate the response against.
-// `currentWorkflow` (optional) is the canvas's own current graph, stripped of
-// coordinates and file bytes, so a follow-up request can be a real edit
-// instead of an unrelated fresh build.
+// `catalogue` is the live node kind/field list (playground-generate.ts), never
+// hardcoded, so this can't drift from what the canvas validates. `currentWorkflow`
+// (optional) is the canvas's own graph, stripped of coordinates/file bytes.
 function buildWorkflowGenerationPrompt(catalogue, currentWorkflow) {
   return [
     'You turn a plain-language automation request into a workflow graph for a visual, node-based automation tool.',
