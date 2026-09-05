@@ -555,9 +555,59 @@ export interface AcademyAPI {
   peer?: AcademyPeerAPI;
   identity?: AcademyIdentityAPI;
   clipboard?: AcademyClipboardAPI;
+  playgroundCredentials?: AcademyPlaygroundCredentialsAPI;
+  /** English -> target only, via the SDK's dedicated per-language Bergamot NMT
+   *  models, not the general chat model. Throws for an unsupported language. */
+  translate?: (text: string, language: string) => Promise<string>;
+  /** Turns a plain-language request into a workflow graph, via the chat model.
+   *  `catalogue` is the live node-kind/field list from PLAYGROUND_NODE_DEFS;
+   *  the caller still validates the raw `text` before touching the canvas. */
+  workflow?: {
+    /** `currentWorkflow` is the canvas's own graph (summarizeCurrentWorkflow),
+     *  so a follow-up prompt can edit it instead of building something unrelated. */
+    generate: (
+      prompt: string,
+      catalogue: string,
+      currentWorkflow?: string,
+    ) => Promise<{ modelName: string | null; text: string }>;
+  };
+  /** Real chunk + embed + vector search over `documents` for `query`, via a
+   *  throwaway RAG workspace that's deleted after the call returns. */
+  ragSearch?: (documents: string[], query: string, topK?: number) => Promise<AcademyRagSearchResult[]>;
+  /** `image` is a data: URL, as read from a picked file via FileReader. */
+  ocr?: (image: string) => Promise<string>;
+  classifyImage?: (image: string) => Promise<string>;
+  /** Returns a data: URL for a playable WAV. */
+  textToSpeech?: (text: string) => Promise<string>;
+  /** `audio` is a data: URL; WAV in, plain transcript text out. */
+  speechToText?: (audio: string) => Promise<string>;
+  /** Returns a data: URL for a PNG. */
+  generateImage?: (prompt: string, model?: string) => Promise<string>;
+  /** Returns a data: URL for the generated clip (typically AVI); can take minutes.
+   *  `frames` must be 4*k + 1 (Wan's constraint); `steps` is diffusion steps. */
+  generateVideo?: (prompt: string, model?: string, frames?: number, steps?: number) => Promise<string>;
+  /** Cancels whatever `generateVideo` call is currently in flight; a no-op if none is. */
+  cancelGenerateVideo?: () => Promise<void>;
+  /** Returns a data: URL for a playable WAV. */
+  generateMusic?: (caption: string, durationSec?: number) => Promise<string>;
+  /** Cancels whatever `generateMusic` call is currently in flight; a no-op if none is. */
+  cancelGenerateMusic?: () => Promise<void>;
+}
+
+export interface AcademyRagSearchResult {
+  id: string;
+  content: string;
+  score: number;
 }
 
 export interface AcademyClipboardAPI {
   /** Copies text and clears it after `scrubAfterMs` (0 = never); main owns the timer so the scrub survives the window closing. */
   copy: (text: string, scrubAfterMs?: number) => Promise<boolean>;
+}
+
+export interface AcademyPlaygroundCredentialsAPI {
+  /** Names only, never values. */
+  list: () => Promise<string[]>;
+  set: (name: string, value: string) => Promise<boolean>;
+  delete: (name: string) => Promise<boolean>;
 }

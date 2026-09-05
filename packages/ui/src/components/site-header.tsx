@@ -51,6 +51,12 @@ export function SiteHeader() {
         >
           Courses
         </Link>
+        <Link
+          href="/playground"
+          className="desktop-only inline-flex rounded-md px-2 py-1.5 text-canvas-muted-foreground transition-colors hover:bg-canvas-muted hover:text-canvas-foreground sm:px-3"
+        >
+          Playground
+        </Link>
         <a
           href="https://github.com/thisonedev/tether-academy"
           target="_blank"

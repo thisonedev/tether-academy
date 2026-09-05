@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "name": "Expense Filter",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "read1",
+      "kind": "read-file",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "file": "{\"name\":\"sample-expenses.csv\",\"dataUrl\":\"data:text/csv;base64,RGF0ZSxDYXRlZ29yeSxEZXNjcmlwdGlvbixBbW91bnQKMjAyNC0wMS0wMyxUcmF2ZWwsRmxpZ2h0IHRvIENoaWNhZ28sNDEyLjUwCjIwMjQtMDEtMDksVHJhdmVsLFRheGksMzQuMDAKMjAyNC0wMS0xNCxUcmF2ZWwsSG90ZWwgLSAyIG5pZ2h0cywzMTAuMDAKMjAyNC0wMS0xOCxNZWFscyxUZWFtIGx1bmNoLDU4LjIwCjIwMjQtMDEtMjIsT2ZmaWNlLE5vdGVib29rICsgcGVucywxNC43NQoyMDI0LTAxLTI3LE1lYWxzLENsaWVudCBkaW5uZXIsOTYuNDAKMjAyNC0wMi0wMixUcmF2ZWwsUGFya2luZywyMi4wMAoyMDI0LTAyLTA1LE9mZmljZSxNb25pdG9yIHN0YW5kLDM5Ljk5Cg==\"}"
+      }
+    },
+    {
+      "id": "filter1",
+      "kind": "filter",
+      "x": 0,
+      "y": 260,
+      "fields": {
+        "column": "Category",
+        "value": "Travel"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "read1",
+      "sourceHandle": null,
+      "targetHandle": null
+    },
+    {
+      "source": "read1",
+      "target": "filter1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

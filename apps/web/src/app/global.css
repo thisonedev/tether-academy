@@ -16,12 +16,14 @@
   --color-fd-primary-foreground: oklch(0.97 0.01 162);
   --color-fd-ring: oklch(0.696 0.17 162);
 
-  /* Dark main canvas, the whole app lives on this */
-  --color-canvas: oklch(0.16 0.012 162);
-  --color-canvas-foreground: oklch(0.96 0.005 162);
-  --color-canvas-muted: oklch(0.22 0.012 162);
-  --color-canvas-muted-foreground: oklch(0.72 0.012 162);
-  --color-canvas-border: oklch(0.27 0.012 162);
+  /* Dark main canvas, the whole app lives on this. True black, zero chroma:
+     the old hue-162 tint at low chroma read as dirty green-grey everywhere
+     a muted surface showed, not just where the emerald accent was intended. */
+  --color-canvas: oklch(0.09 0 0);
+  --color-canvas-foreground: oklch(0.96 0 0);
+  --color-canvas-muted: oklch(0.12 0 0);
+  --color-canvas-muted-foreground: oklch(0.68 0 0);
+  --color-canvas-border: oklch(0.22 0 0);
 
   /* Geist, self-hosted via the `geist` package (layout.tsx sets the CSS vars). One family across prose, questions, code, and output. */
   --font-sans:
@@ -313,4 +315,25 @@ html[data-platform="desktop"] .run-mode-select-web {
 /* Hide desktop-only elements when running in the web build (no data-platform="desktop" on <html>) */
 html:not([data-platform="desktop"]) .desktop-only {
   display: none;
+}
+
+/* Keep (license asks for the credit), styled to match the app. React Flow's own
+   stylesheet sets these same properties and loads after this one, so background
+   goes through its CSS variable and margin/padding need the `.react-flow` ancestor. */
+.react-flow__attribution {
+  --xy-attribution-background-color: transparent;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+.react-flow .react-flow__attribution {
+  margin: 10px;
+  padding: 3px 6px;
+}
+.react-flow__attribution:hover {
+  opacity: 0.9;
+}
+.react-flow__attribution a {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 10.5px;
+  color: var(--color-canvas-muted-foreground);
 }

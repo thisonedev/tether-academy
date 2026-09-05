@@ -165,6 +165,69 @@ export const clipboardCopySchema = z.object({
   scrubAfterMs: z.number().int().min(0).max(10 * 60_000).default(CLIPBOARD_SCRUB_MS),
 });
 
+export const academyRagSearchSchema = z.object({
+  documents: z.array(z.string().min(1)).min(1).max(50),
+  query: z.string().min(1).max(2000),
+  topK: z.number().int().min(1).max(20).optional(),
+});
+
+export const academyTranslateSchema = z.object({
+  text: z.string().min(1).max(20_000),
+  /** Matches a key in translate.cjs's NMT_PRESETS (English source only). */
+  language: z.string().min(1).max(64),
+});
+
+export const academyWorkflowGenerateSchema = z.object({
+  prompt: z.string().min(1).max(2_000),
+  /** Rendered from PLAYGROUND_NODE_DEFS by playground-generate.ts, not user text. */
+  catalogue: z.string().min(1).max(8_000),
+  /** The canvas's own current workflow (stripped, via summarizeCurrentWorkflow),
+   *  so a follow-up request can edit it instead of building something unrelated. */
+  currentWorkflow: z.string().max(20_000).optional(),
+});
+
+/** A `data:` URL, as read from a picked file via FileReader in the renderer. */
+export const academyImageInputSchema = z.object({
+  image: z.string().min(1).max(25_000_000),
+});
+
+export const academyTextToSpeechSchema = z.object({
+  text: z.string().min(1).max(5_000),
+});
+
+export const academySpeechToTextSchema = z.object({
+  audio: z.string().min(1).max(60_000_000),
+});
+
+export const academyGenerateImageSchema = z.object({
+  prompt: z.string().min(1).max(2_000),
+  model: z.string().min(1).max(64).optional(),
+});
+
+export const academyGenerateVideoSchema = z.object({
+  prompt: z.string().min(1).max(2_000),
+  model: z.string().min(1).max(64).optional(),
+  frames: z.number().int().min(1).max(200).optional(),
+  steps: z.number().int().min(1).max(150).optional(),
+});
+
+export const academyGenerateMusicSchema = z.object({
+  caption: z.string().min(1).max(2_000),
+  durationSec: z.number().int().min(1).max(60).optional(),
+});
+
+/** A playground credential's name: the only thing a workflow JSON is ever allowed to store, never the secret itself. */
+export const playgroundCredentialNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_.-]+$/, 'credential name must be letters, digits, dot, dash, or underscore');
+
+export const playgroundCredentialSetSchema = z.object({
+  name: playgroundCredentialNameSchema,
+  value: z.string().min(1).max(8192),
+});
+
 /** A model cache entry id, used as a relative path under the models root; `removeModel()` containment-checks the resolved result too, so this is the earlier of two gates. */
 export const modelIdSchema = z
   .string()

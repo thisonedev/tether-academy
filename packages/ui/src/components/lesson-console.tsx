@@ -1,14 +1,18 @@
 'use client';
 
 import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
-import { Check, Loader2, Settings, Square, X } from 'lucide-react';
+import { Check, Download, Loader2, Settings, Square, X } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { isAiBotModel } from './ai-bot-models.js';
 import { type LessonProgress, parseProgress } from './lesson-progress.js';
 import { formatSeconds, type RunSegment, type StageSegment, splitStages } from './lesson-stages.js';
 import { QVAC_EDITOR_BACKGROUND } from './qvac-theme.js';
 import type { OutputLine } from './lesson-workspace.js';
+import { saveMediaFile } from './playground-workflow.js';
+import { ThemedSelect } from './themed-select.js';
 
 export interface LessonConsoleLessonContext {
   chapter: string;
@@ -25,7 +29,7 @@ export interface ConsoleCheckResult {
 
 export type ConsoleEntry =
   | { kind: 'chat-user'; id: string; content: string }
-  | { kind: 'chat-assistant'; id: string; content: string; streaming: boolean }
+  | { kind: 'chat-assistant'; id: string; content: string; streaming: boolean; raw?: boolean }
   | {
       kind: 'run';
       id: string;
@@ -44,6 +48,20 @@ export type ConsoleEntry =
       aiVerdict?: MatchStatus;
       aiReason?: string;
       aiError?: string;
+    }
+  | {
+      kind: 'confirm';
+      id: string;
+      message: string;
+      /** null until answered; the playground's Ask-for-confirmation node awaits it. */
+      answer: 'yes' | 'no' | null;
+    }
+  | {
+      kind: 'media';
+      id: string;
+      mediaType: 'image' | 'audio' | 'video';
+      dataUrl: string;
+      caption?: string;
     };
 
 /** Timeline panel. Typing happens in the separate `ChatInputBar`, which
@@ -52,6 +70,10 @@ export interface LessonConsoleProps {
   entries: ConsoleEntry[];
   /** Cancels an in-progress AI review for the given check entry. */
   onStopCheck: (entryId: string) => void;
+  /** "Check answer" only exists in a lesson; playground has no such thing to mention. */
+  emptyStateText?: string;
+  /** Answers a pending 'confirm' entry. Lessons never produce one, so this is optional. */
+  onConfirm?: (entryId: string, answer: 'yes' | 'no') => void;
 }
 
 /** Chat input for the bottom nav. Owns the model/send/stop machinery;
@@ -61,6 +83,10 @@ export interface ChatInputBarProps {
   setEntries: React.Dispatch<React.SetStateAction<ConsoleEntry[]>>;
   lessonContext: LessonConsoleLessonContext | null;
   readOnly?: boolean;
+  /** When set, a Chat/Build toggle appears and a submit in Build mode calls
+   *  this instead of the normal chat.send path. Playground-only; lesson pages
+   *  never pass this, so their input bar is unchanged. */
+  onBuildSubmit?: (prompt: string) => void;
 }
 
 // Turns a cache filename like "Qwen3-4B-Q4_K_M.gguf" into "Qwen3 4B" for display.
@@ -202,6 +228,11 @@ const CARD_INSET = 1 + 6;
 // a monospace glyph reads low in its line box because of the ascender space.
 const DOT_OFFSET = 5;
 
+// Set by PlaygroundConsole only: too many parallel rails read as noise once a
+// workflow's output panel isn't also carrying a lesson's stage-by-stage trace.
+// Lesson chat never provides it, so the rail there is unchanged.
+export const RailHiddenContext = createContext(false);
+
 function RailRow({
   dot,
   card = false,
@@ -212,6 +243,14 @@ function RailRow({
   card?: boolean;
   children: React.ReactNode;
 }) {
+  const railHidden = useContext(RailHiddenContext);
+  if (railHidden) {
+    return (
+      <div style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
+        {card ? <div className={RAIL_CARD}>{children}</div> : children}
+      </div>
+    );
+  }
   return (
     <div className={RAIL_ROW} style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
       {/* Padding, not margin: the line spans the full row, so spacing a row
@@ -246,12 +285,25 @@ function TimelineRow({
   );
 }
 
-export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
+export function LessonConsole({ entries, onStopCheck, emptyStateText, onConfirm }: LessonConsoleProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Streaming keeps this effect firing every chunk; pinning unconditionally made it
+  // impossible to scroll up mid-reply. Stick to the bottom only while already there.
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    const onScroll = () => {
+      stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !stickToBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
   }, [entries]);
 
@@ -269,7 +321,7 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
       className="min-h-0 flex-1 space-y-0 overflow-x-hidden overflow-y-auto p-3 text-sm"
       style={{ backgroundColor: QVAC_EDITOR_BACKGROUND }}
     >
-      {entries.length === 0 ? <EmptyState /> : null}
+      {entries.length === 0 ? <EmptyState text={emptyStateText} /> : null}
       {entries.map((entry) => {
         if (entry.kind === 'chat-user') return <UserBubble key={entry.id} content={entry.content} />;
         if (entry.kind === 'chat-assistant') {
@@ -278,13 +330,27 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
           if (entry.streaming && entry.content.length === 0) return null;
           return (
             <TimelineRow key={entry.id} state={entry.streaming ? 'thinking' : 'success'} card>
-              <AssistantBubble content={entry.content} />
+              {entry.raw ? <RawContent content={entry.content} /> : <AssistantBubble content={entry.content} />}
             </TimelineRow>
           );
         }
         // No outer dot: the run's own stages carry theirs, and this one used
         // to appear the moment a run started, before it had anything to show.
         if (entry.kind === 'run') return <RunCard key={entry.id} entry={entry} />;
+        if (entry.kind === 'confirm') {
+          return (
+            <TimelineRow key={entry.id} state={entry.answer === null ? 'thinking' : 'success'} card>
+              <ConfirmCard entry={entry} onAnswer={(answer) => onConfirm?.(entry.id, answer)} />
+            </TimelineRow>
+          );
+        }
+        if (entry.kind === 'media') {
+          return (
+            <TimelineRow key={entry.id} state="success" card>
+              <MediaCard entry={entry} />
+            </TimelineRow>
+          );
+        }
         return (
           <TimelineRow key={entry.id} state={checkState(entry)} card>
             <CheckCard entry={entry} onStop={() => onStopCheck(entry.id)} />
@@ -305,7 +371,8 @@ export function LessonConsole({ entries, onStopCheck }: LessonConsoleProps) {
   );
 }
 
-export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: ChatInputBarProps) {
+export function ChatInputBar({ entries, setEntries, lessonContext, readOnly, onBuildSubmit }: ChatInputBarProps) {
+  const [buildMode, setBuildMode] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [chatUnavailable, setChatUnavailable] = useState(false);
@@ -317,6 +384,12 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
   const [useFullDocs, setUseFullDocs] = useState(true);
   const pendingChatRequestIdRef = useRef<string | null>(null);
   const pendingChatEntryIdRef = useRef<string | null>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const syncCursorIndex = useCallback((e: { currentTarget: HTMLTextAreaElement }) => {
+    setCursorIndex(e.currentTarget.selectionStart ?? 0);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.academy?.chat) {
@@ -449,6 +522,11 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
     setChatError(null);
     setDraft('');
 
+    if (buildMode && onBuildSubmit) {
+      onBuildSubmit(content);
+      return;
+    }
+
     const history: AcademyChatMessage[] = [
       ...entries
         .filter((e): e is Extract<ConsoleEntry, { kind: 'chat-user' | 'chat-assistant' }> =>
@@ -481,7 +559,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
         prev.map((e) => (e.id === assistantId && e.kind === 'chat-assistant' ? { ...e, streaming: false } : e)),
       );
     }
-  }, [draft, entries, lessonContext, modelName, readOnly, useFullDocs, setEntries]);
+  }, [draft, entries, lessonContext, modelName, readOnly, useFullDocs, setEntries, buildMode, onBuildSubmit]);
 
   const handleStop = useCallback(() => {
     const requestId = pendingChatRequestIdRef.current;
@@ -507,29 +585,66 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
       {/* No box of its own: the editor's background carries through and only a
           rule above and below separates it, so it reads as part of the panel. */}
       <div
-        className="flex h-9 items-center gap-2 border-t border-canvas-border px-3"
+        className="flex min-h-9 items-center gap-2 border-t border-canvas-border px-3 py-2.5"
         title={disabledReason}
       >
-        <span aria-hidden className="shrink-0 font-mono text-xs leading-4 text-canvas-muted-foreground/70">
-          &rsaquo;
-        </span>
-        <textarea
-          rows={1}
-          value={draft}
-          disabled={readOnly || !modelName}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void handleSend();
-            }
-          }}
-          // The `›` already says "type here", so the only placeholder left is
-          // the one that explains why you cannot.
-          placeholder={disabledReason ?? ''}
-          className="min-w-0 flex-1 resize-none bg-transparent font-mono text-xs leading-4 text-canvas-muted-foreground outline-none placeholder:text-canvas-muted-foreground/60 disabled:cursor-not-allowed"
-          style={{ height: '16px' }}
-        />
+        {onBuildSubmit ? (
+          <button
+            type="button"
+            onClick={() => setBuildMode((v) => !v)}
+            aria-pressed={buildMode}
+            title={buildMode ? 'Building a workflow from your next message' : 'Chatting; click to build a workflow instead'}
+            className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] leading-4 transition-colors ${
+              buildMode
+                ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-400'
+                : 'border-canvas-border text-canvas-muted-foreground/70 hover:text-canvas-muted-foreground'
+            }`}
+          >
+            {buildMode ? 'Build' : 'Chat'}
+          </button>
+        ) : (
+          <span aria-hidden className="shrink-0 font-mono text-xs leading-4 text-canvas-muted-foreground/70">
+            &rsaquo;
+          </span>
+        )}
+        <div className="relative min-w-0 flex-1 overflow-hidden" style={{ maxHeight: 160 }}>
+          {/* Real inline cursor span, not a computed pixel offset: the browser
+              positions it exactly where a character would sit. The actual
+              textarea sits on top, fully transparent, for input/focus/selection. */}
+          <div
+            aria-hidden
+            className="whitespace-pre-wrap break-words font-mono text-xs leading-4 text-canvas-muted-foreground"
+            style={{ transform: `translateY(${-scrollTop}px)` }}
+          >
+            {draft.length === 0 && disabledReason && (
+              <span className="text-canvas-muted-foreground/60">{disabledReason}</span>
+            )}
+            {draft.slice(0, cursorIndex)}
+            {!readOnly && modelName && <span className="inline-block h-3.5 w-1.5 -translate-y-px bg-canvas-muted-foreground align-middle" />}
+            {draft.slice(cursorIndex)}
+          </div>
+          <textarea
+            ref={draftRef}
+            rows={1}
+            value={draft}
+            disabled={readOnly || !modelName}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              syncCursorIndex(e);
+            }}
+            onSelect={syncCursorIndex}
+            onClick={syncCursorIndex}
+            onKeyUp={syncCursorIndex}
+            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void handleSend();
+              }
+            }}
+            className="absolute inset-0 w-full resize-none overflow-y-auto whitespace-pre-wrap break-words bg-transparent font-mono text-xs leading-4 text-transparent caret-transparent outline-none disabled:cursor-not-allowed"
+          />
+        </div>
         <ModelSwitcher
           modelName={modelName}
           options={installedAiBotModels}
@@ -564,8 +679,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly }: C
 }
 
 // Same control as the run-mode and paired-device pickers in the editor
-// toolbar: a native select, so the three read as one family and the popup
-// this used to open is the platform's.
+// toolbar: a themed dropdown, so the three read as one family.
 function ModelSwitcher({
   modelName,
   options,
@@ -582,22 +696,16 @@ function ModelSwitcher({
   return (
     <div className="flex shrink-0 items-center gap-1">
       {busy ? <Loader2 className="size-2.5 shrink-0 animate-spin text-canvas-muted-foreground" /> : null}
-      <select
-        aria-label="Chat model"
+      <ThemedSelect
+        ariaLabel="Chat model"
         title="Chat model"
         value={modelName ?? ''}
-        onChange={(e) => onSelect(e.target.value)}
+        onChange={onSelect}
         disabled={busy || options.length === 0}
-        suppressHydrationWarning
-        className="min-w-0 max-w-[6rem] truncate rounded border border-canvas-border bg-transparent px-1.5 py-1 sm:max-w-[9rem] text-[10px] font-medium tracking-wider text-canvas-muted-foreground uppercase transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {modelName ? null : <option value="">Pick model</option>}
-        {options.map((name) => (
-          <option key={name} value={name}>
-            {shortName(name)}
-          </option>
-        ))}
-      </select>
+        placeholder="Pick model"
+        options={options.map((name) => ({ value: name, label: shortName(name) }))}
+        className="flex min-w-0 max-w-[6rem] items-center justify-between gap-1 rounded border border-canvas-border bg-transparent px-1.5 py-1 sm:max-w-[9rem] text-[10px] font-medium tracking-wider text-canvas-muted-foreground uppercase transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+      />
     </div>
   );
 }
@@ -630,10 +738,261 @@ function UserBubble({ content }: { content: string }) {
   );
 }
 
+// Set only by PlaygroundConsole, so a table can offer "export this table"
+// without lesson chat, which never sets it, growing the same button.
+export const TableExportContext = createContext<((markdown: string) => void) | null>(null);
+// The raw markdown behind the bubble currently rendering, so the table
+// component below can slice out its own source instead of re-serializing.
+const RawMarkdownContext = createContext('');
+
+/** One line of a real CSV field-by-field, honoring quoted fields with an
+ *  embedded comma or a doubled `""` escaped quote. */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"' && line[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') {
+        inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      fields.push(field);
+      field = '';
+    } else {
+      field += c;
+    }
+  }
+  fields.push(field);
+  return fields;
+}
+
+/** A CSV-formatted agent reply is bare comma rows, no markdown table syntax,
+ *  so it renders as a plain paragraph with no export button by default. */
+function looksLikeCsv(text: string): boolean {
+  if (text.includes('|')) return false;
+  const lines = text
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return false;
+  const counts = lines.map((l) => parseCsvLine(l).length);
+  // A single ordinary sentence can have one comma; a real one-row CSV
+  // reply (our common case, no header) needs at least 3 fields to tell
+  // the two apart with just this.
+  const minFields = lines.length === 1 ? 3 : 2;
+  if (counts[0] < minFields || !counts.every((c) => c === counts[0])) return false;
+  // A CSV field is a short value; a comma-split paragraph clause is a run
+  // of several words. Words per field tells a real row from a long sentence.
+  const wordCount = text.trim().split(/\s+/).length;
+  const totalFields = counts.reduce((sum, c) => sum + c, 0);
+  return wordCount / totalFields <= 4;
+}
+
+/** Reuses the table export popup by faking a header row and separator; a
+ *  single headerless CSV row still round-trips, becoming that "header". */
+function csvToMarkdownTable(text: string): string {
+  const rows = text
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .map(parseCsvLine);
+  const escape = (cell: string) => cell.replace(/\|/g, '\\|');
+  const [header, ...body] = rows;
+  return [
+    `| ${header.map(escape).join(' | ')} |`,
+    `| ${header.map(() => '---').join(' | ')} |`,
+    ...body.map((r) => `| ${r.map(escape).join(' | ')} |`),
+  ].join('\n');
+}
+
+// Prose stays stripped to plain sentences server-side; GFM tables survive that
+// stripping (it never touches `|`), so this is the one construct worth parsing.
+const MARKDOWN_COMPONENTS = {
+  // biome-ignore lint/suspicious/noExplicitAny: react-markdown's mdast `node` prop
+  p: ({ children, node }: { children?: React.ReactNode; node?: any }) => {
+    const onExportTable = useContext(TableExportContext);
+    const raw = useContext(RawMarkdownContext);
+    const source = node?.position && raw ? raw.slice(node.position.start.offset, node.position.end.offset) : null;
+    const isCsv = onExportTable && source && looksLikeCsv(source);
+    return (
+      <div className="group relative">
+        {isCsv ? (
+          <button
+            type="button"
+            onClick={() => onExportTable(csvToMarkdownTable(source))}
+            className="absolute top-0 right-0 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+            title="Export this CSV"
+            aria-label="Export this CSV"
+          >
+            <Download className="size-3" />
+          </button>
+        ) : null}
+        <p className="wrap-anywhere whitespace-pre-wrap first:mt-0 last:mb-0 my-1.5">{children}</p>
+      </div>
+    );
+  },
+  // biome-ignore lint/suspicious/noExplicitAny: react-markdown's mdast `node` prop
+  table: ({ children, node }: { children?: React.ReactNode; node?: any }) => {
+    const onExportTable = useContext(TableExportContext);
+    const raw = useContext(RawMarkdownContext);
+    const source =
+      onExportTable && node?.position && raw ? raw.slice(node.position.start.offset, node.position.end.offset) : null;
+    return (
+      <div className="group relative my-1.5">
+        {source ? (
+          <button
+            type="button"
+            onClick={() => source && onExportTable?.(source)}
+            className="absolute top-1.5 right-1.5 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+            title="Export this table"
+            aria-label="Export this table"
+          >
+            <Download className="size-3" />
+          </button>
+        ) : null}
+        <div className="overflow-x-auto rounded-md">
+          {/* min-w-full, not w-full: a wide column (a long description) can push the
+           *  table past its container instead of every other column getting crushed
+           *  down to a letter-wrapped sliver; the wrapper above scrolls the overflow. */}
+          <table className="min-w-full border-collapse text-left">{children}</table>
+        </div>
+      </div>
+    );
+  },
+  thead: ({ children }: { children?: React.ReactNode }) => (
+    <thead className="bg-canvas-muted text-canvas-muted-foreground">{children}</thead>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="min-w-16 whitespace-nowrap border border-canvas-border px-2 py-1 font-semibold">{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="min-w-16 border border-canvas-border px-2 py-1">{children}</td>
+  ),
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="rounded bg-canvas-muted px-1 py-0.5">{children}</code>
+  ),
+  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+    <a href={href} target="_blank" rel="noreferrer" className="text-emerald-400 underline">
+      {children}
+    </a>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="my-1.5 list-decimal space-y-0.5 pl-6">{children}</ol>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="my-1.5 list-disc space-y-0.5 pl-6">{children}</ul>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => <li className="pl-0.5">{children}</li>,
+};
+
 function AssistantBubble({ content }: { content: string }) {
   return (
-    <p className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-muted-foreground">{content}</p>
+    <div className="wrap-anywhere font-mono text-xs text-canvas-muted-foreground">
+      <RawMarkdownContext.Provider value={content}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+          {content}
+        </ReactMarkdown>
+      </RawMarkdownContext.Provider>
+    </div>
   );
+}
+
+// A `| cell | cell |` line from ocr.cjs's own table rows, not general markdown:
+// no header/separator row, so a plain `|`-bounded line is the whole signal.
+function splitRawTableRow(line: string): string[] {
+  const inner = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  return inner.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
+}
+const isRawTableLine = (line: string) => /^\|.*\|$/.test(line.trim());
+
+/** `RawContent` parses a bare `| cell | cell |` line itself, no separator
+ *  needed; a real Markdown consumer (the exporter's remark-gfm pass) does
+ *  need one, so exporting OCR's raw text runs this first. */
+export function normalizeRawTableRows(content: string): string {
+  const lines = content.split('\n');
+  const out: string[] = [];
+  let columnCount = 0;
+  for (const line of lines) {
+    if (isRawTableLine(line)) {
+      out.push(line);
+      if (columnCount === 0) {
+        columnCount = splitRawTableRow(line).length;
+        out.push(`| ${Array(columnCount).fill('---').join(' | ')} |`);
+      }
+    } else {
+      out.push(line);
+      columnCount = 0;
+    }
+  }
+  return out.join('\n');
+}
+
+/** Renders OCR's raw text as preformatted text, except `|`-rowed lines,
+ *  which render as an actual table set apart from the surrounding prose. */
+function RawContent({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const blocks: React.ReactNode[] = [];
+  let textLines: string[] = [];
+  let tableRows: string[][] = [];
+  const flushText = () => {
+    if (textLines.length === 0) return;
+    blocks.push(
+      <div
+        key={blocks.length}
+        className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-muted-foreground"
+      >
+        {textLines.join('\n')}
+      </div>,
+    );
+    textLines = [];
+  };
+  const flushTable = () => {
+    if (tableRows.length === 0) return;
+    const colCount = Math.max(...tableRows.map((row) => row.length));
+    blocks.push(
+      <div key={blocks.length} className="overflow-x-auto rounded-md">
+        <table className="my-1.5 min-w-full border-collapse text-left font-mono text-xs">
+          <tbody>
+            {tableRows.map((row, r) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: rows never reorder within one render
+              <tr key={r}>
+                {Array.from({ length: colCount }, (_, c) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: cells never reorder within one render
+                  <td key={c} className="border border-canvas-border px-2 py-1 align-top text-canvas-muted-foreground">
+                    {row[c] ?? ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>,
+    );
+    tableRows = [];
+  };
+  for (const line of lines) {
+    if (isRawTableLine(line)) {
+      flushText();
+      tableRows.push(splitRawTableRow(line));
+    } else {
+      flushTable();
+      textLines.push(line);
+    }
+  }
+  flushText();
+  flushTable();
+  return <>{blocks}</>;
 }
 
 // Label shown for each whole-submission verdict. 'match' is set client-side
@@ -743,6 +1102,75 @@ function CheckCard({
   );
 }
 
+function ConfirmCard({
+  entry,
+  onAnswer,
+}: {
+  entry: Extract<ConsoleEntry, { kind: 'confirm' }>;
+  onAnswer: (answer: 'yes' | 'no') => void;
+}) {
+  return (
+    <EntryCard label="confirm">
+      <div className="font-mono text-xs">
+        <p className="text-canvas-foreground">{entry.message}</p>
+        {entry.answer === null ? (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onAnswer('yes')}
+              className="rounded border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/25"
+            >
+              Yes
+            </button>
+            <button
+              type="button"
+              onClick={() => onAnswer('no')}
+              className="rounded border border-rose-400/40 bg-rose-400/15 px-2.5 py-1 font-semibold text-rose-400 transition-colors hover:bg-rose-400/25"
+            >
+              No
+            </button>
+          </div>
+        ) : (
+          <p className="mt-1.5 text-canvas-muted-foreground">Answered: {entry.answer === 'yes' ? 'Yes' : 'No'}</p>
+        )}
+      </div>
+    </EntryCard>
+  );
+}
+
+function MediaCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'media' }> }) {
+  return (
+    <EntryCard label={entry.mediaType}>
+      <div className="font-mono text-xs">
+        <div className="group relative">
+          <button
+            type="button"
+            onClick={() => void saveMediaFile(entry.dataUrl, entry.caption || `generated-${entry.mediaType}`)}
+            className="absolute top-1.5 right-1.5 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+            title="Save this file"
+            aria-label="Save this file"
+          >
+            <Download className="size-3" />
+          </button>
+          {entry.mediaType === 'image' && (
+            // biome-ignore lint/performance/noImgElement: a data: URL from a local generation call, not a remote asset next/image would optimize
+            <img src={entry.dataUrl} alt={entry.caption ?? 'Generated image'} className="max-w-full rounded-md" />
+          )}
+          {entry.mediaType === 'audio' && (
+            // biome-ignore lint/a11y/useMediaCaption: synthesized/generated audio has no caption track to attach
+            <audio controls src={entry.dataUrl} className="w-full" />
+          )}
+          {entry.mediaType === 'video' && (
+            // biome-ignore lint/a11y/useMediaCaption: generated clip has no caption track to attach
+            <video controls src={entry.dataUrl} className="max-w-full rounded-md" />
+          )}
+        </div>
+        {entry.caption && <p className="mt-1.5 text-canvas-muted-foreground">{entry.caption}</p>}
+      </div>
+    </EntryCard>
+  );
+}
+
 // No "View code" here: the editor is right next to it. That's for the
 // receiving device instead (notification-center.tsx, devices-panel.tsx).
 // No spinner on the row: the pinned line below already owns the one spinner
@@ -755,10 +1183,10 @@ function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
   );
 }
 
-function EmptyState() {
+function EmptyState({ text }: { text?: string }) {
   return (
     <p className="px-1 py-1 font-mono text-xs text-canvas-muted-foreground">
-      Run your code, check your answer, or ask a question. It all shows up here.
+      {text ?? 'Run your code, check your answer, or ask a question. It all shows up here.'}
     </p>
   );
 }

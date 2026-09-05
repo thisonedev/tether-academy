@@ -9,6 +9,7 @@ const {
   buildVerifySystemPrompt,
   buildSecuritySystemPrompt,
   buildCompactSecurityPrompt,
+  buildWorkflowGenerationPrompt,
 } = require('./chat-context.cjs');
 const { refreshDocs, getCachedDocs } = require('./chat-docs.cjs');
 const { createMarkdownStripper } = require('./chat-strip-markdown.cjs');
@@ -28,6 +29,11 @@ const { ensureModels } = require('../shared/model-fetch.cjs');
 // What loadModel asks the addon for, and what every prompt here is sized
 // against. See approxContextWindow for why the request is trusted.
 const MODEL_CTX_SIZE = 4096;
+
+// A chat model is several GB resident in RAM/VRAM; nothing here ever evicted
+// it before, so an idle session held that memory indefinitely. 20 minutes of
+// no send/verify/securityScan call frees it back up.
+const IDLE_UNLOAD_MS = 20 * 60 * 1000;
 
 function isChatPreset(name) {
   return Object.prototype.hasOwnProperty.call(CHAT_PRESETS, name);
@@ -55,6 +61,24 @@ let current = {
   preset: null,
 };
 
+let idleTimer = null;
+
+function clearIdleTimer() {
+  if (!idleTimer) return;
+  clearTimeout(idleTimer);
+  idleTimer = null;
+}
+
+// Called on every resolveModel()/load(): a model still mid-use never idles
+// out mid-run, since each request restarts the countdown from its own start.
+function touchIdleTimer() {
+  clearIdleTimer();
+  idleTimer = setTimeout(() => {
+    unload().catch((err) => console.warn('[chat] idle unload failed', err && err.message));
+  }, IDLE_UNLOAD_MS);
+  if (typeof idleTimer.unref === 'function') idleTimer.unref();
+}
+
 // Keyed by requestId so stop() can find and cancel a stream.
 const inflight = new Map();
 
@@ -81,10 +105,12 @@ async function load(modelHint) {
     throw new Error('modelHint is required');
   }
   await ensureLoaded(modelHint);
+  touchIdleTimer();
   return { modelName: current.filename };
 }
 
 async function unload() {
+  clearIdleTimer();
   if (!current.modelId) return;
   const modelId = current.modelId;
   const sdk = require('@qvac/sdk');
@@ -177,7 +203,6 @@ async function ensureLoaded(filename) {
   if (current.modelId && current.filename !== filename) {
     await unload();
   }
-  console.log('[chat] ensureLoaded start', { filename, preset: modelSrc.name });
   const sdk = require('@qvac/sdk');
   if (typeof sdk.loadModel !== 'function') {
     throw new Error('@qvac/sdk does not export loadModel in this build');
@@ -323,6 +348,7 @@ async function resolveModel(modelHint) {
       throw new Error('no model loaded; pick one in the AI assistant panel first');
     }
   }
+  touchIdleTimer();
   return current.filename;
 }
 
@@ -365,12 +391,20 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
     systemPrompt = buildSystemPrompt(lessonKey, null, null, docsWereRequested);
   }
 
-  // Send only the last user turn when the window is tight, to keep the
-  // answer room bigger.
+  // Split what's left after the system prompt between the reply and prior turns, most
+  // recent first, so a conversation isn't forgotten the moment it goes past one exchange.
   const priorRoom = approxTokens(systemPrompt) + 50;
-  const answerBudget = Math.max(200, ctxWindow - priorRoom);
-  const userOnly = messages.length > 0 && messages[messages.length - 1]?.role === 'user';
-  const tail = userOnly ? messages.slice(-1) : messages.slice(-2);
+  const available = Math.max(0, ctxWindow - priorRoom);
+  const answerBudget = Math.max(200, Math.floor(available * 0.6));
+  const historyBudget = Math.max(0, available - answerBudget);
+  const tail = [];
+  let historyUsed = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const cost = approxTokens(messages[i]?.content || '') + 4;
+    if (tail.length > 0 && historyUsed + cost > historyBudget) break;
+    tail.unshift(messages[i]);
+    historyUsed += cost;
+  }
 
   const history = [
     { role: 'system', content: systemPrompt },
@@ -432,10 +466,11 @@ async function send({ messages, lessonKey, lessonReference, useFullDocs, modelHi
         emitted = true;
         emitChunk({ requestId, delta: tail, done: false, error: null });
       }
-      // Replace the whole assistant message with the paragraph-split version
-      // so the user sees visible paragraph breaks even when the model emits
-      // one run-on paragraph.
-      const finalised = splitParagraphs(stripTurnRecap(assembled));
+      // Splits run-on replies into paragraphs. Skipped outside lessons:
+      // splitParagraphs collapses newlines, which shreds the Markdown
+      // tables/lists the no-lesson system prompt asks the model to produce.
+      const recapStripped = stripTurnRecap(assembled);
+      const finalised = lessonKey ? splitParagraphs(recapStripped) : recapStripped;
       if (finalised.length > 0 && (finalised !== assembled || !emitted)) {
         emitChunk({ requestId, delta: finalised, done: false, replace: true, error: null });
       }
@@ -606,6 +641,73 @@ function emitVerifyResult(payload) {
 function onVerifyResult(callback) {
   events.on('verifyResult', callback);
   return () => events.off('verifyResult', callback);
+}
+
+// A multi-branch workflow is a much bigger JSON object than a security
+// verdict, and a truncated one is unparseable, not just short.
+const WORKFLOW_PREDICT_CAP = 2000;
+const WORKFLOW_PREDICT_FLOOR = 500;
+const WORKFLOW_TEMPLATE_OVERHEAD = 64;
+
+// Directly awaitable like runSecurityScan, not requestId/event plumbing: the
+// caller just awaits it, same as translate(). Returns raw text; the renderer
+// validates it against the real PLAYGROUND_NODE_DEFS.
+async function generateWorkflow({ prompt, catalogue, currentWorkflow, modelHint }) {
+  const sdk = require('@qvac/sdk');
+  if (typeof sdk.completion !== 'function') {
+    throw new Error('@qvac/sdk does not export completion in this build');
+  }
+
+  const modelName = await resolveModel(modelHint);
+  const ctxWindow = approxContextWindow(modelName);
+  const fits = Math.max(256, ctxWindow - WORKFLOW_TEMPLATE_OVERHEAD);
+  const predictBudget = Math.max(
+    WORKFLOW_PREDICT_FLOOR,
+    Math.min(WORKFLOW_PREDICT_CAP, Math.floor(fits / 2)),
+  );
+  const promptTokens = approxTokens(prompt);
+
+  // Below this the catalogue is too short to be reliable; a half-shown
+  // current workflow would mislead the model more than none at all.
+  const MIN_CATALOGUE_TOKENS = 200;
+  let workflowContext = currentWorkflow || null;
+  let overhead = approxTokens(buildWorkflowGenerationPrompt('', workflowContext));
+  let catalogueBudget = fits - predictBudget - overhead - promptTokens;
+  if (workflowContext && catalogueBudget < MIN_CATALOGUE_TOKENS) {
+    workflowContext = null;
+    overhead = approxTokens(buildWorkflowGenerationPrompt(''));
+    catalogueBudget = fits - predictBudget - overhead - promptTokens;
+  }
+  const catalogueCapped = catalogue.slice(0, Math.max(0, catalogueBudget) * 4);
+  const systemPrompt = buildWorkflowGenerationPrompt(catalogueCapped, workflowContext);
+
+  const history = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `${prompt}\n/no_think` },
+  ];
+
+  const thinkingFilter = createThinkingFilter();
+  let assembled = '';
+  const result = sdk.completion({
+    modelId: current.modelId,
+    history,
+    stream: true,
+    captureThinking: false,
+    // Low, like the security scan's 0.2: strict JSON syntax benefits from
+    // less randomness than free-text generation does.
+    generationParams: { predict: predictBudget, temp: 0.15 },
+  });
+  for await (const event of result.events) {
+    if (!event || typeof event !== 'object') continue;
+    const type = event.type;
+    if ((type === 'contentDelta' || type === 'rawDelta') && typeof event.text === 'string' && event.text.length > 0) {
+      assembled += thinkingFilter.push(event.text);
+    } else if (type === 'toolError' && typeof event.error === 'string') {
+      throw new Error(`tool error: ${event.error}`);
+    }
+  }
+  assembled += thinkingFilter.flush();
+  return { modelName, text: assembled };
 }
 
 const SECURITY_VERDICTS = new Set(['clean', 'suspicious', 'malicious']);
@@ -887,6 +989,7 @@ module.exports = {
   load,
   send,
   verify,
+  generateWorkflow,
   securityScan,
   // Called by electron/pear-end/worker-client.cjs, which bridges it to the pear-end worker.
   runSecurityScan,

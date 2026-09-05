@@ -78,19 +78,8 @@ function createMarkdownStripper() {
           continue;
         }
       }
-      if ((ch === '-' || ch === '+') && (i === 0 || input[i - 1] === '\n') && input[i + 1] === ' ') {
-        i += 2;
-        continue;
-      }
-      const digitStart = (i === 0 || input[i - 1] === '\n') && ch >= '0' && ch <= '9';
-      if (digitStart) {
-        let j = i + 1;
-        while (j < input.length && input[j] >= '0' && input[j] <= '9') j += 1;
-        if (j < input.length && input[j] === '.' && input[j + 1] === ' ') {
-          i = j + 2;
-          continue;
-        }
-      }
+      // Bullet ("- ") and numbered ("1. ") markers survive, unlike everything else here:
+      // stripping them turned a requested list into one run-on paragraph.
       if (ch === '>' && (i === 0 || input[i - 1] === '\n') && input[i + 1] === ' ') {
         i += 2;
         continue;

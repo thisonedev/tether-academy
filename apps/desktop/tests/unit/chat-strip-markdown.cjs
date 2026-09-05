@@ -36,14 +36,14 @@ test('stripMarkdown - drops heading hashes', (t) => {
   t.is(strip.push('## Heading\nBody'), 'Heading\nBody');
 });
 
-test('stripMarkdown - drops bullet markers', (t) => {
+test('stripMarkdown - keeps bullet markers so a real list can render', (t) => {
   const strip = createMarkdownStripper();
-  t.is(strip.push('- one\n- two\n- three'), 'one\ntwo\nthree');
+  t.is(strip.push('- one\n- two\n- three'), '- one\n- two\n- three');
 });
 
-test('stripMarkdown - drops numbered list markers', (t) => {
+test('stripMarkdown - keeps numbered list markers so a real list can render', (t) => {
   const strip = createMarkdownStripper();
-  t.is(strip.push('1. one\n2. two\n3. three'), 'one\ntwo\nthree');
+  t.is(strip.push('1. one\n2. two\n3. three'), '1. one\n2. two\n3. three');
 });
 
 test('stripMarkdown - drops italic delimiters', (t) => {
@@ -61,7 +61,7 @@ test('stripMarkdown - bold opener broken across chunks is still stripped', (t) =
   // chunk ends with a single `*` (because the tokenizer split between the
   // two `*`). The stripper joins the next chunk and finds the matching `**`.
   const strip = createMarkdownStripper();
-  t.is(strip.push('2. **Client Integration'), '');
+  t.is(strip.push('2. **Client Integration'), '2. ');
   t.is(strip.push('**: Passing'), 'Client Integration: Passing');
   t.is(strip.flush(), '');
 });

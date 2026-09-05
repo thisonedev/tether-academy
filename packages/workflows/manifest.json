@@ -1,0 +1,20 @@
+[
+  { "file": "meeting-notes-summary-flow.json", "category": "Text", "title": "Meeting Notes Taker", "icon": "ClipboardList", "description": "Turns messy notes into a short action list." },
+  { "file": "support-reply-draft-flow.json", "category": "Text", "title": "Customer Reply Writer", "icon": "MessagesSquare", "description": "Drafts a calm, understanding response." },
+  { "file": "product-listing-translate-flow.json", "category": "Translate", "title": "Product Translator", "icon": "Languages", "description": "Turns your listing into Spanish." },
+  { "file": "support-ticket-translate-flow.json", "category": "Translate", "title": "Customer Reply Translator", "icon": "Languages", "description": "Writes a reply, then translates it to German." },
+  { "file": "document-search-flow.json", "category": "Search", "title": "Document Search Assistant", "icon": "FileSearch", "description": "Ask a question, get the answer from your files." },
+  { "file": "research-notes-search-flow.json", "category": "Search", "title": "Research Notes Finder", "icon": "FileSearch", "description": "Ask a question, get the answer from your notes." },
+  { "file": "receipt-ocr-flow.json", "category": "OCR", "title": "Receipt Scanner", "icon": "Receipt", "description": "Reads the date, vendor, and total into a row." },
+  { "file": "business-card-ocr-flow.json", "category": "OCR", "title": "Business Card Reader", "icon": "ScanText", "description": "Pulls out the name, title, and contact info." },
+  { "file": "photo-triage-flow.json", "category": "Classify", "title": "Photo Classifier", "icon": "Tags", "description": "Tells you if a photo is food, a report, or something else." },
+  { "file": "voice-narration-flow.json", "category": "Voice", "title": "Text Reader", "icon": "Volume2", "description": "Turns a sentence into natural speech." },
+  { "file": "voice-transcription-flow.json", "category": "Voice", "title": "Voice Transcriber", "icon": "Mic", "description": "Turns a recording into written text." },
+  { "file": "meeting-audio-transcript-flow.json", "category": "Voice", "title": "Meeting Recording Transcriber", "icon": "Mic", "description": "Turns a meeting recording into written text." },
+  { "file": "product-mockup-flow.json", "category": "Image", "title": "Photo Maker", "icon": "Image", "description": "Turns a description into a real image." },
+  { "file": "product-teaser-video-flow.json", "category": "Video", "title": "Video Maker", "icon": "Video", "description": "Turns a description into a short video clip." },
+  { "file": "background-music-flow.json", "category": "Music", "title": "Music Maker", "icon": "Music", "description": "Turns a mood word into a short instrumental track." },
+  { "file": "expense-spreadsheet-flow.json", "category": "Files", "title": "Expense Filter", "icon": "Filter", "description": "Reads a spreadsheet and filters it by category." },
+  { "file": "expense-iterate-flow.json", "category": "Logic", "title": "Expense Row Summarizer", "icon": "Repeat", "description": "Runs one AI reply per spreadsheet row, so you can see how Iterate works." },
+  { "file": "student-roster-qa-flow.json", "category": "Files", "title": "Student Roster Assistant", "icon": "FileQuestion", "description": "Reads a spreadsheet and answers a question about it." }
+]

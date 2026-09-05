@@ -72,6 +72,26 @@ const academy = {
     copy: (text, scrubAfterMs) =>
       ipcRenderer.invoke('academy:clipboard:copy', { text, scrubAfterMs }),
   },
+  playgroundCredentials: {
+    list: () => ipcRenderer.invoke('academy:playground-credentials:list'),
+    set: (name, value) => ipcRenderer.invoke('academy:playground-credentials:set', { name, value }),
+    delete: (name) => ipcRenderer.invoke('academy:playground-credentials:delete', name),
+  },
+  translate: (text, language) => ipcRenderer.invoke('academy:translate', { text, language }),
+  workflow: {
+    generate: (prompt, catalogue, currentWorkflow) =>
+      ipcRenderer.invoke('academy:workflow:generate', { prompt, catalogue, currentWorkflow }),
+  },
+  ragSearch: (documents, query, topK) => ipcRenderer.invoke('academy:rag-search', { documents, query, topK }),
+  ocr: (image) => ipcRenderer.invoke('academy:ocr', { image }),
+  classifyImage: (image) => ipcRenderer.invoke('academy:classify-image', { image }),
+  textToSpeech: (text) => ipcRenderer.invoke('academy:text-to-speech', { text }),
+  speechToText: (audio) => ipcRenderer.invoke('academy:speech-to-text', { audio }),
+  generateImage: (prompt, model) => ipcRenderer.invoke('academy:generate-image', { prompt, model }),
+  generateVideo: (prompt, model, frames, steps) => ipcRenderer.invoke('academy:generate-video', { prompt, model, frames, steps }),
+  cancelGenerateVideo: () => ipcRenderer.invoke('academy:generate-video:cancel'),
+  generateMusic: (caption, durationSec) => ipcRenderer.invoke('academy:generate-music', { caption, durationSec }),
+  cancelGenerateMusic: () => ipcRenderer.invoke('academy:generate-music:cancel'),
   identity: {
     status: () => ipcRenderer.invoke('academy:identity:status'),
     create: () => ipcRenderer.invoke('academy:identity:create'),

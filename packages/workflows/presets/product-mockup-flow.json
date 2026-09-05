@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "Photo Maker",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "img1",
+      "kind": "generate-image",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "source": "My input",
+        "prompt": "a minimalist ceramic coffee mug on a wooden table, studio lighting",
+        "model": "sd2.1"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "img1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

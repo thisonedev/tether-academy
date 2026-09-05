@@ -28,6 +28,7 @@ import { QuestionCheck } from './question-check.js';
 import { ChatInputBar, LessonConsole } from './lesson-console.js';
 import type { ConsoleEntry } from './lesson-console.js';
 import { QVAC_EDITOR_BACKGROUND } from './qvac-theme.js';
+import { ThemedSelect } from './themed-select.js';
 
 export interface LessonTest {
   id: string;
@@ -104,7 +105,10 @@ const PASSING_MATCH_STATUSES = new Set<MatchStatus>(['match', 'complete', 'diffe
 
 // Streamed chunks rarely align with real newlines; treating each chunk as
 // its own line inserted a phantom space at every boundary once rejoined.
-function appendChunkLines(lines: OutputLine[], chunk: { stream: OutputLine['stream']; data: string }): OutputLine[] {
+export function appendChunkLines(
+  lines: OutputLine[],
+  chunk: { stream: OutputLine['stream']; data: string },
+): OutputLine[] {
   const segments = chunk.data.split('\n');
   const last = lines[lines.length - 1];
   const merged =
@@ -1477,70 +1481,56 @@ function Runner({
           >
             <Check className="size-4" />
           </button>
-          <select
+          <ThemedSelect
             id="run-mode-select-desktop"
             value={runMode}
-            onChange={(e) => setRunMode(e.target.value as RunMode)}
+            onChange={(v) => setRunMode(v as RunMode)}
             disabled={readOnly}
-            suppressHydrationWarning
-            className="run-mode-select-desktop ml-1 min-w-0 max-w-[6.5rem] shrink truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground sm:max-w-none transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
             title="Run mode"
-            aria-label="Run mode"
-          >
-            <option value="this-device">This device</option>
-            <option value="simulated">Simulated</option>
-            <option
-              value="remote"
-              disabled={pairedMode === false || remotePeers.length === 0}
-              title={
-                pairedMode === false
-                  ? 'This lesson serves a port on the machine it runs on, which a paired device cannot reach. Run it here.'
-                  : localIsOnlyHost
-                    ? 'This device is the host in every pair. Hosts accept runs from guests, not the other way around.'
-                    : selfPairCount > 0
-                      ? 'Only paired device is this device. Launch an isolated host with `pnpm dev:host` to enable this mode.'
-                      : 'No paired devices. Pair one in Settings > Devices.'
-              }
-            >
-              Paired device
-            </option>
-          </select>
+            ariaLabel="Run mode"
+            className="run-mode-select-desktop ml-1 flex min-w-0 max-w-[6.5rem] shrink items-center justify-between gap-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground sm:max-w-none transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            options={[
+              { value: 'this-device', label: 'This device' },
+              { value: 'simulated', label: 'Simulated' },
+              {
+                value: 'remote',
+                label: 'Paired device',
+                disabled: pairedMode === false || remotePeers.length === 0,
+                title:
+                  pairedMode === false
+                    ? 'This lesson serves a port on the machine it runs on, which a paired device cannot reach. Run it here.'
+                    : localIsOnlyHost
+                      ? 'This device is the host in every pair. Hosts accept runs from guests, not the other way around.'
+                      : selfPairCount > 0
+                        ? 'Only paired device is this device. Launch an isolated host with `pnpm dev:host` to enable this mode.'
+                        : 'No paired devices. Pair one in Settings > Devices.',
+              },
+            ]}
+          />
           {runMode === 'remote' ? (
-            <select
-              aria-label="Pick a paired device"
+            <ThemedSelect
+              ariaLabel="Pick a paired device"
               value={selectedPeerId}
-              onChange={(e) => setSelectedPeerId(e.target.value)}
+              onChange={setSelectedPeerId}
               disabled={readOnly}
-              suppressHydrationWarning
-              className="ml-1 min-w-0 max-w-[5.5rem] shrink truncate rounded border border-canvas-border bg-canvas px-1.5 py-1 sm:max-w-[10rem] text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
               title={
                 remotePeers.length === 0
                   ? 'No paired devices. Pair one in Settings.'
                   : 'Pick a paired device. Windows devices are listed but disabled: they cannot execute a paired run yet.'
               }
-            >
-              {remotePeers.length === 0 ? <option value="">No paired devices</option> : null}
-              {remotePeers.map((p) => (
-                <option
-                  key={p.discoveryKey}
-                  value={p.discoveryKey}
-                  disabled={peerIsWindows(p.userData)}
-                  title={peerIsWindows(p.userData) ? 'Windows cannot execute a paired run yet' : undefined}
-                >
-                  {peerDisplayName(p)}
-                  {peerIsWindows(p.userData) ? ' (Windows, cannot execute)' : ''}
-                </option>
-              ))}
-            </select>
+              className="ml-1 flex min-w-0 max-w-[5.5rem] shrink items-center justify-between gap-1 rounded border border-canvas-border bg-canvas px-1.5 py-1 sm:max-w-[10rem] text-[10px] font-medium uppercase tracking-wider text-canvas-muted-foreground transition-colors hover:text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              options={
+                remotePeers.length === 0
+                  ? [{ value: '', label: 'No paired devices' }]
+                  : remotePeers.map((p) => ({
+                      value: p.discoveryKey,
+                      label: `${peerDisplayName(p)}${peerIsWindows(p.userData) ? ' (Windows, cannot execute)' : ''}`,
+                      disabled: peerIsWindows(p.userData),
+                      title: peerIsWindows(p.userData) ? 'Windows cannot execute a paired run yet' : undefined,
+                    }))
+              }
+            />
           ) : null}
-          {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static string, no user input */}
-          <script
-            suppressHydrationWarning
-            dangerouslySetInnerHTML={{
-              __html:
-                "try{if(window.academy&&window.academy.run){var s=document.getElementById('run-mode-select-desktop');if(s)s.value='this-device';}}catch(e){}",
-            }}
-          />
           <select
             aria-hidden={isDesktop}
             tabIndex={isDesktop ? -1 : undefined}

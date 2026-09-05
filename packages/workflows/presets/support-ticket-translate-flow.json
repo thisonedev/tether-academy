@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "name": "Customer Reply Translator",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "start",
+      "x": 0,
+      "y": 0,
+      "fields": {}
+    },
+    {
+      "id": "agent1",
+      "kind": "ai-agent",
+      "x": 0,
+      "y": 120,
+      "fields": {
+        "task": "Reply with exactly: Your refund has been processed and will appear in 3-5 business days."
+      }
+    },
+    {
+      "id": "translate1",
+      "kind": "translate",
+      "x": 0,
+      "y": 260,
+      "fields": {
+        "source": "Upstream input",
+        "text": "",
+        "language": "German"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "agent1",
+      "sourceHandle": null,
+      "targetHandle": null
+    },
+    {
+      "source": "agent1",
+      "target": "translate1",
+      "sourceHandle": null,
+      "targetHandle": null
+    }
+  ]
+}

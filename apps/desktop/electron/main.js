@@ -74,6 +74,15 @@ const {
 } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
 const chat = require('./chat.cjs');
+const { createPlaygroundCredentials } = require('./playground-credentials.cjs');
+const translate = require('./translate.cjs');
+const rag = require('./rag.cjs');
+const ocr = require('./ocr.cjs');
+const classify = require('./classify.cjs');
+const tts = require('./tts.cjs');
+const transcribe = require('./transcribe.cjs');
+const diffusion = require('./diffusion.cjs');
+const audiogen = require('./audiogen.cjs');
 const { buildLesson } = require('./runner-process.cjs');
 const { createPearEnd } = require('./pear-end/index.cjs');
 const { createAccumulator } = require('./run-accumulator.cjs');
@@ -637,6 +646,33 @@ handle('academy:chat:stop', async (requestId) => chat.stop(requestId));
 handle('academy:chat:docs-status', async () => chat.docsStatus());
 handle('academy:chat:docs-refresh', async () => chat.docsRefresh());
 
+// Lazy: touches safeStorage (Keychain), which must not be called before
+// app.whenReady() or it destabilizes identity's own safeStorage access.
+let _playgroundCredentials = null;
+function playgroundCredentials() {
+  if (!_playgroundCredentials) _playgroundCredentials = createPlaygroundCredentials(app.getPath('userData'));
+  return _playgroundCredentials;
+}
+handle('academy:playground-credentials:list', async () => playgroundCredentials().list());
+handle('academy:playground-credentials:set', async ({ name, value }) => {
+  playgroundCredentials().set(name, value);
+  return true;
+});
+handle('academy:playground-credentials:delete', async (name) => playgroundCredentials().delete(name));
+
+handle('academy:translate', async ({ text, language }) => translate.translateText(text, language));
+handle('academy:workflow:generate', async ({ prompt, catalogue, currentWorkflow }) => chat.generateWorkflow({ prompt, catalogue, currentWorkflow }));
+handle('academy:rag-search', async ({ documents, query, topK }) => rag.searchDocuments(documents, query, topK));
+handle('academy:ocr', async ({ image }) => ocr.readTextFromImage(image));
+handle('academy:classify-image', async ({ image }) => classify.classifyImage(image));
+handle('academy:text-to-speech', async ({ text }) => tts.speak(text));
+handle('academy:speech-to-text', async ({ audio }) => transcribe.transcribeAudio(audio));
+handle('academy:generate-image', async ({ prompt, model }) => diffusion.generateImage(prompt, model));
+handle('academy:generate-video', async ({ prompt, model, frames, steps }) => diffusion.generateVideo(prompt, model, frames, steps));
+handle('academy:generate-video:cancel', async () => diffusion.cancelVideo());
+handle('academy:generate-music', async ({ caption, durationSec }) => audiogen.generateMusic(caption, durationSec));
+handle('academy:generate-music:cancel', async () => audiogen.cancelMusic());
+
 handle('academy:device:info', async () => getDeviceInfo());
 
 // Forward chat events from the host process to every open BrowserWindow. The
@@ -934,10 +970,14 @@ async function createWindow() {
   if (process.env.PEAR_DEV_SERVER_URL || process.env.NODE_ENV === 'development') {
     win.webContents.openDevTools({ mode: 'detach' });
   }
-  win.webContents.on('console-message', (_e, level, message, line, source) => {
+  win.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
+    // Chromium's own resize-loop guard, not a page error: it reports through this
+    // channel directly rather than as a catchable window 'error' event, so it has
+    // to be filtered here rather than from renderer-side JS.
+    if (message === 'ResizeObserver loop completed with undelivered notifications.') return;
     // pnpm closes stdout once the launcher exits; a later write throws EPIPE.
     try {
-      console.log(`[renderer ${level}] ${source}:${line} ${message}`);
+      console.log(`[renderer ${level}] ${sourceId}:${lineNumber} ${message}`);
     } catch (err) {
       if (err?.code !== 'EPIPE') throw err;
     }
@@ -947,11 +987,21 @@ async function createWindow() {
   const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
   const staticExists = fsSync().existsSync(outIndex);
   const academyOrigin = 'academy://app/';
+  // A static build left in web/out used to win unconditionally, silently
+  // serving stale code. Only runs unpackaged, so it can't affect what ships.
+  const autoDevUrl = 'http://localhost:3000';
+  const localDevServerUp = !app.isPackaged && !process.env.PEAR_DEV_URL
+    ? await net.fetch(autoDevUrl, { signal: AbortSignal.timeout(300) }).then(() => true).catch(() => false)
+    : false;
   if (process.env.PEAR_DEV_URL) {
     const devUrl = process.env.PEAR_DEV_URL;
     console.log('[tether-academy-desktop] loading', devUrl);
     installNavigationHardening(win, [devUrl]);
     await win.loadURL(devUrl);
+  } else if (localDevServerUp) {
+    console.log('[tether-academy-desktop] dev server detected, loading', autoDevUrl, '(delete web/out or set PEAR_DEV_URL to override)');
+    installNavigationHardening(win, [autoDevUrl]);
+    await win.loadURL(autoDevUrl);
   } else if (staticExists) {
     console.log('[tether-academy-desktop] serving', staticDir, 'on', academyOrigin);
     installNavigationHardening(win, [academyOrigin]);
