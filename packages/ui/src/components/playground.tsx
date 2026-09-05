@@ -484,6 +484,16 @@ function PlaygroundCanvas({
           pushRunLine('ok', '[not wired up yet]');
           continue;
         }
+        // Lessons get the pinned "Thinking…" line the instant a check starts;
+        // a workflow node calling a slow model deserves the same signal
+        // instead of a blank console until it finishes. Removed again below
+        // regardless of outcome: the node's own pushRunLine/pushResult/pushMedia
+        // calls already say what actually happened.
+        const runningEntryId = nextEntryId();
+        setEntries((prev) => [
+          ...prev,
+          { kind: 'run', id: runningEntryId, lines: [{ stream: 'stdout', line: `Running ${def.label}…` }], status: 'running' },
+        ]);
         const readInput = () => {
           const edge = edges.find((e) => e.target === id);
           return edge ? nodeOutputs.get(outKey(edge.source, edge.sourceHandle)) : undefined;
@@ -530,6 +540,7 @@ function PlaygroundCanvas({
           pushRunLine('err', err instanceof Error ? err.message : 'This step failed.');
         } finally {
           runningKindRef.current = null;
+          setEntries((prev) => prev.filter((e) => e.id !== runningEntryId));
         }
       }
     } finally {
