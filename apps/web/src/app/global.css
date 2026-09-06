@@ -119,7 +119,7 @@ html {
 .prose-md pre {
   padding: 1rem 1.25rem;
   border-radius: 0.5rem;
-  background-color: #0d1117;
+  background-color: var(--color-canvas);
   border: 1px solid var(--color-canvas-border);
   overflow-x: auto;
   font-size: 0.9rem;
@@ -133,7 +133,7 @@ html {
 }
 /* Lesson MDX code blocks (MdxPre) */
 .prose-md .mdx-code-figure {
-  background-color: #0d1117;
+  background-color: var(--color-canvas);
 }
 .prose-md .mdx-code-pre {
   background-color: transparent;
