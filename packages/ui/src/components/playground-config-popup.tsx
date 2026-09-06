@@ -14,23 +14,28 @@ function FileFieldInput({
   multiple,
   value,
   onChange,
+  isPreset,
 }: {
   id: string;
   accept?: string;
   multiple?: boolean;
   value: string;
   onChange: (value: string) => void;
+  // Bundled samples only make sense against a preset's own workflow; a
+  // from-scratch or opened workflow only ever offers "Your file".
+  isPreset: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<'sample' | 'upload'>('sample');
+  const [mode, setMode] = useState<'sample' | 'upload'>(isPreset ? 'sample' : 'upload');
   // Tracks which tab actually produced the current value, so switching to
   // "Your file" after picking a sample shows a fresh picker, not the sample's
   // name looking like it came from the filesystem.
-  const [source, setSource] = useState<'sample' | 'upload' | null>(null);
+  const [source, setSource] = useState<'sample' | 'upload' | null>(isPreset ? null : 'upload');
   const files = parsePickedFiles(value);
   const uploadFiles = source === 'upload' ? files : [];
   const [samples, setSamples] = useState<PickedFile[]>([]);
   useEffect(() => {
+    if (!isPreset) return;
     let cancelled = false;
     samplesFor(accept).then((s) => {
       if (!cancelled) setSamples(s);
@@ -38,15 +43,15 @@ function FileFieldInput({
     return () => {
       cancelled = true;
     };
-  }, [accept]);
+  }, [accept, isPreset]);
   // A value already on the field (loaded from a saved workflow) has no tab
   // click to infer source from: guess from whether its name(s) match a sample.
   useEffect(() => {
-    if (source !== null || files.length === 0 || samples.length === 0) return;
+    if (!isPreset || source !== null || files.length === 0 || samples.length === 0) return;
     const isSample = files.every((f) => samples.some((s) => s.name === f.name));
     setSource(isSample ? 'sample' : 'upload');
     setMode(isSample ? 'sample' : 'upload');
-  }, [samples]);
+  }, [samples, isPreset]);
 
   async function handlePick(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
@@ -70,23 +75,25 @@ function FileFieldInput({
 
   return (
     <div>
-      <div className="mb-1.5 flex rounded-md border border-canvas-border p-0.5 text-[11px]">
-        <button
-          type="button"
-          onClick={() => setMode('sample')}
-          className={`flex-1 rounded px-2 py-1 ${mode === 'sample' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
-        >
-          Sample
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode('upload')}
-          className={`flex-1 rounded px-2 py-1 ${mode === 'upload' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
-        >
-          Your file
-        </button>
-      </div>
-      {mode === 'sample' ? (
+      {isPreset && (
+        <div className="mb-1.5 flex rounded-md border border-canvas-border p-0.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => setMode('sample')}
+            className={`flex-1 rounded px-2 py-1 ${mode === 'sample' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
+          >
+            Sample
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('upload')}
+            className={`flex-1 rounded px-2 py-1 ${mode === 'upload' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
+          >
+            Your file
+          </button>
+        </div>
+      )}
+      {isPreset && mode === 'sample' ? (
         <div className="max-h-32 space-y-0.5 overflow-y-auto rounded-lg border border-canvas-border bg-canvas p-1">
           {samples.length === 0 && <div className="px-1.5 py-1 text-[11px] text-canvas-muted-foreground">No bundled samples for this field.</div>}
           {samples.map((s) => {
@@ -142,6 +149,9 @@ export interface PlaygroundConfigPopupProps {
   // when nothing is), so a field like If's "Column" can hide itself when it
   // doesn't apply instead of sitting there ignored.
   inputKind: PlaygroundDataType | null;
+  // Whether the currently loaded workflow came from a bundled preset: only
+  // then do a file field's bundled samples apply.
+  isPreset: boolean;
   onChange: (key: string, value: string) => void;
   onDelete: () => void;
   onClose: () => void;
@@ -156,6 +166,7 @@ export function PlaygroundConfigPopup({
   fields,
   anchorEl,
   inputKind,
+  isPreset,
   onChange,
   onDelete,
   onClose,
@@ -263,6 +274,7 @@ export function PlaygroundConfigPopup({
                 multiple={f.multiple}
                 value={fields[f.key] ?? ''}
                 onChange={(v) => onChange(f.key, v)}
+                isPreset={isPreset}
               />
             ) : (
               <input

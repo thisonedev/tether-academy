@@ -32,7 +32,7 @@ import {
   Square,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConsoleEntry } from './lesson-console.js';
+import { type ConsoleEntry, normalizeRawTableRows } from './lesson-console.js';
 import { PlaygroundConfigPopup } from './playground-config-popup.js';
 import { PlaygroundConsole } from './playground-console.js';
 import { generateStandaloneScript } from './playground-codegen.js';
@@ -75,9 +75,10 @@ const VIEWPORT_FOCUS = { x: START_NODE_CENTER.x, y: START_NODE_CENTER.y + 220 };
 // The SDK gives these calls no requestId/signal to cancel; once started, only
 // letting the current step finish (never starting the next) is possible.
 const UNCANCELABLE_KINDS = new Set(['ocr', 'classify-image', 'generate-image']);
-const MIN_PANEL_WIDTH = 340;
 const DEFAULT_PANEL_WIDTH = 410;
-const MAX_PANEL_WIDTH = 720;
+// The drag handle's own w-3 (12px); reserved so it (and a sliver of the
+// canvas) never gets shoved out of the row by the panel claiming its width too.
+const RESIZE_HANDLE_WIDTH = 12;
 // A conversation mixes prose and tables, so CSV/Excel (row-shaped formats) only
 // show up for a single table's own export, not the whole thing.
 const CONVERSATION_FORMATS: ExportFormat[] = ['pdf', 'markdown', 'txt', 'docx'];
@@ -161,6 +162,9 @@ function PlaygroundCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(heldState?.edges ?? INITIAL_GRAPH.edges);
   const [entries, setEntries] = useState<ConsoleEntry[]>(heldState?.entries ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Bundled sample files only make sense for a preset's own workflow; a
+  // from-scratch, opened, or generated one only ever offers "Your file".
+  const [isPresetWorkflow, setIsPresetWorkflow] = useState(false);
   const [rejectMessage, setRejectMessage] = useState<string | null>(null);
   const [exportRequest, setExportRequest] = useState<{
     title: string;
@@ -199,7 +203,7 @@ function PlaygroundCanvas({
       const rect = rowRef.current?.getBoundingClientRect();
       if (!rect) return;
       const next = rect.right - e.clientX;
-      setPanelWidth(Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, next)));
+      setPanelWidth(Math.min(rect.width - RESIZE_HANDLE_WIDTH, Math.max(0, next)));
     };
     const onUp = () => setIsResizingPanel(false);
     window.addEventListener('pointermove', onMove);
@@ -617,6 +621,7 @@ function PlaygroundCanvas({
     setEntries([]);
     setNodeErrors(new Set());
     setWorkflowName('My Workflow');
+    setIsPresetWorkflow(false);
     fileHandleRef.current = null;
     centerOnStart(200);
   }, [setNodes, setEdges, centerOnStart]);
@@ -659,7 +664,7 @@ function PlaygroundCanvas({
   // never the saved ones directly: those came from a different session's counter
   // and could collide with whatever's minted next in this one.
   const applyLoadedWorkflow = useCallback(
-    (workflow: ReturnType<typeof parseWorkflowFile>, options?: { keepConsole?: boolean }) => {
+    (workflow: ReturnType<typeof parseWorkflowFile>, options?: { keepConsole?: boolean; isPreset?: boolean }) => {
       const idMap = new Map(workflow.nodes.map((n) => [n.id, nextId()]));
       setNodes(
         workflow.nodes.map((n) => ({
@@ -689,6 +694,7 @@ function PlaygroundCanvas({
       // are worth keeping so the user can see which request produced it.
       if (!options?.keepConsole) setEntries([]);
       setNodeErrors(new Set());
+      setIsPresetWorkflow(!!options?.isPreset);
       centerOnStart(0);
     },
     [setNodes, setEdges, centerOnStart],
@@ -784,7 +790,7 @@ function PlaygroundCanvas({
   const handleLoadPreset = useCallback(
     (entry: PresetEntry) => {
       fileHandleRef.current = null;
-      applyLoadedWorkflow(entry.workflow);
+      applyLoadedWorkflow(entry.workflow, { isPreset: true });
       setShowPresets(false);
     },
     [applyLoadedWorkflow],
@@ -1071,6 +1077,7 @@ function PlaygroundCanvas({
               fields={selectedNode.data.fields}
               anchorEl={anchorEl}
               inputKind={selectedInputKind}
+              isPreset={isPresetWorkflow}
               onChange={(key, value) =>
                 setNodes((nds) =>
                   nds.map((n) =>
@@ -1112,14 +1119,16 @@ function PlaygroundCanvas({
           <GripVertical className="relative z-10 size-3 text-canvas-muted-foreground transition-colors group-hover:text-canvas-foreground" />
         </button>
 
-        <div style={{ width: panelWidth }} className="h-full shrink-0 bg-canvas">
+        <div style={{ width: panelWidth }} className="h-full shrink-0 overflow-hidden bg-canvas">
           <PlaygroundConsole
             entries={entries}
             setEntries={setEntries}
-            onExportTable={(markdown) =>
+            onExportTable={(content, kind) =>
               setExportRequest({
-                title: 'Export table',
-                markdown,
+                title: kind === 'table' ? 'Export table' : 'Export output',
+                // Raw output still needs its pipe-rows turned into real
+                // markdown table syntax; a table's own source is that already.
+                markdown: kind === 'table' ? content : normalizeRawTableRows(content),
                 formats: TABLE_FORMATS,
                 defaultName: workflowName,
               })
