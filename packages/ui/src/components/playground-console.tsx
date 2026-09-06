@@ -5,7 +5,7 @@ import { ChatInputBar, type ConsoleEntry, LessonConsole, RailHiddenContext, Tabl
 export interface PlaygroundConsoleProps {
   entries: ConsoleEntry[];
   setEntries: React.Dispatch<React.SetStateAction<ConsoleEntry[]>>;
-  onExportTable: (markdown: string) => void;
+  onExportTable: (content: string, kind: 'table' | 'text') => void;
   /** Answers a pending Ask-for-confirmation node's entry. */
   onConfirm?: (entryId: string, answer: 'yes' | 'no') => void;
   /** Builds a workflow from a typed prompt; see the Chat/Build toggle in ChatInputBar. */

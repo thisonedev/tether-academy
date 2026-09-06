@@ -738,9 +738,10 @@ function UserBubble({ content }: { content: string }) {
   );
 }
 
-// Set only by PlaygroundConsole, so a table can offer "export this table"
-// without lesson chat, which never sets it, growing the same button.
-export const TableExportContext = createContext<((markdown: string) => void) | null>(null);
+// Set only by PlaygroundConsole, so lesson chat grows no button. 'table'
+// content is real markdown already; 'text' still needs OCR's pipe-row
+// normalizing before it can export.
+export const TableExportContext = createContext<((content: string, kind: 'table' | 'text') => void) | null>(null);
 // The raw markdown behind the bubble currently rendering, so the table
 // component below can slice out its own source instead of re-serializing.
 const RawMarkdownContext = createContext('');
@@ -798,6 +799,17 @@ function looksLikeCsv(text: string): boolean {
   return wordCount / totalFields <= 4;
 }
 
+// Worth downloading if multi-line or past one sentence; a one-word answer
+// isn't, a translation or transcript is.
+function isSubstantialText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed.includes('\n')) return true;
+  if (trimmed.length > 160) return true;
+  const sentenceEnders = trimmed.match(/[.!?]+(?=\s|$)/g)?.length ?? 0;
+  return sentenceEnders > 1;
+}
+
 /** Reuses the table export popup by faking a header row and separator; a
  *  single headerless CSV row still round-trips, becoming that "header". */
 function csvToMarkdownTable(text: string): string {
@@ -830,7 +842,7 @@ const MARKDOWN_COMPONENTS = {
         {isCsv ? (
           <button
             type="button"
-            onClick={() => onExportTable(csvToMarkdownTable(source))}
+            onClick={() => onExportTable(csvToMarkdownTable(source), 'table')}
             className="absolute top-0 right-0 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
             title="Export this CSV"
             aria-label="Export this CSV"
@@ -853,7 +865,7 @@ const MARKDOWN_COMPONENTS = {
         {source ? (
           <button
             type="button"
-            onClick={() => source && onExportTable?.(source)}
+            onClick={() => source && onExportTable?.(source, 'table')}
             className="absolute top-1.5 right-1.5 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
             title="Export this table"
             aria-label="Export this table"
@@ -897,8 +909,20 @@ const MARKDOWN_COMPONENTS = {
 };
 
 function AssistantBubble({ content }: { content: string }) {
+  const onExportTable = useContext(TableExportContext);
   return (
-    <div className="wrap-anywhere font-mono text-xs text-canvas-muted-foreground">
+    <div className="group relative wrap-anywhere font-mono text-xs text-canvas-muted-foreground">
+      {onExportTable && isSubstantialText(content) ? (
+        <button
+          type="button"
+          onClick={() => onExportTable(content, 'table')}
+          className="absolute top-0 right-0 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+          title="Export this result"
+          aria-label="Export this result"
+        >
+          <Download className="size-3" />
+        </button>
+      ) : null}
       <RawMarkdownContext.Provider value={content}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
           {content}
@@ -941,6 +965,7 @@ export function normalizeRawTableRows(content: string): string {
 /** Renders OCR's raw text as preformatted text, except `|`-rowed lines,
  *  which render as an actual table set apart from the surrounding prose. */
 function RawContent({ content }: { content: string }) {
+  const onExportTable = useContext(TableExportContext);
   const lines = content.split('\n');
   const blocks: React.ReactNode[] = [];
   let textLines: string[] = [];
@@ -992,7 +1017,22 @@ function RawContent({ content }: { content: string }) {
   }
   flushText();
   flushTable();
-  return <>{blocks}</>;
+  return (
+    <div className="group relative">
+      {onExportTable && isSubstantialText(content) ? (
+        <button
+          type="button"
+          onClick={() => onExportTable(content, 'text')}
+          className="absolute top-0 right-0 z-10 rounded border border-canvas-border bg-canvas-muted p-1 text-canvas-muted-foreground opacity-0 transition-opacity hover:text-emerald-400 group-hover:opacity-100"
+          title="Export this output"
+          aria-label="Export this output"
+        >
+          <Download className="size-3" />
+        </button>
+      ) : null}
+      {blocks}
+    </div>
+  );
 }
 
 // Label shown for each whole-submission verdict. 'match' is set client-side
