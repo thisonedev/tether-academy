@@ -2,7 +2,7 @@
 
 import { Download, FileSpreadsheet, FileText, GripVertical, Heading2, List, Plus, Table2, Type, X } from 'lucide-react';
 import type { ComponentType } from 'react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   type Block,
   blocksToMarkdown,
@@ -100,6 +100,14 @@ export function PlaygroundExportPopup({ title, initialMarkdown, formats, default
   const [name, setName] = useState(defaultName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const removeBlock = (index: number) => setBlocks((bs) => bs.filter((_, i) => i !== index));
   const updateBlock = (index: number, next: Block) => setBlocks((bs) => bs.map((b, i) => (i === index ? next : b)));
