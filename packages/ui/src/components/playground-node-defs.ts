@@ -35,13 +35,14 @@ function truncateForLimit(text: string, maxChars: number): { text: string; trunc
   return { text: text.slice(0, Math.max(0, maxChars)), truncated: true };
 }
 
-/** OCR's `| cell | cell |` rows are a display-only convention (ocr.cjs); a
- *  downstream node should see plain OCR text, not markdown it never asked for. */
+/** OCR's `| cell | cell |` rows (and a `~` prefix marking a borderless one)
+ *  are a display-only convention (ocr.cjs); a downstream node should see
+ *  plain OCR text, not markdown it never asked for. */
 function stripOcrTableMarkup(text: string): string {
   return text
     .split('\n')
     .map((line) => {
-      const trimmed = line.trim();
+      const trimmed = line.trim().replace(/^~/, '');
       if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return line;
       return trimmed
         .slice(1, -1)

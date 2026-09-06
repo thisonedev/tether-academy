@@ -79,10 +79,7 @@ const DEFAULT_PANEL_WIDTH = 410;
 // The drag handle's own w-3 (12px); reserved so it (and a sliver of the
 // canvas) never gets shoved out of the row by the panel claiming its width too.
 const RESIZE_HANDLE_WIDTH = 12;
-// A conversation mixes prose and tables, so CSV/Excel (row-shaped formats) only
-// show up for a single table's own export, not the whole thing.
-const CONVERSATION_FORMATS: ExportFormat[] = ['pdf', 'markdown', 'txt', 'docx'];
-const TABLE_FORMATS: ExportFormat[] = ['pdf', 'markdown', 'txt', 'csv', 'docx', 'xlsx'];
+const EXPORT_FORMATS: ExportFormat[] = ['pdf', 'markdown', 'txt', 'csv', 'docx', 'xlsx'];
 
 let idSeq = 1;
 const nextId = () => `n${idSeq++}`;
@@ -905,7 +902,7 @@ function PlaygroundCanvas({
               setExportRequest({
                 title: 'Export conversation',
                 markdown: conversationMarkdown,
-                formats: CONVERSATION_FORMATS,
+                formats: EXPORT_FORMATS,
                 defaultName: workflowName,
               }),
           },
@@ -1129,7 +1126,7 @@ function PlaygroundCanvas({
                 // Raw output still needs its pipe-rows turned into real
                 // markdown table syntax; a table's own source is that already.
                 markdown: kind === 'table' ? content : normalizeRawTableRows(content),
-                formats: TABLE_FORMATS,
+                formats: EXPORT_FORMATS,
                 defaultName: workflowName,
               })
             }

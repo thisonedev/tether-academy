@@ -283,12 +283,12 @@
   {
     "file": "receipt-ocr-flow.json",
     "category": "OCR",
-    "title": "Receipt Scanner",
+    "title": "Receipt/Invoice Scanner",
     "icon": "Receipt",
     "description": "Reads the date, vendor, and total into a row.",
     "workflow": {
       "version": 1,
-      "name": "Receipt Scanner",
+      "name": "Receipt/Invoice Scanner",
       "nodes": [
         {
           "id": "start",

@@ -934,22 +934,27 @@ function AssistantBubble({ content }: { content: string }) {
 
 // A `| cell | cell |` line from ocr.cjs's own table rows, not general markdown:
 // no header/separator row, so a plain `|`-bounded line is the whole signal.
+// A leading `~` (stripped before splitting) marks a label:value pair that
+// never had real ruled borders in the source, unlike a genuine grid table.
 function splitRawTableRow(line: string): string[] {
-  const inner = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const inner = line.trim().replace(/^~?\|/, '').replace(/\|$/, '');
   return inner.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
 }
-const isRawTableLine = (line: string) => /^\|.*\|$/.test(line.trim());
+const isRawTableLine = (line: string) => /^~?\|.*\|$/.test(line.trim());
+const isBorderlessTableLine = (line: string) => line.trim().startsWith('~');
 
 /** `RawContent` parses a bare `| cell | cell |` line itself, no separator
  *  needed; a real Markdown consumer (the exporter's remark-gfm pass) does
- *  need one, so exporting OCR's raw text runs this first. */
+ *  need one, so exporting OCR's raw text runs this first. Border styling is
+ *  a display-only concern, so the `~` marker doesn't survive into export. */
 export function normalizeRawTableRows(content: string): string {
   const lines = content.split('\n');
   const out: string[] = [];
   let columnCount = 0;
   for (const line of lines) {
     if (isRawTableLine(line)) {
-      out.push(line);
+      const stripped = line.trim().replace(/^~/, '');
+      out.push(stripped);
       if (columnCount === 0) {
         columnCount = splitRawTableRow(line).length;
         out.push(`| ${Array(columnCount).fill('---').join(' | ')} |`);
@@ -969,7 +974,10 @@ function RawContent({ content }: { content: string }) {
   const lines = content.split('\n');
   const blocks: React.ReactNode[] = [];
   let textLines: string[] = [];
-  let tableRows: string[][] = [];
+  // One table can mix real grid rows and borderless label:value rows (a
+  // totals line borrowing the grid's own columns), so border-ness is
+  // tracked per row, not once for the whole block.
+  let tableRows: { cells: string[]; borderless: boolean }[] = [];
   const flushText = () => {
     if (textLines.length === 0) return;
     blocks.push(
@@ -984,22 +992,25 @@ function RawContent({ content }: { content: string }) {
   };
   const flushTable = () => {
     if (tableRows.length === 0) return;
-    const colCount = Math.max(...tableRows.map((row) => row.length));
+    const colCount = Math.max(...tableRows.map((row) => row.cells.length));
     blocks.push(
       <div key={blocks.length} className="overflow-x-auto rounded-md">
         <table className="my-1.5 min-w-full border-collapse text-left font-mono text-xs">
           <tbody>
-            {tableRows.map((row, r) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: rows never reorder within one render
-              <tr key={r}>
-                {Array.from({ length: colCount }, (_, c) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: cells never reorder within one render
-                  <td key={c} className="border border-canvas-border px-2 py-1 align-top text-canvas-muted-foreground">
-                    {row[c] ?? ''}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {tableRows.map((row, r) => {
+              const cellBorder = row.borderless ? '' : 'border border-canvas-border';
+              return (
+                // biome-ignore lint/suspicious/noArrayIndexKey: rows never reorder within one render
+                <tr key={r}>
+                  {Array.from({ length: colCount }, (_, c) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: cells never reorder within one render
+                    <td key={c} className={`${cellBorder} px-2 py-1 align-top text-canvas-muted-foreground`}>
+                      {row.cells[c] ?? ''}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>,
@@ -1009,7 +1020,7 @@ function RawContent({ content }: { content: string }) {
   for (const line of lines) {
     if (isRawTableLine(line)) {
       flushText();
-      tableRows.push(splitRawTableRow(line));
+      tableRows.push({ cells: splitRawTableRow(line), borderless: isBorderlessTableLine(line) });
     } else {
       flushTable();
       textLines.push(line);
