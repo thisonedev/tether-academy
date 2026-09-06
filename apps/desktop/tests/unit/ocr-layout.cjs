@@ -73,8 +73,9 @@ test('ocr-layout - a wrapped sentence spanning several lines reads as one paragr
 
 test('ocr-layout - a total/tax/balance label bleeding into unrelated prose renders as its own table row', (t) => {
   // A totals box beside a legal paragraph can land a label and unrelated
-  // prose on one detected line; the label must come out as its own table
-  // row, set off from the prose on both sides.
+  // prose on one detected line; the label must still come out as its own
+  // borderless table row, set off from the prose above by the real gap
+  // between them.
   const text = layoutOcrBlocks([
     block('hereby authorize the repair work', 439, 3101, 987, 3161),
     block('herein set forth to be done along', 984, 3079, 1526, 3145),
@@ -85,7 +86,7 @@ test('ocr-layout - a total/tax/balance label bleeding into unrelated prose rende
   ]);
   t.is(
     text,
-    'hereby authorize the repair work herein set forth to be done along with the necessary\n\n| Sales Tax (7.75%) | 82.41 |\n\nmaterials and agree that you are',
+    'hereby authorize the repair work herein set forth to be done along with the necessary\n\n~| Sales Tax (7.75%) | 82.41 |\nmaterials and agree that you are',
   );
 });
 
@@ -97,7 +98,7 @@ test('ocr-layout - a label glued to prose with too small a gap to be its own col
     block('with the necessary Total', 1524, 3083, 1900, 3127),
     block('638.46', 2200, 3085, 2300, 3127),
   ]);
-  t.is(text, 'with the necessary\n\n| Total | 638.46 |');
+  t.is(text, 'with the necessary\n\n~| Total | 638.46 |');
 });
 
 test('ocr-layout - a period starts a new paragraph even without a wide gap', (t) => {
@@ -135,10 +136,10 @@ test('ocr-layout - a continuation line starting with a digit still joins the sen
   );
 });
 
-test('ocr-layout - a shorter table row still lines up under the full row above it', (t) => {
-  // Row two has no price fields at all (blank cells on the real form, not
-  // a detection miss); it should still land under row one, id under id,
-  // not read as a two-column row sharing a table with a four-column one.
+test('ocr-layout - a shorter row than the table above it renders as its own borderless block', (t) => {
+  // Row two has no price fields at all and a different column count than
+  // row one; with no isolated label to force the match, there's no reliable
+  // way to tell it apart from a second, unrelated small table sitting close by.
   const text = layoutOcrBlocks([
     block('11427721779', 406, 2290, 645, 2334),
     block('oil filter', 1146, 2290, 1288, 2334),
@@ -147,7 +148,7 @@ test('ocr-layout - a shorter table row still lines up under the full row above i
     block('07119963252', 401, 2450, 647, 2494),
     block('crush washer', 1145, 2450, 1371, 2494),
   ]);
-  t.is(text, '| 11427721779 | oil filter | 28.50 | 28.SOT |\n| 07119963252 | crush washer |  |  |');
+  t.is(text, '| 11427721779 | oil filter | 28.50 | 28.SOT |\n\n~| 07119963252 | crush washer |');
 });
 
 test('ocr-layout - a header row too tight to split on its own borrows the row below it', (t) => {
@@ -163,14 +164,14 @@ test('ocr-layout - a header row too tight to split on its own borrows the row be
     block('45.00', 823, 667, 880, 687),
     block('$90.00', 952, 664, 1026, 689),
   ]);
-  t.is(text, '| QTY Description | Unit Price | Amount |\n| Custom product/service A | 45.00 | $90.00 |');
+  t.is(text, '~| QTY Description | Unit Price | Amount |\n~| Custom product/service A | 45.00 | $90.00 |');
 });
 
 test('ocr-layout - a Subtotal/Total row always puts its value in the last column', (t) => {
-  // A Subtotal label sits well left of where a real field row's rate column
-  // starts, so matching it to the nearest column by position would land it
-  // under Unit Price instead of Amount; a label row always spans first
-  // column to last instead, regardless of where its own text happens to sit.
+  // A Subtotal label's own text can sit well left of where a real field
+  // row's rate column starts; its value still always goes to the last
+  // column, but the label itself lands in whichever real column its own
+  // position lines up with best, not forced flush to the first.
   const text = layoutOcrBlocks([
     block('Custom product/service A', 143, 663, 391, 692),
     block('45.00', 823, 667, 880, 687),
@@ -178,7 +179,7 @@ test('ocr-layout - a Subtotal/Total row always puts its value in the last column
     block('Subtotal', 599, 867, 681, 887),
     block('$240.00', 941, 865, 1026, 889),
   ]);
-  t.is(text, '| Custom product/service A | 45.00 | $90.00 |\n| Subtotal |  | $240.00 |');
+  t.is(text, '~| Custom product/service A | 45.00 | $90.00 |\n~|  | Subtotal | $240.00 |');
 });
 
 test('ocr-layout - a quantity glued to the item name it counts splits off', (t) => {
@@ -202,7 +203,7 @@ test('ocr-layout - a street number never splits off as if it were a quantity', (
     block('1234 Company St,', 72, 147, 255, 172),
     block('Upload Logo', 756, 141, 927, 164),
   ]);
-  t.is(text, '| 1234 Company St, | Upload Logo |');
+  t.is(text, '~| 1234 Company St, | Upload Logo |');
 });
 
 test('ocr-layout - a numbered list item never renders as a two-column table', (t) => {
