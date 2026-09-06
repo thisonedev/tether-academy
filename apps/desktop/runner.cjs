@@ -33,6 +33,7 @@ const { createAccumulator } = require('./electron/run-accumulator.cjs');
 const { lessonCwd, precreateOutputDirs, snapshotOutputs, describeNewOutputs, formatRunError } = require('./shared/lesson-output.cjs');
 const { acceptAll, syncFast, pruneTruncatedModels } = require('./shared/model-integrity.cjs');
 const { createNoiseFilter } = require('./workers/peer/exec-noise.cjs');
+const { takeLessonDone } = require('./shared/lesson-done.cjs');
 const { createThinkingFilter } = require('./electron/chat-thinking-filter.cjs');
 const { hintForMissingLib } = require('./electron/linux-lib-hint.cjs');
 const { killTree, spawnFlags } = require('./shared/process-control.cjs');
@@ -179,8 +180,12 @@ function runSpawn({ source, argv, mockImports, mockNote, onChunk, registerAbort 
     const collapseIndent = (s) => s.replace(/[ \t]{2,}/g, ' ');
     const handleChunk = (stream) => (chunk) => {
       let s = chunk.toString();
-      if (stream === 'stderr') s = stderrFilter.push(s);
-      else s = collapseIndent(thinkingFilter.push(s));
+      if (stream === 'stderr') {
+        s = takeLessonDone(s).text;
+        s = stderrFilter.push(s);
+      } else {
+        s = collapseIndent(thinkingFilter.push(s));
+      }
       if (!s) return;
       output.append(stream, s);
       armIdle();
