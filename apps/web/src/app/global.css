@@ -36,6 +36,13 @@ html {
   color-scheme: dark;
 }
 
+/* A button with no focus-visible:ring-* of its own falls back to the
+   browser's default outline, which renders orange on some platforms. */
+:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
 /* Dark-theme scrollbar */
 * {
   scrollbar-width: thin;
