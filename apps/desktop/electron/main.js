@@ -2,7 +2,7 @@
 // unpackaged and would otherwise show Electron's dev-only warnings to users.
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
-const { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, shell } = require('electron');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -1167,6 +1167,23 @@ if (!lock) {
   process.on('SIGINT', () => app.quit());
   process.on('SIGTERM', () => app.quit());
   app.whenReady().then(async () => {
+    // Electron's 'windowMenu' role marker is what makes macOS auto-inject
+    // Sonoma+ tiling items that log a bogus representedObject warning;
+    // plain roles here avoid that marker so macOS never adds them.
+    if (isMac) {
+      Menu.setApplicationMenu(
+        Menu.buildFromTemplate([
+          { role: 'appMenu' },
+          { role: 'editMenu' },
+          { role: 'viewMenu' },
+          {
+            label: 'Window',
+            submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }, { role: 'close' }],
+          },
+          { role: 'help', submenu: [] },
+        ]),
+      );
+    }
     const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
     if (fsSync().existsSync(path.join(staticDir, 'index.html'))) {
       registerAcademyProtocol(staticDir);
