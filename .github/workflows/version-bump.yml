@@ -1,0 +1,31 @@
+name: Version bump
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: version must increase over master
+        run: |
+          BASE_VERSION=$(git show origin/${{ github.base_ref }}:package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+          HEAD_VERSION=$(node -p 'require("./package.json").version')
+          echo "master: $BASE_VERSION, this PR: $HEAD_VERSION"
+          node -e '
+            const semverParts = v => v.split(".").map(Number);
+            const [bMaj, bMin, bPatch] = semverParts(process.argv[1]);
+            const [hMaj, hMin, hPatch] = semverParts(process.argv[2]);
+            const base = bMaj * 1e6 + bMin * 1e3 + bPatch;
+            const head = hMaj * 1e6 + hMin * 1e3 + hPatch;
+            if (head <= base) {
+              console.error(`package.json version (${process.argv[2]}) must be greater than master (${process.argv[1]})`);
+              process.exit(1);
+            }
+          ' "$BASE_VERSION" "$HEAD_VERSION"
