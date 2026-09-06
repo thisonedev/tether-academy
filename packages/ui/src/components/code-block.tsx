@@ -33,7 +33,7 @@ export async function CodeBlock({ file, mode = 'answer', title }: CodeBlockProps
   });
 
   return (
-    <figure className="my-5 overflow-hidden rounded-lg border border-fd-border bg-[#0d1117] not-prose">
+    <figure className="my-5 overflow-hidden rounded-lg border border-fd-border bg-canvas not-prose">
       <figcaption className="flex items-center gap-2 border-b border-fd-border bg-fd-card px-4 py-2 text-xs font-semibold uppercase tracking-wider text-fd-muted-foreground">
         <span>{displayTitle}</span>
         {mode === 'starting' ? (
