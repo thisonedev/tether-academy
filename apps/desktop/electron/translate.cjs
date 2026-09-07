@@ -5,6 +5,7 @@
 // its own small model, loaded independently of chat.cjs's chat model.
 
 const { ensureModels } = require('../shared/model-fetch.cjs');
+const { notify } = require('./model-status.cjs');
 
 // Maps a language label to its @qvac/sdk registry constant and the lowercase
 // code loadModel's `modelConfig.to` wants (translation-config.js's
@@ -107,13 +108,32 @@ async function unload() {
       console.warn('[translate] unload failed', err && err.message);
     }
   }
+  // The SDK refuses a fresh loadModel for this id until unloadModel's
+  // effect is visible.
+  for (let i = 0; i < 20; i++) {
+    const stillThere = await sdk.getLoadedModelInfo({ modelId }).then(
+      () => true,
+      () => false,
+    );
+    if (!stillThere) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
   current = { language: null, modelId: null };
 }
 
 async function ensureLoaded(language) {
   if (current.language === language && current.modelId !== null) {
-    touchIdleTimer();
-    return current;
+    const sdk = require('@qvac/sdk');
+    // A truthy cache alone doesn't mean the SDK still has it registered.
+    const stillRegistered = await sdk.getLoadedModelInfo({ modelId: current.modelId }).then(
+      () => true,
+      () => false,
+    );
+    if (stillRegistered) {
+      touchIdleTimer();
+      return current;
+    }
+    current = { language: null, modelId: null };
   }
   const preset = NMT_PRESETS[language];
   const modelSrc = resolvePresetConstant(language);
@@ -127,7 +147,15 @@ async function ensureLoaded(language) {
   if (typeof sdk.loadModel !== 'function') {
     throw new Error('@qvac/sdk does not export loadModel in this build');
   }
-  await ensureModels([preset.key], {}).catch(() => {});
+  const displayName = `English to ${language}`;
+  await ensureModels([preset.key], {
+    onEvent: (e) => {
+      if (e.phase === 'progress') {
+        notify({ name: displayName, kind: 'translate', phase: 'downloading', downloaded: e.downloaded, total: e.total });
+      }
+    },
+  }).catch(() => {});
+  notify({ name: displayName, kind: 'translate', phase: 'loading' });
   // NMT's loadModel branch is a discriminated union on modelType, and its
   // modelConfig (unlike the LLM branch's) is required, not optional: engine,
   // from, and to, matching schemas/translation-config.js's bergamotConfigSchema.
@@ -137,6 +165,7 @@ async function ensureLoaded(language) {
     modelConfig: { engine: 'Bergamot', from: 'en', to: preset.to },
   });
   current = { language, modelId };
+  notify({ name: displayName, kind: 'translate', phase: 'ready' });
   touchIdleTimer();
   return current;
 }
