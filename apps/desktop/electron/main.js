@@ -964,7 +964,7 @@ async function createWindow() {
     // 720 so two windows fit side by side on a 1512pt laptop screen for a paired run.
     minWidth: 720,
     minHeight: 600,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: '#070707',
     title: 'Tether Academy',
     icon: ICON_PATH, // window/taskbar icon on Linux and Windows; macOS uses the dock icon set at top-of-file
     // No native title bar on macOS; the web header doubles as one. Other
