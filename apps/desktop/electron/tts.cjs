@@ -9,6 +9,8 @@ const SAMPLE_RATE = 44100;
 
 const lazy = createLazyModel({
   label: 'tts',
+  modelName: 'Supertonic 3',
+  modelKind: 'voice',
   registryKeys: ['TTS_MULTILINGUAL_SUPERTONIC3_Q8_0'],
   buildLoadArgs: (sdk) => ({
     modelSrc: sdk.TTS_MULTILINGUAL_SUPERTONIC3_Q8_0,

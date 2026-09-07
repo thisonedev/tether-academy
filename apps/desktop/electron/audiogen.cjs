@@ -7,6 +7,8 @@ const { createLazyModel } = require('./media-models.cjs');
 
 const lazy = createLazyModel({
   label: 'audiogen',
+  modelName: 'ACE-Step',
+  modelKind: 'music',
   registryKeys: [
     'AUDIOGEN_QWEN3_EMBEDDING_0_6B_Q8_0',
     'AUDIOGEN_ACESTEP_5HZ_LM_0_6B_Q8_0',

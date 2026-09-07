@@ -236,14 +236,18 @@ export const RailHiddenContext = createContext(false);
 function RailRow({
   dot,
   card = false,
+  forceShow = false,
   children,
 }: {
   dot: string;
   /** Wrap the content in a box. The row owns this so the dot can allow for it. */
   card?: boolean;
+  /** Shows the dot even where RailHiddenContext is set: a run's own stage
+   *  trace (StageRow/OutputRow) still wants it there, unlike a chat bubble. */
+  forceShow?: boolean;
   children: React.ReactNode;
 }) {
-  const railHidden = useContext(RailHiddenContext);
+  const railHidden = useContext(RailHiddenContext) && !forceShow;
   if (railHidden) {
     return (
       <div style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
@@ -529,8 +533,9 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly, onB
 
     const history: AcademyChatMessage[] = [
       ...entries
-        .filter((e): e is Extract<ConsoleEntry, { kind: 'chat-user' | 'chat-assistant' }> =>
-          e.kind === 'chat-user' || e.kind === 'chat-assistant',
+        .filter(
+          (e): e is Extract<ConsoleEntry, { kind: 'chat-user' | 'chat-assistant' }> =>
+            (e.kind === 'chat-user' || e.kind === 'chat-assistant') && e.content.trim().length > 0,
         )
         .map((e) => ({ role: e.kind === 'chat-user' ? ('user' as const) : ('assistant' as const), content: e.content })),
       { role: 'user', content },
@@ -1426,7 +1431,7 @@ function StageRow({ stage }: { stage: StageSegment }) {
   const label = stage.call || open ? stage.openLabel.replace(/\.{3}$/, '') : stage.closeLabel;
   const dot = open ? DOT_BUSY : passive ? `${DOT_IDLE}/50` : DOT_DONE;
   return (
-    <RailRow dot={dot}>
+    <RailRow dot={dot} forceShow>
       <div className="flex justify-between gap-3">
         <span className={passive ? 'text-canvas-muted-foreground/75' : 'text-canvas-foreground'}>{label}</span>
         {stage.seconds !== null ? (
@@ -1443,7 +1448,7 @@ function StageRow({ stage }: { stage: StageSegment }) {
 // The dot stays neutral, since the lesson printed this and the host did not.
 function OutputRow({ children }: { children: React.ReactNode }) {
   return (
-    <RailRow dot={DOT_IDLE} card>
+    <RailRow dot={DOT_IDLE} card forceShow>
       {children}
     </RailRow>
   );
