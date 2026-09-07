@@ -199,6 +199,26 @@ export const academySpeechToTextSchema = z.object({
   audio: z.string().min(1).max(60_000_000),
 });
 
+export const academyVoiceStartSchema = z
+  .object({
+    stopPhrase: z.string().min(1).max(64).optional(),
+    maxDurationMs: z.number().int().min(1_000).max(300_000).optional(),
+    /** Keeps the mic open across multiple utterances and returns a playable
+     *  recording alongside the transcript, instead of resolving after one turn. */
+    record: z.boolean().optional(),
+  })
+  .strict();
+
+/** One session for the whole multi-turn conversation. Fields mirror
+ *  academyVoiceStartSchema minus record/maxDurationMs, which don't apply
+ *  to a standing session. */
+export const academyVoiceStartConversationSchema = z
+  .object({
+    stopPhrase: z.string().min(1).max(64).optional(),
+    endOfTurnSilenceMs: z.number().int().min(200).max(10_000).optional(),
+  })
+  .strict();
+
 export const academyGenerateImageSchema = z.object({
   prompt: z.string().min(1).max(2_000),
   model: z.string().min(1).max(64).optional(),

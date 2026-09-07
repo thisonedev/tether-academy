@@ -201,6 +201,9 @@ export interface AcademyChatAPI {
    * real message is the one the user types.
    */
   load: (modelHint: string) => Promise<{ modelName: string }>;
+  /** Loads whatever `send()` itself would resolve to (current, then configured,
+   *  then the smallest installed model) without sending a message. */
+  preload: () => Promise<void>;
   /**
    * Send a chat completion. The host streams `delta` chunks back via `onChunk`.
    * If no model is loaded, the host picks the smallest installed chat model
@@ -581,6 +584,11 @@ export interface AcademyAPI {
   textToSpeech?: (text: string) => Promise<string>;
   /** `audio` is a data: URL; WAV in, plain transcript text out. */
   speechToText?: (audio: string) => Promise<string>;
+  /** Live mic capture + streaming transcription, for the playground's Record voice node. */
+  voice?: AcademyVoiceAPI;
+  /** Fires whenever any capability's model starts downloading or loading, so
+   *  the playground can show what's happening instead of a bare spinner. */
+  onModelStatus?: (callback: (status: AcademyModelStatus) => void) => () => void;
   /** Returns a data: URL for a PNG. */
   generateImage?: (prompt: string, model?: string) => Promise<string>;
   /** Returns a data: URL for the generated clip (typically AVI); can take minutes.
@@ -603,6 +611,57 @@ export interface AcademyRagSearchResult {
 export interface AcademyClipboardAPI {
   /** Copies text and clears it after `scrubAfterMs` (0 = never); main owns the timer so the scrub survives the window closing. */
   copy: (text: string, scrubAfterMs?: number) => Promise<boolean>;
+}
+
+/** `kind` buckets which capability this is for (voice, ai, image, video,
+ *  music, ocr, translate), so the UI can pick a plain-language noun for it. */
+export interface AcademyModelStatus {
+  name: string;
+  kind: string;
+  phase: 'downloading' | 'loading' | 'ready';
+  downloaded?: number;
+  total?: number;
+}
+
+/** One update from an in-progress `voice.start()` recording, keyed by `requestId`.
+ *  `transcript` is the running text so far; final once `done` is true. */
+export interface AcademyVoiceEvent {
+  requestId: string;
+  transcript: string;
+  /** True when the transcript ended in the configured stop phrase, which cut the recording short. */
+  stoppedByPhrase: boolean;
+  /** A data: URL for a playable WAV of the whole session; only set when `start` was called with `record: true`. */
+  audioDataUrl: string | null;
+  done: boolean;
+  error: string | null;
+}
+
+/** One update from an in-progress `voice.startConversation()`, keyed by
+ *  `conversationId`. `done: false` marks one finished turn (the session
+ *  keeps listening); `done: true` means the whole conversation ended. */
+export interface AcademyVoiceConversationEvent {
+  conversationId: string;
+  transcript: string;
+  stoppedByPhrase: boolean;
+  done: boolean;
+  error: string | null;
+}
+
+export interface AcademyVoiceAPI {
+  /** Opens the mic and streams live transcription; updates arrive via `onEvent` keyed by the returned `requestId`.
+   *  `record: true` keeps listening across pauses and returns the whole session's audio, not just one turn. */
+  start: (opts?: { stopPhrase?: string; maxDurationMs?: number; record?: boolean }) => Promise<{ requestId: string }>;
+  /** Ends an in-flight recording early; the final transcript still arrives via `onEvent`. */
+  stop: (requestId: string) => Promise<boolean>;
+  /** One session for a whole multi-turn conversation. Turn events arrive via
+   *  `onEvent` keyed by the returned `conversationId`, one per completed turn,
+   *  until a `done: true` event ends the conversation. */
+  startConversation: (opts?: { stopPhrase?: string; endOfTurnSilenceMs?: number }) => Promise<{ conversationId: string }>;
+  /** Ends an in-flight conversation; a final `done: true` event still arrives via `onEvent`. */
+  stopConversation: (conversationId: string) => Promise<boolean>;
+  /** Loads the voice model without opening the mic or a session. */
+  preload: () => Promise<void>;
+  onEvent: (callback: (event: AcademyVoiceEvent | AcademyVoiceConversationEvent) => void) => () => void;
 }
 
 export interface AcademyPlaygroundCredentialsAPI {

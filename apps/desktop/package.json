@@ -37,9 +37,13 @@
     }
   },
   "scripts": {
+    "prestart": "node scripts/kill-stale.mjs",
     "start": "electron .",
+    "predev": "node scripts/kill-stale.mjs",
     "dev": "electron . --no-sandbox",
+    "predev:host": "node scripts/kill-stale.mjs",
     "dev:host": "electron . --no-sandbox --storage .dev-host",
+    "precapture": "node scripts/kill-stale.mjs",
     "capture": "electron . --capture --no-sandbox",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "pnpm typecheck && node scripts/run-tests.mjs tests/unit",

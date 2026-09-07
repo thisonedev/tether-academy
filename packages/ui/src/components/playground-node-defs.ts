@@ -180,9 +180,6 @@ const iterateFields: PlaygroundNodeKindDef['fields'] = [
     hiddenWhen: (fields) => fields.action !== 'Translate',
   },
 ];
-const randomizeFields: PlaygroundNodeKindDef['fields'] = [
-  { key: 'options', label: 'Options (one per line)', type: 'textarea' },
-];
 // Every target the SDK's Bergamot models actually support (the BERGAMOT_EN_<code>
 // registry entries in @qvac/sdk), not a placeholder shortlist.
 const BERGAMOT_EN_TARGETS = [
@@ -200,6 +197,22 @@ const usesStaticSource = (fields: Record<string, string>) => fields.source !== '
 // null (nothing connected) and 'flow' (a trigger like Start) both carry no
 // data, so "Upstream input" isn't a real choice yet and shouldn't show.
 const hasWiredInput = (inputKind: PlaygroundDataType | null) => inputKind !== null && inputKind !== 'flow';
+
+const randomizeFields: PlaygroundNodeKindDef['fields'] = [
+  {
+    key: 'source',
+    label: 'Options source',
+    type: 'select',
+    options: INPUT_SOURCE_OPTIONS,
+    hiddenWhen: (_fields, inputKind) => !hasWiredInput(inputKind),
+  },
+  {
+    key: 'options',
+    label: 'Options (one per line)',
+    type: 'textarea',
+    hiddenWhen: (fields, inputKind) => hasWiredInput(inputKind) && !usesStaticSource(fields),
+  },
+];
 
 // `content` is its own field, separate from instructions: same source toggle
 // as translate/ask-doc below, so a Provide text or document node wired in has to be
@@ -309,6 +322,21 @@ const ttsFields: PlaygroundNodeKindDef['fields'] = [
 ];
 const sttFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'file', label: 'Audio file (.wav)', type: 'file', accept: '.wav' },
+];
+const recordVoiceFields: PlaygroundNodeKindDef['fields'] = [
+  // Empty by default: a memo stops on the Stop button, not a magic word.
+  // The field stays available for whoever does want a spoken stop word.
+  { key: 'stopPhrase', label: 'Stop word (optional)', type: 'text', default: '' },
+];
+const voiceLoopFields: PlaygroundNodeKindDef['fields'] = [
+  {
+    key: 'task',
+    label: 'Instructions',
+    type: 'textarea',
+    default: "You're a helpful voice assistant. Reply conversationally in 1-3 short sentences.",
+  },
+  { key: 'stopPhrase', label: 'Stop word', type: 'text', default: 'stop' },
+  { key: 'voiceReply', label: 'Reply with voice', type: 'select', options: ['Off', 'On'], default: 'Off' },
 ];
 const imageGenFields: PlaygroundNodeKindDef['fields'] = [
   {
@@ -597,15 +625,14 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     kind: 'randomize',
     label: 'Randomize',
     category: 'logic',
-    input: 'flow',
+    // 'any', same reasoning as Translate below: a flow trigger to sequence it
+    // after Start, or real text when "Upstream input" is the chosen source.
+    input: 'any',
     output: 'value',
     fields: randomizeFields,
     defaultFields: defaultsFrom(randomizeFields),
     async run(ctx) {
-      const options = (ctx.fields.options ?? '')
-        .split(/\r?\n|,/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+      const options = splitIntoItems(ctx.resolveContent('options') ?? '');
       if (options.length === 0) {
         ctx.pushRunLine('err', 'No options to pick from: open this node and list at least one, one per line.');
         return;
@@ -692,7 +719,10 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       }
       const dataUrl = await ctx.textToSpeech(text);
       ctx.setOutput(dataUrl);
-      ctx.pushMedia('audio', dataUrl, text);
+      // Upstream input already showed this text in its own result above;
+      // captioning the clip too would just repeat the same line.
+      const caption = ctx.fields.source === 'Upstream input' ? undefined : text;
+      ctx.pushMedia('audio', dataUrl, caption);
     },
   },
   'speech-to-text': {
@@ -712,6 +742,72 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       const text = await ctx.speechToText(picked.dataUrl);
       ctx.setOutput(text);
       ctx.pushResult(text || '[no speech detected]');
+    },
+  },
+  'record-voice': {
+    kind: 'record-voice',
+    label: 'Record voice',
+    category: 'ai-voice',
+    input: 'flow',
+    output: 'value',
+    fields: recordVoiceFields,
+    defaultFields: defaultsFrom(recordVoiceFields),
+    // record: true keeps the mic open across pauses instead of resolving on
+    // the first VAD turn, and hands back a playable copy of the whole
+    // session alongside the transcript, whether or not this feeds another node.
+    async run(ctx) {
+      const stopPhrase = ctx.fields.stopPhrase || undefined;
+      const { transcript, stoppedByPhrase, audioDataUrl, error } = await ctx.recordVoice({ stopPhrase, record: true });
+      // Stop aborts the session itself, so an error arriving then is expected.
+      if (error && !ctx.stopRequested()) {
+        ctx.pushRunLine('err', error);
+        return;
+      }
+      if (error) return;
+      ctx.setOutput(transcript);
+      ctx.pushResult(transcript || '[no speech detected]');
+      if (audioDataUrl) ctx.pushMedia('audio', audioDataUrl);
+      if (stoppedByPhrase) ctx.pushRunLine('ok', `Heard "${stopPhrase}".`);
+    },
+  },
+  'voice-conversation': {
+    kind: 'voice-conversation',
+    label: 'Voice conversation',
+    category: 'ai-voice',
+    input: 'flow',
+    output: null,
+    fields: voiceLoopFields,
+    defaultFields: defaultsFrom(voiceLoopFields),
+    // This node needs two models (voice, then the reply model), and preload
+    // loads both before the mic opens, so recording only starts once a reply
+    // can follow it. The engine always awaits this before run().
+    async preload(ctx) {
+      await ctx.ensureVoiceModelReady();
+      if (ctx.stopRequested()) return;
+      await ctx.ensureChatModelReady();
+    },
+    async run(ctx) {
+      const stopPhrase = ctx.fields.stopPhrase || 'stop';
+      const task = ctx.fields.task || voiceLoopFields[0].default || '';
+      for await (const { transcript, stoppedByPhrase, error } of ctx.voiceConversationTurns({ stopPhrase })) {
+        // Stop aborts the turn itself, so an error arriving then is expected.
+        if (error && !ctx.stopRequested()) {
+          ctx.pushRunLine('err', error);
+          return;
+        }
+        if (error) return;
+        if (stoppedByPhrase) {
+          ctx.pushRunLine('ok', `Heard "${stopPhrase}".`);
+          return;
+        }
+        if (!transcript || ctx.stopRequested()) continue;
+        ctx.pushResult(transcript);
+        const { text: prompt } = buildAgentPrompt(task, `User said: ${transcript}`, AGENT_MESSAGE_MAX);
+        const reply = await ctx.runAgent(prompt);
+        if (ctx.stopRequested() || !reply || ctx.fields.voiceReply !== 'On') continue;
+        const dataUrl = await ctx.textToSpeech(reply);
+        ctx.playAudio(dataUrl);
+      }
     },
   },
   'generate-image': {
