@@ -109,6 +109,11 @@ function formatModelStatusLine(status: { name: string; kind: string; phase: 'dow
   return `→ ${verb} the ${noun} (${status.name})${pct}...`;
 }
 
+// Only a model-progress line may collapse into the one before it. Matching a
+// bare "→" would let a progress tick overwrite a node's own activity line and
+// leave its closing ✓ with no opener to pair with.
+const MODEL_STATUS_OPEN = /^→ (?:Downloading|Loading) the /;
+
 let idSeq = 1;
 const nextId = () => `n${idSeq++}`;
 let entrySeq = 1;
@@ -295,6 +300,28 @@ function PlaygroundCanvas({
   // only ever see the value from when the closure was created, not a Stop
   // click that happens mid-run.
   const stopRequestedRef = useRef(false);
+  // Set while a node's activity stage is open. Every entry appended to the
+  // feed goes through appendEntry below, so output closes its own stage first
+  // whichever call produced it, including calls added later.
+  const closeActivityRef = useRef<(() => { entryId: string; line: string } | null) | null>(null);
+  const appendEntry = useCallback((entry: ConsoleEntry) => {
+    // The result sits between the two halves of its stage: "Reading the
+    // text", the text, "Read the text". Entries render in order, so the
+    // closing line becomes its own entry below the output.
+    const closing = closeActivityRef.current?.() ?? null;
+    setEntries((prev) => {
+      const next = [...prev, entry];
+      if (closing) {
+        next.push({
+          kind: 'run',
+          id: nextEntryId(),
+          lines: [{ stream: 'stderr' as const, line: closing.line }],
+          status: 'ok',
+        });
+      }
+      return next;
+    });
+  }, []);
   const pendingRequestIdRef = useRef<string | null>(null);
   const pendingVoiceRequestIdRef = useRef<string | null>(null);
   const pendingVoiceConversationIdRef = useRef<string | null>(null);
@@ -318,12 +345,20 @@ function PlaygroundCanvas({
         prev.map((e) => {
           if (e.id !== entryId || e.kind !== 'run') return e;
           const lines = e.lines.length === 1 && e.lines[0].line === '' ? [] : e.lines.slice();
-          const last = lines[lines.length - 1];
+          // Most nodes load their model inside run(), once their own stage is
+          // open, so appending would file the load under work it precedes.
+          // Writing above that open line keeps the model first everywhere.
+          const openIdx = lines.findIndex((l) => l.line.startsWith('→') && !MODEL_STATUS_OPEN.test(l.line));
+          const at = openIdx === -1 ? lines.length : openIdx;
+          const prevLine = lines[at - 1];
           // Replaced in place while the stage is still open, since splitStages
           // re-reads this line. A closing ✓ stays its own line, or splitStages
           // loses the opener and renders a stray checkmark.
-          if (last && last.line.startsWith('→') && line.startsWith('→')) lines[lines.length - 1] = { stream: 'stderr', line };
-          else lines.push({ stream: 'stderr', line });
+          if (prevLine && MODEL_STATUS_OPEN.test(prevLine.line) && MODEL_STATUS_OPEN.test(line)) {
+            lines[at - 1] = { stream: 'stderr', line };
+          } else {
+            lines.splice(at, 0, { stream: 'stderr', line });
+          }
           return { ...e, lines };
         }),
       );
@@ -399,7 +434,7 @@ function PlaygroundCanvas({
     async (text: string, language: string): Promise<string> => {
       if (typeof window.academy?.translate === 'function') {
         const entryId = nextEntryId();
-        setEntries((prev) => [...prev, { kind: 'chat-assistant', id: entryId, content: '', streaming: true }]);
+        appendEntry({ kind: 'chat-assistant', id: entryId, content: '', streaming: true });
         try {
           const result = await window.academy.translate(text, language);
           setAssistantEntry(entryId, (e) => ({ ...e, content: result, streaming: false }));
@@ -423,7 +458,7 @@ function PlaygroundCanvas({
       new Promise<boolean>((resolve) => {
         const entryId = nextEntryId();
         confirmResolversRef.current.set(entryId, resolve);
-        setEntries((prev) => [...prev, { kind: 'confirm', id: entryId, message, answer: null }]);
+        appendEntry({ kind: 'confirm', id: entryId, message, answer: null });
       }),
     [],
   );
@@ -442,7 +477,7 @@ function PlaygroundCanvas({
   const searchDocumentsNode = useCallback(
     async (documents: string[], query: string): Promise<string> => {
       const entryId = nextEntryId();
-      setEntries((prev) => [...prev, { kind: 'chat-assistant', id: entryId, content: '', streaming: true }]);
+      appendEntry({ kind: 'chat-assistant', id: entryId, content: '', streaming: true });
       if (typeof window.academy?.ragSearch !== 'function') {
         const content = 'Search documents is only available in the desktop app.';
         setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
@@ -605,12 +640,9 @@ function PlaygroundCanvas({
     // not run with empty input, so "connect to No" actually means conditional.
     const skippedNodes = new Set<string>();
     const pushResult = (content: string, opts?: { raw?: boolean }) =>
-      setEntries((prev) => [
-        ...prev,
-        { kind: 'chat-assistant', id: nextEntryId(), content, streaming: false, raw: opts?.raw },
-      ]);
+      appendEntry({ kind: 'chat-assistant', id: nextEntryId(), content, streaming: false, raw: opts?.raw });
     const pushMedia = (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) =>
-      setEntries((prev) => [...prev, { kind: 'media', id: nextEntryId(), mediaType, dataUrl, caption }]);
+      appendEntry({ kind: 'media', id: nextEntryId(), mediaType, dataUrl, caption });
     try {
       for (const id of topoOrderIds(nodes, edges)) {
         if (stopRequestedRef.current) break;
@@ -672,6 +704,33 @@ function PlaygroundCanvas({
         };
         runningKindRef.current = node.data.kind;
         runningEntryIdRef.current = runningEntryId;
+        const pushStageLine = (line: string) =>
+          setEntries((prev) =>
+            prev.map((e) => {
+              if (e.id !== runningEntryId || e.kind !== 'run') return e;
+              const lines = e.lines.length === 1 && e.lines[0].line === '' ? [] : e.lines.slice();
+              lines.push({ stream: 'stderr', line });
+              return { ...e, lines };
+            }),
+          );
+        // The stage closes on the node's first visible output. A result is
+        // pushed before run() returns, so waiting for that would print the ✓
+        // underneath the very thing it announces.
+        let activityStartedAt = 0;
+        let activityOpen = false;
+        // Hands the line back, so appendEntry can fold the close and the
+        // result it precedes into one state update.
+        const closeActivity = () => {
+          if (!activityOpen || !def.activity) return null;
+          activityOpen = false;
+          closeActivityRef.current = null;
+          // A streaming node closes its stage when the bubble appears, before
+          // the text fills in, so the elapsed time here would read 0.0s and
+          // claim work that has not happened. Under a tenth of a second, omit it.
+          const elapsed = (Date.now() - activityStartedAt) / 1000;
+          const took = elapsed >= 0.1 ? ` (${elapsed.toFixed(1)}s)` : '';
+          return { entryId: runningEntryId, line: `  ✓ ${def.activity.done}${took}` };
+        };
         const runCtx: PlaygroundRunContext = {
           fields: node.data.fields,
           readInput,
@@ -701,9 +760,22 @@ function PlaygroundCanvas({
         try {
           // Always awaited before run(), for every node kind: a node needing
           // more than one model declares preload, so no visible work starts
-          // while a later model is still downloading.
+          // while a later model is still downloading. Opening the stage after
+          // it keeps a model's own loading lines above this node's work.
           if (def.preload) await def.preload(runCtx);
+          if (def.activity && !stopRequestedRef.current) {
+            activityStartedAt = Date.now();
+            activityOpen = true;
+            closeActivityRef.current = closeActivity;
+            pushStageLine(`→ ${def.activity.doing}...`);
+          }
           if (!stopRequestedRef.current) await def.run(runCtx);
+          // Still open when a node finished without showing anything.
+          if (!stopRequestedRef.current) {
+            const closing = closeActivity();
+            if (closing) pushStageLine(closing.line);
+          }
+          closeActivityRef.current = null;
         } catch (err) {
           // A handler that throws instead of reporting through pushRunLine (an
           // unexpected exception, not a modeled "nothing connected" case) still

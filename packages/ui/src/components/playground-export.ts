@@ -95,6 +95,10 @@ export function blocksToMarkdown(blocks: Block[]): string {
   return parts.join('\n\n');
 }
 
+// The rail's own trace ("→ Reading the text...", "✓ Loaded the AI model")
+// narrates how the run went on screen. An export carries what it produced.
+const STAGE_MARKER = /^\s*(→|✓)\s/;
+
 /** One markdown block per message: no speaker label glued onto the same line, so a
  *  list starting at "1." right after it can still open as a real list, not a
  *  paragraph continuation. */
@@ -106,7 +110,11 @@ export function buildConversationMarkdown(entries: ConsoleEntry[]): string {
       const content = entry.kind === 'chat-assistant' && entry.raw ? normalizeRawTableRows(entry.content) : entry.content;
       parts.push(content.trim());
     } else if (entry.kind === 'run') {
-      const text = entry.lines.map((l) => l.line).join('\n').trim();
+      const text = entry.lines
+        .filter((l) => !(l.stream === 'stderr' && STAGE_MARKER.test(l.line)))
+        .map((l) => l.line)
+        .join('\n')
+        .trim();
       if (text.length > 0) parts.push(`\`\`\`\n${text}\n\`\`\``);
     } else if (entry.kind === 'media') {
       parts.push(`[generated ${entry.mediaType}${entry.caption ? `: ${entry.caption}` : ''}]`);

@@ -430,6 +430,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'read-file': {
     kind: 'read-file',
+    activity: { doing: 'Reading the file', done: 'Read the file' },
     label: 'Read spreadsheet',
     category: 'data',
     input: 'flow',
@@ -449,6 +450,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'text-input': {
     kind: 'text-input',
+    activity: { doing: 'Reading the text', done: 'Read the text' },
     label: 'Provide text or document',
     category: 'data',
     input: 'flow',
@@ -474,6 +476,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   filter: {
     kind: 'filter',
+    activity: { doing: 'Filtering the rows', done: 'Filtered the rows' },
     label: 'Filter table',
     category: 'logic',
     input: 'table',
@@ -498,6 +501,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'ai-agent': {
     kind: 'ai-agent',
+    activity: { doing: 'Asking the agent', done: 'Asked the agent' },
     label: 'Ask an AI agent',
     category: 'ai-text',
     input: 'table',
@@ -506,6 +510,12 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'value',
     fields: agentFields,
     defaultFields: defaultsFrom(agentFields),
+    // run() shows its reply bubble the moment it starts, so without this the
+    // model's own loading lines only appear afterwards, reading as if the
+    // answer arrived before the model it came from.
+    async preload(ctx) {
+      await ctx.ensureChatModelReady();
+    },
     async run(ctx) {
       const formatInstruction = OUTPUT_FORMAT_INSTRUCTION[ctx.fields.outputFormat ?? ''];
       const task = formatInstruction ? `${ctx.fields.task ?? ''}\n\n${formatInstruction}` : (ctx.fields.task ?? '');
@@ -529,6 +539,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   if: {
     kind: 'if',
+    activity: { doing: 'Checking the condition', done: 'Checked the condition' },
     label: 'If',
     category: 'logic',
     // Accepts a table (splits rows by column) or plain text (tests the whole
@@ -566,12 +577,18 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'iterate-ai': {
     kind: 'iterate-ai',
+    activity: { doing: 'Going through each item', done: 'Went through each item' },
     label: 'Iterate',
     category: 'logic',
     input: 'any',
     output: 'table',
     fields: iterateFields,
     defaultFields: defaultsFrom(iterateFields),
+    // Same reason as Ask an AI agent: the model has to be ready before the
+    // first row's reply starts streaming.
+    async preload(ctx) {
+      await ctx.ensureChatModelReady();
+    },
     async run(ctx) {
       const source = ctx.fields.source || ITERATE_SOURCE_OPTIONS[0];
       let items: string[];
@@ -623,6 +640,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   randomize: {
     kind: 'randomize',
+    activity: { doing: 'Randomizing', done: 'Randomized' },
     label: 'Randomize',
     category: 'logic',
     // 'any', same reasoning as Translate below: a flow trigger to sequence it
@@ -644,6 +662,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   translate: {
     kind: 'translate',
+    activity: { doing: 'Translating the text', done: 'Translated the text' },
     label: 'Translate',
     category: 'ai-text',
     // 'any': a flow trigger to just sequence it after Start, or real text from an
@@ -669,12 +688,16 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'ask-doc': {
     kind: 'ask-doc',
+    activity: { doing: 'Reading the document', done: 'Read the document' },
     label: 'Ask about a document',
     category: 'ai-text',
     input: 'any', // same reasoning as Translate above
     output: 'value',
     fields: askDocFields,
     defaultFields: defaultsFrom(askDocFields),
+    async preload(ctx) {
+      await ctx.ensureChatModelReady();
+    },
     async run(ctx) {
       let document: string;
       if (ctx.fields.source === 'Choose document') {
@@ -705,6 +728,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'text-to-speech': {
     kind: 'text-to-speech',
+    activity: { doing: 'Turning the text into speech', done: 'Turned the text into speech' },
     label: 'Text to speech',
     category: 'ai-voice',
     input: 'any',
@@ -727,6 +751,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'speech-to-text': {
     kind: 'speech-to-text',
+    activity: { doing: 'Turning the speech into text', done: 'Turned the speech into text' },
     label: 'Speech to text',
     category: 'ai-voice',
     input: 'flow',
@@ -746,6 +771,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'record-voice': {
     kind: 'record-voice',
+    activity: { doing: 'Recording your voice', done: 'Recorded your voice' },
     label: 'Record voice',
     category: 'ai-voice',
     input: 'flow',
@@ -772,6 +798,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'voice-conversation': {
     kind: 'voice-conversation',
+    activity: { doing: 'Opening the conversation', done: 'Opened the conversation' },
     label: 'Voice conversation',
     category: 'ai-voice',
     input: 'flow',
@@ -812,6 +839,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'generate-image': {
     kind: 'generate-image',
+    activity: { doing: 'Generating the image', done: 'Generated the image' },
     label: 'Generate image',
     category: 'ai-media',
     input: 'any',
@@ -833,6 +861,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'generate-video': {
     kind: 'generate-video',
+    activity: { doing: 'Generating the video', done: 'Generated the video' },
     label: 'Generate video',
     category: 'ai-media',
     input: 'any',
@@ -863,6 +892,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'generate-music': {
     kind: 'generate-music',
+    activity: { doing: 'Generating the music', done: 'Generated the music' },
     label: 'Generate music',
     category: 'ai-media',
     input: 'any',
@@ -884,6 +914,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   ocr: {
     kind: 'ocr',
+    activity: { doing: 'Reading text from the image', done: 'Read text from the image' },
     label: 'Read text from image',
     category: 'ai-media',
     input: 'flow',
@@ -913,6 +944,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'classify-image': {
     kind: 'classify-image',
+    activity: { doing: 'Classifying the image', done: 'Classified the image' },
     label: 'Classify image',
     category: 'ai-media',
     input: 'flow',
@@ -941,6 +973,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'search-documents': {
     kind: 'search-documents',
+    activity: { doing: 'Searching the documents', done: 'Searched the documents' },
     label: 'Search documents',
     category: 'ai-text',
     input: 'any',
@@ -987,6 +1020,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'ask-confirmation': {
     kind: 'ask-confirmation',
+    activity: { doing: 'Asking for confirmation', done: 'Asked for confirmation' },
     label: 'Ask for confirmation',
     category: 'interface',
     input: 'any',

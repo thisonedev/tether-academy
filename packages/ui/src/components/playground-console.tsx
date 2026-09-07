@@ -1,6 +1,6 @@
 'use client';
 
-import { ChatInputBar, type ConsoleEntry, LessonConsole, RailHiddenContext, TableExportContext } from './lesson-console.js';
+import { ChatInputBar, type ConsoleEntry, LessonConsole, StagePacingContext, TableExportContext } from './lesson-console.js';
 
 export interface PlaygroundConsoleProps {
   entries: ConsoleEntry[];
@@ -18,14 +18,14 @@ export function PlaygroundConsole({ entries, setEntries, onExportTable, onConfir
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TableExportContext.Provider value={onExportTable}>
-        <RailHiddenContext.Provider value={true}>
+        <StagePacingContext.Provider value={false}>
           <LessonConsole
             entries={entries}
             onStopCheck={() => {}}
             emptyStateText="Run a workflow or ask a question. It all shows up here."
             onConfirm={onConfirm}
           />
-        </RailHiddenContext.Provider>
+        </StagePacingContext.Provider>
       </TableExportContext.Provider>
       <ChatInputBar entries={entries} setEntries={setEntries} lessonContext={null} onBuildSubmit={onBuildWorkflow} />
     </div>

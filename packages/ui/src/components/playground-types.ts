@@ -118,6 +118,10 @@ export interface PlaygroundNodeKindDef {
    *  engine always awaits this first; a node that needs no upfront model
    *  readiness (most of them) just omits it. */
   preload?: (ctx: PlaygroundRunContext) => Promise<void>;
+  /** Present and past pair ("Reading text from the image" / "Read text from
+   *  the image"). The engine opens a stage line from the first and closes it
+   *  with the second, on the rail the model loading lines use. */
+  activity?: { doing: string; done: string };
 }
 
 export interface PlaygroundNodeData extends Record<string, unknown> {

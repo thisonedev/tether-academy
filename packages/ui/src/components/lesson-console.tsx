@@ -181,6 +181,13 @@ const STAGE_REVEAL_MS = 1200;
  * fresh array each render does not restart the timer. `settled` shows a run
  * that was already over on mount all at once.
  */
+// Empty, so every lookup is undefined and every row reveals with no delay.
+const NO_PACING: boolean[] = [];
+
+/** Off in the playground: its output lives in sibling entries this hook cannot
+ *  hold back, so pacing the stage rows only lets output overtake them. */
+export const StagePacingContext = createContext(true);
+
 function useRevealed(total: number, paced: boolean[], settled: boolean): number {
   const pacedRef = useRef(paced);
   pacedRef.current = paced;
@@ -228,33 +235,16 @@ const CARD_INSET = 1 + 6;
 // a monospace glyph reads low in its line box because of the ascender space.
 const DOT_OFFSET = 5;
 
-// Set by PlaygroundConsole only: too many parallel rails read as noise once a
-// workflow's output panel isn't also carrying a lesson's stage-by-stage trace.
-// Lesson chat never provides it, so the rail there is unchanged.
-export const RailHiddenContext = createContext(false);
-
 function RailRow({
   dot,
   card = false,
-  forceShow = false,
   children,
 }: {
   dot: string;
   /** Wrap the content in a box. The row owns this so the dot can allow for it. */
   card?: boolean;
-  /** Shows the dot even where RailHiddenContext is set: a run's own stage
-   *  trace (StageRow/OutputRow) still wants it there, unlike a chat bubble. */
-  forceShow?: boolean;
   children: React.ReactNode;
 }) {
-  const railHidden = useContext(RailHiddenContext) && !forceShow;
-  if (railHidden) {
-    return (
-      <div style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
-        {card ? <div className={RAIL_CARD}>{children}</div> : children}
-      </div>
-    );
-  }
   return (
     <div className={RAIL_ROW} style={{ paddingTop: ROW_PAD, paddingBottom: ROW_PAD }}>
       {/* Padding, not margin: the line spans the full row, so spacing a row
@@ -737,7 +727,7 @@ function EntryCard({
 
 function UserBubble({ content }: { content: string }) {
   return (
-    <div className="my-3 max-w-full overflow-hidden rounded-md border border-canvas-border/60 bg-canvas-muted/40 px-3 py-2">
+    <div className="my-3 max-w-full overflow-hidden rounded-md bg-chat-user px-3 py-2">
       <p className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-foreground">{content}</p>
     </div>
   );
@@ -806,6 +796,15 @@ function looksLikeCsv(text: string): boolean {
 
 // Worth downloading if multi-line or past one sentence; a one-word answer
 // isn't, a translation or transcript is.
+// A rendered table carries its own export button, so the whole-reply button
+// would sit on top of it.
+function containsMarkdownTable(text: string): boolean {
+  return text.split('\n').some((line) => {
+    const row = line.trim();
+    return row.includes('|') && /^[|\s:-]+$/.test(row) && (row.match(/-/g)?.length ?? 0) >= 2;
+  });
+}
+
 function isSubstantialText(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length === 0) return false;
@@ -888,7 +887,7 @@ const MARKDOWN_COMPONENTS = {
     );
   },
   thead: ({ children }: { children?: React.ReactNode }) => (
-    <thead className="bg-canvas-muted text-canvas-muted-foreground">{children}</thead>
+    <thead className="bg-canvas-border/50 text-canvas-muted-foreground">{children}</thead>
   ),
   th: ({ children }: { children?: React.ReactNode }) => (
     <th className="min-w-16 whitespace-nowrap border border-canvas-border px-2 py-1 font-semibold">{children}</th>
@@ -897,7 +896,7 @@ const MARKDOWN_COMPONENTS = {
     <td className="min-w-16 border border-canvas-border px-2 py-1">{children}</td>
   ),
   code: ({ children }: { children?: React.ReactNode }) => (
-    <code className="rounded bg-canvas-muted px-1 py-0.5">{children}</code>
+    <code className="rounded bg-canvas-border/50 px-1 py-0.5">{children}</code>
   ),
   a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
     <a href={href} target="_blank" rel="noreferrer" className="text-emerald-400 underline">
@@ -916,8 +915,8 @@ const MARKDOWN_COMPONENTS = {
 function AssistantBubble({ content }: { content: string }) {
   const onExportTable = useContext(TableExportContext);
   return (
-    <div className="group relative wrap-anywhere font-mono text-xs text-canvas-muted-foreground">
-      {onExportTable && isSubstantialText(content) ? (
+    <div className="group relative wrap-anywhere font-mono text-xs text-canvas-foreground">
+      {onExportTable && isSubstantialText(content) && !containsMarkdownTable(content) ? (
         <button
           type="button"
           onClick={() => onExportTable(content, 'table')}
@@ -988,7 +987,7 @@ function RawContent({ content }: { content: string }) {
     blocks.push(
       <div
         key={blocks.length}
-        className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-muted-foreground"
+        className="wrap-anywhere whitespace-pre-wrap font-mono text-xs text-canvas-foreground"
       >
         {textLines.join('\n')}
       </div>,
@@ -1009,7 +1008,7 @@ function RawContent({ content }: { content: string }) {
                 <tr key={r}>
                   {Array.from({ length: colCount }, (_, c) => (
                     // biome-ignore lint/suspicious/noArrayIndexKey: cells never reorder within one render
-                    <td key={c} className={`${cellBorder} px-2 py-1 align-top text-canvas-muted-foreground`}>
+                    <td key={c} className={`${cellBorder} px-2 py-1 align-top text-canvas-foreground`}>
                       {row.cells[c] ?? ''}
                     </td>
                   ))}
@@ -1241,7 +1240,7 @@ function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
 
 function EmptyState({ text }: { text?: string }) {
   return (
-    <p className="px-1 py-1 font-mono text-xs text-canvas-muted-foreground">
+    <p className="px-1 py-1 font-mono text-xs text-canvas-foreground">
       {text ?? 'Run your code, check your answer, or ask a question. It all shows up here.'}
     </p>
   );
@@ -1400,13 +1399,14 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
     paced.push(false);
   }
 
-  const revealed = useRevealed(body.length, paced, !isAnimating);
+  const pacing = useContext(StagePacingContext);
+  const revealed = useRevealed(body.length, pacing ? paced : NO_PACING, !isAnimating || !pacing);
   const visible = body.slice(0, revealed);
 
   // The rail line is drawn once behind every row, so consecutive stages share
   // one continuous line instead of each stacking its own segment.
   return (
-    <div className="text-canvas-muted-foreground">
+    <div className="text-canvas-foreground">
       {allLines.length === 0 && !isAnimating ? (
         <>
           <p className="text-emerald-400">$ Run your code to see results</p>
@@ -1427,20 +1427,34 @@ function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isA
 // carries the outcome the opener could only promise.
 function StageRow({ stage }: { stage: StageSegment }) {
   const open = stage.state === 'open';
-  const passive = stage.state === 'note';
-  const label = stage.call || open ? stage.openLabel.replace(/\.{3}$/, '') : stage.closeLabel;
-  const dot = open ? DOT_BUSY : passive ? `${DOT_IDLE}/50` : DOT_DONE;
+  const opener = stage.openLabel.replace(/\.{3}$/, '');
+  // A lone ✓ (a stage whose opener sits above the output it produced, or one
+  // the host skipped) still reports something finished, so it gets the same
+  // treatment as every other completed row.
+  const dot = open ? DOT_BUSY : DOT_DONE;
+  // A closed phase keeps both wordings, which is why splitStages preserves
+  // openLabel. The trailing percentage goes, or the kept line reads as frozen
+  // mid-download.
+  const opened = opener.replace(/\s\d{1,3}%$/, '');
+  const keepsOpener = stage.state === 'done' && !stage.call && stage.closeLabel !== opened;
   return (
-    <RailRow dot={dot} forceShow>
-      <div className="flex justify-between gap-3">
-        <span className={passive ? 'text-canvas-muted-foreground/75' : 'text-canvas-foreground'}>{label}</span>
-        {stage.seconds !== null ? (
-          <span className="shrink-0 text-[11px] whitespace-nowrap text-canvas-muted-foreground">
-            {formatSeconds(stage.seconds)}
-          </span>
-        ) : null}
-      </div>
-    </RailRow>
+    <>
+      {keepsOpener ? (
+        <RailRow dot={DOT_IDLE}>
+          <span className="text-canvas-foreground">{opened}</span>
+        </RailRow>
+      ) : null}
+      <RailRow dot={dot}>
+        <div className="flex justify-between gap-3">
+          <span className="text-canvas-foreground">{stage.call || open ? opener : stage.closeLabel}</span>
+          {stage.seconds !== null ? (
+            <span className="shrink-0 text-[11px] whitespace-nowrap text-canvas-muted-foreground">
+              {formatSeconds(stage.seconds)}
+            </span>
+          ) : null}
+        </div>
+      </RailRow>
+    </>
   );
 }
 
@@ -1448,7 +1462,7 @@ function StageRow({ stage }: { stage: StageSegment }) {
 // The dot stays neutral, since the lesson printed this and the host did not.
 function OutputRow({ children }: { children: React.ReactNode }) {
   return (
-    <RailRow dot={DOT_IDLE} card forceShow>
+    <RailRow dot={DOT_IDLE} card>
       {children}
     </RailRow>
   );
