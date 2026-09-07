@@ -5,14 +5,14 @@ export const QVAC_THEME_NAME = 'qvac-dark';
 
 const C = {
   // Matches --color-canvas/-muted/-border exactly (see apps/web/src/app/global.css),
-  // so the code well sits at the same true-black temperature as the chrome around it.
-  bg: '020202',
+  // so the code well sits at the same temperature as the chrome around it.
+  bg: '070707',
   fg: 'abb2bf',
   cursor: '528bff',
   selection: '3e4451',
-  lineHighlight: '0b0b0b',
-  widgetBg: '000000',
-  widgetBorder: '1b1b1b',
+  lineHighlight: '0a0a0a',
+  widgetBg: '050505',
+  widgetBorder: '242424',
   comment: '5c6370',
   keyword: 'c678dd',
   string: '98c379',

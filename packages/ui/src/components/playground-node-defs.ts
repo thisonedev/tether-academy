@@ -180,9 +180,6 @@ const iterateFields: PlaygroundNodeKindDef['fields'] = [
     hiddenWhen: (fields) => fields.action !== 'Translate',
   },
 ];
-const randomizeFields: PlaygroundNodeKindDef['fields'] = [
-  { key: 'options', label: 'Options (one per line)', type: 'textarea' },
-];
 // Every target the SDK's Bergamot models actually support (the BERGAMOT_EN_<code>
 // registry entries in @qvac/sdk), not a placeholder shortlist.
 const BERGAMOT_EN_TARGETS = [
@@ -200,6 +197,22 @@ const usesStaticSource = (fields: Record<string, string>) => fields.source !== '
 // null (nothing connected) and 'flow' (a trigger like Start) both carry no
 // data, so "Upstream input" isn't a real choice yet and shouldn't show.
 const hasWiredInput = (inputKind: PlaygroundDataType | null) => inputKind !== null && inputKind !== 'flow';
+
+const randomizeFields: PlaygroundNodeKindDef['fields'] = [
+  {
+    key: 'source',
+    label: 'Options source',
+    type: 'select',
+    options: INPUT_SOURCE_OPTIONS,
+    hiddenWhen: (_fields, inputKind) => !hasWiredInput(inputKind),
+  },
+  {
+    key: 'options',
+    label: 'Options (one per line)',
+    type: 'textarea',
+    hiddenWhen: (fields, inputKind) => hasWiredInput(inputKind) && !usesStaticSource(fields),
+  },
+];
 
 // `content` is its own field, separate from instructions: same source toggle
 // as translate/ask-doc below, so a Provide text or document node wired in has to be
@@ -310,6 +323,21 @@ const ttsFields: PlaygroundNodeKindDef['fields'] = [
 const sttFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'file', label: 'Audio file (.wav)', type: 'file', accept: '.wav' },
 ];
+const recordVoiceFields: PlaygroundNodeKindDef['fields'] = [
+  // Empty by default: a memo stops on the Stop button, not a magic word.
+  // The field stays available for whoever does want a spoken stop word.
+  { key: 'stopPhrase', label: 'Stop word (optional)', type: 'text', default: '' },
+];
+const voiceLoopFields: PlaygroundNodeKindDef['fields'] = [
+  {
+    key: 'task',
+    label: 'Instructions',
+    type: 'textarea',
+    default: "You're a helpful voice assistant. Reply conversationally in 1-3 short sentences.",
+  },
+  { key: 'stopPhrase', label: 'Stop word', type: 'text', default: 'stop' },
+  { key: 'voiceReply', label: 'Reply with voice', type: 'select', options: ['Off', 'On'], default: 'Off' },
+];
 const imageGenFields: PlaygroundNodeKindDef['fields'] = [
   {
     key: 'source',
@@ -402,6 +430,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'read-file': {
     kind: 'read-file',
+    activity: { doing: 'Reading the file', done: 'Read the file' },
     label: 'Read spreadsheet',
     category: 'data',
     input: 'flow',
@@ -421,6 +450,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'text-input': {
     kind: 'text-input',
+    activity: { doing: 'Reading the text', done: 'Read the text' },
     label: 'Provide text or document',
     category: 'data',
     input: 'flow',
@@ -446,6 +476,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   filter: {
     kind: 'filter',
+    activity: { doing: 'Filtering the rows', done: 'Filtered the rows' },
     label: 'Filter table',
     category: 'logic',
     input: 'table',
@@ -470,6 +501,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'ai-agent': {
     kind: 'ai-agent',
+    activity: { doing: 'Asking the agent', done: 'Asked the agent' },
     label: 'Ask an AI agent',
     category: 'ai-text',
     input: 'table',
@@ -478,6 +510,12 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     output: 'value',
     fields: agentFields,
     defaultFields: defaultsFrom(agentFields),
+    // run() shows its reply bubble the moment it starts, so without this the
+    // model's own loading lines only appear afterwards, reading as if the
+    // answer arrived before the model it came from.
+    async preload(ctx) {
+      await ctx.ensureChatModelReady();
+    },
     async run(ctx) {
       const formatInstruction = OUTPUT_FORMAT_INSTRUCTION[ctx.fields.outputFormat ?? ''];
       const task = formatInstruction ? `${ctx.fields.task ?? ''}\n\n${formatInstruction}` : (ctx.fields.task ?? '');
@@ -501,6 +539,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   if: {
     kind: 'if',
+    activity: { doing: 'Checking the condition', done: 'Checked the condition' },
     label: 'If',
     category: 'logic',
     // Accepts a table (splits rows by column) or plain text (tests the whole
@@ -538,12 +577,18 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'iterate-ai': {
     kind: 'iterate-ai',
+    activity: { doing: 'Going through each item', done: 'Went through each item' },
     label: 'Iterate',
     category: 'logic',
     input: 'any',
     output: 'table',
     fields: iterateFields,
     defaultFields: defaultsFrom(iterateFields),
+    // Same reason as Ask an AI agent: the model has to be ready before the
+    // first row's reply starts streaming.
+    async preload(ctx) {
+      await ctx.ensureChatModelReady();
+    },
     async run(ctx) {
       const source = ctx.fields.source || ITERATE_SOURCE_OPTIONS[0];
       let items: string[];
@@ -595,17 +640,17 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   randomize: {
     kind: 'randomize',
+    activity: { doing: 'Randomizing', done: 'Randomized' },
     label: 'Randomize',
     category: 'logic',
-    input: 'flow',
+    // 'any', same reasoning as Translate below: a flow trigger to sequence it
+    // after Start, or real text when "Upstream input" is the chosen source.
+    input: 'any',
     output: 'value',
     fields: randomizeFields,
     defaultFields: defaultsFrom(randomizeFields),
     async run(ctx) {
-      const options = (ctx.fields.options ?? '')
-        .split(/\r?\n|,/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+      const options = splitIntoItems(ctx.resolveContent('options') ?? '');
       if (options.length === 0) {
         ctx.pushRunLine('err', 'No options to pick from: open this node and list at least one, one per line.');
         return;
@@ -617,6 +662,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   translate: {
     kind: 'translate',
+    activity: { doing: 'Translating the text', done: 'Translated the text' },
     label: 'Translate',
     category: 'ai-text',
     // 'any': a flow trigger to just sequence it after Start, or real text from an
@@ -642,12 +688,16 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'ask-doc': {
     kind: 'ask-doc',
+    activity: { doing: 'Reading the document', done: 'Read the document' },
     label: 'Ask about a document',
     category: 'ai-text',
     input: 'any', // same reasoning as Translate above
     output: 'value',
     fields: askDocFields,
     defaultFields: defaultsFrom(askDocFields),
+    async preload(ctx) {
+      await ctx.ensureChatModelReady();
+    },
     async run(ctx) {
       let document: string;
       if (ctx.fields.source === 'Choose document') {
@@ -678,6 +728,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'text-to-speech': {
     kind: 'text-to-speech',
+    activity: { doing: 'Turning the text into speech', done: 'Turned the text into speech' },
     label: 'Text to speech',
     category: 'ai-voice',
     input: 'any',
@@ -692,11 +743,15 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       }
       const dataUrl = await ctx.textToSpeech(text);
       ctx.setOutput(dataUrl);
-      ctx.pushMedia('audio', dataUrl, text);
+      // Upstream input already showed this text in its own result above;
+      // captioning the clip too would just repeat the same line.
+      const caption = ctx.fields.source === 'Upstream input' ? undefined : text;
+      ctx.pushMedia('audio', dataUrl, caption);
     },
   },
   'speech-to-text': {
     kind: 'speech-to-text',
+    activity: { doing: 'Turning the speech into text', done: 'Turned the speech into text' },
     label: 'Speech to text',
     category: 'ai-voice',
     input: 'flow',
@@ -714,8 +769,77 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       ctx.pushResult(text || '[no speech detected]');
     },
   },
+  'record-voice': {
+    kind: 'record-voice',
+    activity: { doing: 'Recording your voice', done: 'Recorded your voice' },
+    label: 'Record voice',
+    category: 'ai-voice',
+    input: 'flow',
+    output: 'value',
+    fields: recordVoiceFields,
+    defaultFields: defaultsFrom(recordVoiceFields),
+    // record: true keeps the mic open across pauses instead of resolving on
+    // the first VAD turn, and hands back a playable copy of the whole
+    // session alongside the transcript, whether or not this feeds another node.
+    async run(ctx) {
+      const stopPhrase = ctx.fields.stopPhrase || undefined;
+      const { transcript, stoppedByPhrase, audioDataUrl, error } = await ctx.recordVoice({ stopPhrase, record: true });
+      // Stop aborts the session itself, so an error arriving then is expected.
+      if (error && !ctx.stopRequested()) {
+        ctx.pushRunLine('err', error);
+        return;
+      }
+      if (error) return;
+      ctx.setOutput(transcript);
+      ctx.pushResult(transcript || '[no speech detected]');
+      if (audioDataUrl) ctx.pushMedia('audio', audioDataUrl);
+      if (stoppedByPhrase) ctx.pushRunLine('ok', `Heard "${stopPhrase}".`);
+    },
+  },
+  'voice-conversation': {
+    kind: 'voice-conversation',
+    activity: { doing: 'Opening the conversation', done: 'Opened the conversation' },
+    label: 'Voice conversation',
+    category: 'ai-voice',
+    input: 'flow',
+    output: null,
+    fields: voiceLoopFields,
+    defaultFields: defaultsFrom(voiceLoopFields),
+    // This node needs two models (voice, then the reply model), and preload
+    // loads both before the mic opens, so recording only starts once a reply
+    // can follow it. The engine always awaits this before run().
+    async preload(ctx) {
+      await ctx.ensureVoiceModelReady();
+      if (ctx.stopRequested()) return;
+      await ctx.ensureChatModelReady();
+    },
+    async run(ctx) {
+      const stopPhrase = ctx.fields.stopPhrase || 'stop';
+      const task = ctx.fields.task || voiceLoopFields[0].default || '';
+      for await (const { transcript, stoppedByPhrase, error } of ctx.voiceConversationTurns({ stopPhrase })) {
+        // Stop aborts the turn itself, so an error arriving then is expected.
+        if (error && !ctx.stopRequested()) {
+          ctx.pushRunLine('err', error);
+          return;
+        }
+        if (error) return;
+        if (stoppedByPhrase) {
+          ctx.pushRunLine('ok', `Heard "${stopPhrase}".`);
+          return;
+        }
+        if (!transcript || ctx.stopRequested()) continue;
+        ctx.pushResult(transcript);
+        const { text: prompt } = buildAgentPrompt(task, `User said: ${transcript}`, AGENT_MESSAGE_MAX);
+        const reply = await ctx.runAgent(prompt);
+        if (ctx.stopRequested() || !reply || ctx.fields.voiceReply !== 'On') continue;
+        const dataUrl = await ctx.textToSpeech(reply);
+        ctx.playAudio(dataUrl);
+      }
+    },
+  },
   'generate-image': {
     kind: 'generate-image',
+    activity: { doing: 'Generating the image', done: 'Generated the image' },
     label: 'Generate image',
     category: 'ai-media',
     input: 'any',
@@ -737,6 +861,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'generate-video': {
     kind: 'generate-video',
+    activity: { doing: 'Generating the video', done: 'Generated the video' },
     label: 'Generate video',
     category: 'ai-media',
     input: 'any',
@@ -767,6 +892,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'generate-music': {
     kind: 'generate-music',
+    activity: { doing: 'Generating the music', done: 'Generated the music' },
     label: 'Generate music',
     category: 'ai-media',
     input: 'any',
@@ -788,6 +914,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   ocr: {
     kind: 'ocr',
+    activity: { doing: 'Reading text from the image', done: 'Read text from the image' },
     label: 'Read text from image',
     category: 'ai-media',
     input: 'flow',
@@ -817,6 +944,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'classify-image': {
     kind: 'classify-image',
+    activity: { doing: 'Classifying the image', done: 'Classified the image' },
     label: 'Classify image',
     category: 'ai-media',
     input: 'flow',
@@ -845,6 +973,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'search-documents': {
     kind: 'search-documents',
+    activity: { doing: 'Searching the documents', done: 'Searched the documents' },
     label: 'Search documents',
     category: 'ai-text',
     input: 'any',
@@ -891,6 +1020,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   },
   'ask-confirmation': {
     kind: 'ask-confirmation',
+    activity: { doing: 'Asking for confirmation', done: 'Asked for confirmation' },
     label: 'Ask for confirmation',
     category: 'interface',
     input: 'any',

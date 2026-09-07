@@ -2,6 +2,7 @@
 
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import {
+  AudioLines,
   Bot,
   CircleHelp,
   Dices,
@@ -13,6 +14,7 @@ import {
   Image,
   Languages,
   type LucideIcon,
+  MessageCircle,
   Mic,
   Music,
   Repeat,
@@ -41,6 +43,8 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'search-documents': Search,
   'text-to-speech': Volume2,
   'speech-to-text': Mic,
+  'record-voice': AudioLines,
+  'voice-conversation': MessageCircle,
   'generate-image': Image,
   'generate-video': Video,
   'generate-music': Music,

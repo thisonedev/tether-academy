@@ -8,6 +8,8 @@ const { createLazyModel } = require('./media-models.cjs');
 
 const lazy = createLazyModel({
   label: 'ocr',
+  modelName: 'Latin OCR',
+  modelKind: 'ocr',
   registryKeys: ['OCR_LATIN'],
   buildLoadArgs: (sdk) => ({
     modelSrc: sdk.OCR_LATIN,

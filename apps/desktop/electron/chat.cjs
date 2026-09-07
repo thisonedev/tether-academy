@@ -12,12 +12,12 @@ const {
   buildWorkflowGenerationPrompt,
 } = require('./chat-context.cjs');
 const { refreshDocs, getCachedDocs } = require('./chat-docs.cjs');
+const { notify } = require('./model-status.cjs');
 const { createMarkdownStripper } = require('./chat-strip-markdown.cjs');
 const { splitParagraphs } = require('./chat-paragraph-splitter.cjs');
 const { isKnownLessonCode } = require('./lesson-match.cjs');
 const { normalizeLessonCode } = require('@academy/validation/lesson-code');
-
-console.log('[chat] module loaded, build = 2026-08-11-adopt-from-error-message');
+const { claim, release, ownerOf } = require('./model-ownership.cjs');
 
 // The constants carry engine metadata (`llamacpp-completion`, etc.) so the
 // SDK can route loadModel to the right engine. Passing a bare filename fails
@@ -37,6 +37,15 @@ const IDLE_UNLOAD_MS = 20 * 60 * 1000;
 
 function isChatPreset(name) {
   return Object.prototype.hasOwnProperty.call(CHAT_PRESETS, name);
+}
+
+// "Qwen3-1.7B-Q4_0.gguf" -> "Qwen3 1.7B": drops the extension and the
+// quantization suffix, neither of which means anything to a non-technical reader.
+function friendlyChatModelName(filename) {
+  return filename
+    .replace(/\.gguf$/i, '')
+    .replace(/-Q[0-9A-Z_]*$/i, '')
+    .replace(/-/g, ' ');
 }
 
 // Resolved lazily so the SDK isn't required at module load (it's only
@@ -113,6 +122,7 @@ async function unload() {
   clearIdleTimer();
   if (!current.modelId) return;
   const modelId = current.modelId;
+  release(modelId);
   const sdk = require('@qvac/sdk');
   if (typeof sdk.unloadModel === 'function') {
     try {
@@ -127,6 +137,13 @@ async function unload() {
   for (let i = 0; i < 20; i++) {
     if (!(await isLoadedBySdk(modelId))) break;
     await new Promise((r) => setTimeout(r, 50));
+  }
+  // An unload the SDK refused leaves the model registered. Forgetting it here
+  // anyway orphaned a live id, which the next load could only rediscover by
+  // failing with "already registered" first. Keep it instead.
+  if (await isLoadedBySdk(modelId)) {
+    claim(modelId, 'chat');
+    return;
   }
   current = { filename: null, modelId: null, preset: null };
 }
@@ -195,7 +212,12 @@ async function dedupeModelFiles(filename) {
 }
 
 async function ensureLoaded(filename) {
-  if (current.filename === filename && current.modelId !== null) return current;
+  if (current.filename === filename && current.modelId !== null) {
+    // A truthy cache doesn't mean the SDK still has it registered; verify
+    // the same way unload()'s own polling loop already does.
+    if (await isLoadedBySdk(current.modelId)) return current;
+    current = { filename: null, modelId: null, preset: null };
+  }
   const modelSrc = resolvePresetConstant(filename);
   if (!modelSrc) {
     throw new Error(`no chat preset registered for ${filename}`);
@@ -207,16 +229,23 @@ async function ensureLoaded(filename) {
   if (typeof sdk.loadModel !== 'function') {
     throw new Error('@qvac/sdk does not export loadModel in this build');
   }
+  const displayName = friendlyChatModelName(filename);
   emitLoadProgress({ modelName: filename, loaded: 0, total: 0 });
   // See shared/model-fetch.cjs: takes the registry's named source when the
   // model is missing.
-  await ensureModels([CHAT_PRESETS[filename]], {
+  const fetchResult = await ensureModels([CHAT_PRESETS[filename]], {
     onEvent: (e) => {
       if (e.phase === 'progress') {
         emitLoadProgress({ modelName: filename, loaded: e.downloaded, total: e.total });
+        notify({ name: displayName, kind: 'ai', phase: 'downloading', downloaded: e.downloaded, total: e.total });
       }
     },
-  }).catch(() => {});
+  }).catch(() => null);
+  // loadModel()'s onProgress fires for an on-disk file too, reading it into
+  // memory. The SDK's callback can't tell that from a download, so labeling
+  // it "downloading" walks the status backward right after "loading".
+  const alreadyOnDisk = fetchResult?.present?.includes(CHAT_PRESETS[filename]) ?? false;
+  notify({ name: displayName, kind: 'ai', phase: 'loading' });
   let modelId;
   // Every prompt in this file is budgeted against this number, so the two read
   // it from the same constant instead of agreeing by hand.
@@ -229,15 +258,22 @@ async function ensureLoaded(filename) {
       // The SDK's modelProgress event uses `downloaded`, not `loaded`.
       if (p && typeof p.downloaded === 'number' && typeof p.total === 'number') {
         emitLoadProgress({ modelName: filename, loaded: p.downloaded, total: p.total });
+        notify({ name: displayName, kind: 'ai', phase: alreadyOnDisk ? 'loading' : 'downloading', downloaded: p.downloaded, total: p.total });
       }
     },
     });
   } catch (err) {
     // The SDK refuses to register a file twice; recover the existing modelId from the error text and adopt it.
     const existingId = parseAlreadyRegisteredModelId(err);
-    console.log('[chat] ensureLoaded caught error, existingId =', existingId);
+    // Adopting or unloading an id another capability owns would corrupt
+    // their session too. See model-ownership.cjs.
+    const owner = existingId ? ownerOf(existingId) : null;
+    if (owner && owner !== 'chat') {
+      throw new Error(`Model with ID "${existingId}" is already registered to "${owner}", not chat; refusing to adopt it.`);
+    }
     if (existingId && (await isCompleteOnDisk(filename))) {
       current = { filename, modelId: existingId, preset: modelSrc.name };
+      claim(existingId, 'chat');
       try {
         const { kept, removed, freedBytes } = await dedupeModelFiles(filename);
         if (removed > 0) {
@@ -269,6 +305,8 @@ async function ensureLoaded(filename) {
     throw err;
   }
   current = { filename, modelId, preset: modelSrc.name };
+  claim(modelId, 'chat');
+  notify({ name: displayName, kind: 'ai', phase: 'ready' });
   try {
     const { kept, removed, freedBytes } = await dedupeModelFiles(filename);
     if (removed > 0) {
@@ -338,16 +376,14 @@ function approxContextWindow(filename) {
 // already loaded, otherwise the smallest installed chat model. Shared by
 // send() and verify() so the priority order only lives in one place.
 async function resolveModel(modelHint) {
-  if (modelHint && modelHint !== current.filename) {
-    await ensureLoaded(modelHint);
-  } else if (!current.modelId) {
-    const fallback = await pickDefaultChatModel();
-    if (fallback) {
-      await ensureLoaded(fallback);
-    } else {
-      throw new Error('no model loaded; pick one in the AI assistant panel first');
-    }
+  // Always routes through ensureLoaded(), even when reusing the current
+  // model: the old shortcut skipped its isLoadedBySdk check, so a model the
+  // SDK had already lost reached completion() unvalidated.
+  const target = modelHint || current.filename || (await pickDefaultChatModel());
+  if (!target) {
+    throw new Error('no model loaded; pick one in the AI assistant panel first');
   }
+  await ensureLoaded(target);
   touchIdleTimer();
   return current.filename;
 }
@@ -983,10 +1019,18 @@ function onLoadProgress(callback) {
   return () => events.off('loadProgress', callback);
 }
 
+// Loads whatever send() would resolve to, without sending a message. Reuses
+// resolveModel so the fallback chain lives in one place: a renderer-side copy
+// once skipped pickDefaultChatModel() and preloaded nothing at all.
+async function preload() {
+  await resolveModel(undefined);
+}
+
 module.exports = {
   isReady,
   currentModel,
   load,
+  preload,
   send,
   verify,
   generateWorkflow,

@@ -43,6 +43,7 @@ const academy = {
     docsStatus: () => ipcRenderer.invoke('academy:chat:docs-status'),
     docsRefresh: () => ipcRenderer.invoke('academy:chat:docs-refresh'),
     load: (modelHint) => ipcRenderer.invoke('academy:chat:load', modelHint),
+    preload: () => ipcRenderer.invoke('academy:chat:preload'),
     send: (payload) => ipcRenderer.invoke('academy:chat:send', payload),
     verify: (payload) => ipcRenderer.invoke('academy:chat:verify', payload),
     securityScan: (payload) => ipcRenderer.invoke('academy:chat:security-scan', payload),
@@ -87,6 +88,23 @@ const academy = {
   classifyImage: (image) => ipcRenderer.invoke('academy:classify-image', { image }),
   textToSpeech: (text) => ipcRenderer.invoke('academy:text-to-speech', { text }),
   speechToText: (audio) => ipcRenderer.invoke('academy:speech-to-text', { audio }),
+  voice: {
+    start: (opts) => ipcRenderer.invoke('academy:voice:start', opts ?? {}),
+    stop: (requestId) => ipcRenderer.invoke('academy:voice:stop', requestId),
+    startConversation: (opts) => ipcRenderer.invoke('academy:voice:startConversation', opts ?? {}),
+    stopConversation: (conversationId) => ipcRenderer.invoke('academy:voice:stopConversation', conversationId),
+    preload: () => ipcRenderer.invoke('academy:voice:preload'),
+    onEvent: (callback) => {
+      const handler = (/** @type {unknown} */ _e, /** @type {any} */ event) => callback(event);
+      ipcRenderer.on('academy:voice:event', handler);
+      return () => ipcRenderer.removeListener('academy:voice:event', handler);
+    },
+  },
+  onModelStatus: (callback) => {
+    const handler = (/** @type {unknown} */ _e, /** @type {any} */ status) => callback(status);
+    ipcRenderer.on('academy:model:status', handler);
+    return () => ipcRenderer.removeListener('academy:model:status', handler);
+  },
   generateImage: (prompt, model) => ipcRenderer.invoke('academy:generate-image', { prompt, model }),
   generateVideo: (prompt, model, frames, steps) => ipcRenderer.invoke('academy:generate-video', { prompt, model, frames, steps }),
   cancelGenerateVideo: () => ipcRenderer.invoke('academy:generate-video:cancel'),

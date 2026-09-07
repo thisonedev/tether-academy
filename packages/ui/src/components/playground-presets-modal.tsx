@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  AudioLines,
   ClipboardList,
   FileQuestion,
   FileSearch,
@@ -52,6 +53,7 @@ const PRESET_ICON: Record<string, LucideIcon> = {
   Tags,
   Volume2,
   Mic,
+  AudioLines,
   Image: ImageIcon,
   Video,
   Music,

@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  AudioLines,
   Bot,
   CircleCheck,
   Dices,
@@ -12,6 +13,7 @@ import {
   Image as ImageIcon,
   Languages,
   type LucideIcon,
+  MessageCircle,
   Mic,
   Music,
   Pencil,
@@ -42,6 +44,8 @@ const KIND_ICON: Record<string, LucideIcon> = {
   'search-documents': Search,
   'text-to-speech': Volume2,
   'speech-to-text': Mic,
+  'record-voice': AudioLines,
+  'voice-conversation': MessageCircle,
   'generate-image': ImageIcon,
   'generate-video': Video,
   'generate-music': Music,
@@ -108,7 +112,8 @@ export function PlaygroundPalette({
   const [tooltipPos, setTooltipPos] = useState<{ left: number; top: number } | null>(null);
   // Start stays in the list (not filtered out) so trigger/red still shows in the
   // palette; it just can't be dragged, since it's a singleton already on the canvas.
-  const kinds = Object.values(PLAYGROUND_NODE_DEFS);
+  // record-voice is temporarily disabled while it's untested.
+  const kinds = Object.values(PLAYGROUND_NODE_DEFS).filter((def) => def.kind !== 'record-voice');
 
   const activeDef = activeKind ? PLAYGROUND_NODE_DEFS[activeKind] : null;
   const showTooltip = (kind: string, el: HTMLElement) => {

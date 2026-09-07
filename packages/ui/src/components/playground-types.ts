@@ -36,11 +36,34 @@ export interface PlaygroundRunContext {
   /** Appends an inline image/audio/video result to the output feed. `dataUrl`
    *  is a full `data:` URL (already carries its own MIME type). */
   pushMedia: (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) => void;
+  /** Speaks a clip without adding anything to the output feed. */
+  playAudio: (dataUrl: string) => void;
   /** `image` is a data: URL. All six below throw when the desktop bridge isn't available (web). */
   ocr: (image: string) => Promise<string>;
   classifyImage: (image: string) => Promise<string>;
   textToSpeech: (text: string) => Promise<string>;
   speechToText: (audio: string) => Promise<string>;
+  /** Resolves with one spoken turn: the first utterance VAD commits, the
+   *  stop phrase, or `maxDurationMs`. `record: true` instead keeps listening
+   *  across pauses and also returns a playable recording of the session. */
+  recordVoice: (opts: {
+    stopPhrase?: string;
+    maxDurationMs?: number;
+    record?: boolean;
+  }) => Promise<{ transcript: string; stoppedByPhrase: boolean; audioDataUrl: string | null; error: string | null }>;
+  /** One session for the whole multi-turn conversation, not one per turn:
+   *  matches the SDK's own voice-assistant lessons, which open transcribeStream
+   *  once and iterate it for the entire loop instead of reopening it turn to
+   *  turn. Yields one result per turn until the conversation ends. */
+  voiceConversationTurns: (opts: {
+    stopPhrase?: string;
+    endOfTurnSilenceMs?: number;
+  }) => AsyncGenerator<{ transcript: string; stoppedByPhrase: boolean; error: string | null }, void, void>;
+  /** Loads the voice model without opening the mic, so a conversation node
+   *  can get every model it needs ready before recording starts. */
+  ensureVoiceModelReady: () => Promise<void>;
+  /** Loads the configured chat model (if any) without sending a message. */
+  ensureChatModelReady: () => Promise<void>;
   generateImage: (prompt: string, model?: string) => Promise<string>;
   generateVideo: (prompt: string, model?: string, frames?: number, steps?: number) => Promise<string>;
   generateMusic: (caption: string, durationSec?: number) => Promise<string>;
@@ -89,6 +112,16 @@ export interface PlaygroundNodeKindDef {
   /** Absent only for `start` (skipped before the engine ever calls a handler)
    *  and the inactive placeholders (can't reach the canvas, so never run). */
   run?: (ctx: PlaygroundRunContext) => Promise<void>;
+  /** Runs (and must finish) before `run`, for a node that uses more than one
+   *  model and would otherwise start visible work (e.g. opening the mic) on
+   *  the first model while the second is still downloading mid-stream. The
+   *  engine always awaits this first; a node that needs no upfront model
+   *  readiness (most of them) just omits it. */
+  preload?: (ctx: PlaygroundRunContext) => Promise<void>;
+  /** Present and past pair ("Reading text from the image" / "Read text from
+   *  the image"). The engine opens a stage line from the first and closes it
+   *  with the second, on the rail the model loading lines use. */
+  activity?: { doing: string; done: string };
 }
 
 export interface PlaygroundNodeData extends Record<string, unknown> {

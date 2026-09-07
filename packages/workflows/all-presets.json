@@ -522,6 +522,45 @@
     }
   },
   {
+    "file": "voice-assistant-flow.json",
+    "category": "Voice",
+    "title": "Voice Assistant",
+    "icon": "AudioLines",
+    "description": "Listens, replies out loud, and stops when you say \"stop\".",
+    "workflow": {
+      "version": 1,
+      "name": "Voice Assistant",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "start",
+          "x": 0,
+          "y": 0,
+          "fields": {}
+        },
+        {
+          "id": "loop1",
+          "kind": "voice-conversation",
+          "x": 0,
+          "y": 120,
+          "fields": {
+            "task": "You're a helpful voice assistant. Reply conversationally in 1-3 short sentences.",
+            "stopPhrase": "stop",
+            "voiceReply": "Off"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "loop1",
+          "sourceHandle": null,
+          "targetHandle": null
+        }
+      ]
+    }
+  },
+  {
     "file": "product-mockup-flow.json",
     "category": "Image",
     "title": "Photo Maker",

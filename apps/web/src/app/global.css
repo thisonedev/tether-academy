@@ -16,14 +16,19 @@
   --color-fd-primary-foreground: oklch(0.97 0.01 162);
   --color-fd-ring: oklch(0.696 0.17 162);
 
-  /* Dark main canvas, the whole app lives on this. True black, zero chroma:
-     the old hue-162 tint at low chroma read as dirty green-grey everywhere
-     a muted surface showed, not just where the emerald accent was intended. */
-  --color-canvas: oklch(0.09 0 0);
+  /* Dark main canvas, the whole app lives on this. Zero chroma: the old
+     hue-162 tint at low chroma read as dirty green-grey everywhere a muted
+     surface showed. Off true black, since 0.96 text on near-black bloomed
+     and made the eye refocus over a long session. */
+  --color-canvas: oklch(0.13 0 0);
   --color-canvas-foreground: oklch(0.96 0 0);
-  --color-canvas-muted: oklch(0.12 0 0);
+  --color-canvas-muted: oklch(0.16 0 0);
   --color-canvas-muted-foreground: oklch(0.68 0 0);
-  --color-canvas-border: oklch(0.22 0 0);
+  --color-canvas-border: oklch(0.26 0 0);
+
+  /* A typed question carries a fill; the answer to it sits on the page
+     unpadded, so a table or code block inside it is not boxed twice. */
+  --color-chat-user: oklch(0.215 0 0);
 
   /* Geist, self-hosted via the `geist` package (layout.tsx sets the CSS vars). One family across prose, questions, code, and output. */
   --font-sans:
@@ -126,7 +131,7 @@ html {
 .prose-md pre {
   padding: 1rem 1.25rem;
   border-radius: 0.5rem;
-  background-color: var(--color-canvas);
+  background-color: var(--color-canvas-muted);
   border: 1px solid var(--color-canvas-border);
   overflow-x: auto;
   font-size: 0.9rem;
@@ -140,7 +145,7 @@ html {
 }
 /* Lesson MDX code blocks (MdxPre) */
 .prose-md .mdx-code-figure {
-  background-color: var(--color-canvas);
+  background-color: var(--color-canvas-muted);
 }
 .prose-md .mdx-code-pre {
   background-color: transparent;

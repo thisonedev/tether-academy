@@ -60,7 +60,15 @@ function lazyFor(registry, byKeyMap, key, label) {
   if (!byKeyMap.has(key)) {
     byKeyMap.set(
       key,
-      createLazyModel({ label: `${label}:${key}`, registryKeys: entry.registryKeys, buildLoadArgs: entry.buildLoadArgs }),
+      createLazyModel({
+        label: `${label}:${key}`,
+        // The picker's own label minus its trailing size/speed note, e.g.
+        // "Stable Diffusion 2.1 (2.3GB, fast)" -> "Stable Diffusion 2.1".
+        modelName: entry.label.replace(/\s*\([^)]*\)\s*$/, ''),
+        modelKind: label,
+        registryKeys: entry.registryKeys,
+        buildLoadArgs: entry.buildLoadArgs,
+      }),
     );
   }
   return byKeyMap.get(key);

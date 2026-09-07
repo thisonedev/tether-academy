@@ -265,7 +265,7 @@ export function PlaygroundConfigPopup({
                 rows={3}
                 value={fields[f.key] ?? ''}
                 onChange={(e) => onChange(f.key, e.target.value)}
-                className="w-full resize-none rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+                className="w-full resize-none rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
               />
             ) : f.type === 'file' ? (
               <FileFieldInput
@@ -282,7 +282,7 @@ export function PlaygroundConfigPopup({
                 type="text"
                 value={fields[f.key] ?? ''}
                 onChange={(e) => onChange(f.key, e.target.value)}
-                className="w-full rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+                className="w-full rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
               />
             )}
           </div>

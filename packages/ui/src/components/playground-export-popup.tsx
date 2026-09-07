@@ -1,6 +1,6 @@
 'use client';
 
-import { Download, FileSpreadsheet, FileText, GripVertical, Heading2, List, Plus, Table2, Type, X } from 'lucide-react';
+import { Download, FileSpreadsheet, FileText, Grid2x2, Grid2x2X, GripVertical, Heading2, List, Plus, Table2, Type, X } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { type Block, type ExportFormat, markdownToBlocks, runExport } from './playground-export.js';
@@ -235,7 +235,7 @@ export function PlaygroundExportPopup({ title, initialMarkdown, formats, default
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-44 shrink-0 rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+            className="w-44 shrink-0 rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
           />
           {error ? <p className="flex-1 truncate text-[11.5px] text-red-400">{error}</p> : <div className="flex-1" />}
           <button
@@ -381,16 +381,18 @@ function EditableDocument({
               <X className="size-3.5" />
             </button>
 
+            {/* pl-2.5 below matches EditableTable's own cell padding, so a heading/paragraph/list
+                lines up with a table row instead of sitting slightly left of it. */}
             {block.type === 'heading' ? (
               <EditableText
                 as="div"
                 value={block.text}
                 prefix={md ? `${'#'.repeat(block.level)} ` : undefined}
-                className={`${HEADING_SIZE[Math.min(block.level, 6) - 1]} font-extrabold outline-none first:mt-0`}
+                className={`${HEADING_SIZE[Math.min(block.level, 6) - 1]} pl-2.5 font-extrabold outline-none first:mt-0`}
                 onCommit={(text) => onUpdateBlock(i, { ...block, text })}
               />
             ) : block.type === 'paragraph' ? (
-              <EditableText as="p" value={block.text} className="m-0 outline-none" onCommit={(text) => onUpdateBlock(i, { ...block, text })} />
+              <EditableText as="p" value={block.text} className="m-0 pl-2.5 outline-none" onCommit={(text) => onUpdateBlock(i, { ...block, text })} />
             ) : block.type === 'code' ? (
               <EditableText
                 as="p"
@@ -401,7 +403,7 @@ function EditableDocument({
             ) : block.type === 'list' ? (
               <EditableList block={block} md={md} dark={dark} onChange={(next) => onUpdateBlock(i, next)} />
             ) : (
-              <EditableTable block={block} borderColor={borderColor} headBg={headBg} onChange={(next) => onUpdateBlock(i, next)} />
+              <EditableTable block={block} borderColor={borderColor} headBg={headBg} dark={dark} onChange={(next) => onUpdateBlock(i, next)} />
             )}
           </div>
         ))}
@@ -475,7 +477,7 @@ function EditableList({
   const drag = usePointerReorder(block.items, (items) => onChange({ ...block, items }));
   const Tag = block.ordered ? 'ol' : 'ul';
   return (
-    <Tag className="m-0 list-none pl-0">
+    <Tag className="m-0 list-none pl-2.5">
       {block.items.map((item, i) => (
         <li
           key={i}
@@ -522,11 +524,13 @@ function EditableTable({
   block,
   borderColor,
   headBg,
+  dark,
   onChange,
 }: {
   block: Extract<Block, { type: 'table' }>;
   borderColor: string;
   headBg: string;
+  dark: boolean;
   onChange: (next: Block) => void;
 }) {
   const setHeader = (colIndex: number, value: string) => onChange({ ...block, headers: block.headers.map((h, c) => (c === colIndex ? value : h)) });
@@ -535,9 +539,21 @@ function EditableTable({
   const removeRow = (rowIndex: number) => onChange({ ...block, rows: block.rows.filter((_, r) => r !== rowIndex) });
   const addRow = () => onChange({ ...block, rows: [...block.rows, block.headers.map(() => '')] });
   const drag = usePointerReorder(block.rows, (rows) => onChange({ ...block, rows }));
-  const cellStyle = { borderColor };
+  // Preview mirrors the export: borderless means no visible border here too.
+  const cellStyle = { borderColor: block.borderless ? 'transparent' : borderColor };
   return (
     <div className="overflow-x-auto">
+      <div className="mb-1 flex justify-end">
+        <button
+          type="button"
+          onClick={() => onChange({ ...block, borderless: !block.borderless })}
+          title={block.borderless ? 'Show table borders' : 'Hide table borders'}
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ${dark ? 'text-[#8b949e] hover:bg-white/10 hover:text-emerald-400' : 'text-neutral-400 hover:bg-black/5 hover:text-emerald-600'}`}
+        >
+          {block.borderless ? <Grid2x2X className="size-3.5" /> : <Grid2x2 className="size-3.5" />}
+          {block.borderless ? 'Borderless' : 'Bordered'}
+        </button>
+      </div>
       <table className="w-full border-collapse text-[13px]">
         <thead>
           <tr>

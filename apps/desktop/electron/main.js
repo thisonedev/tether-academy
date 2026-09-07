@@ -81,6 +81,8 @@ const ocr = require('./ocr.cjs');
 const classify = require('./classify.cjs');
 const tts = require('./tts.cjs');
 const transcribe = require('./transcribe.cjs');
+const voice = require('./voice.cjs');
+const modelStatus = require('./model-status.cjs');
 const diffusion = require('./diffusion.cjs');
 const audiogen = require('./audiogen.cjs');
 const { buildLesson } = require('./runner-process.cjs');
@@ -612,6 +614,7 @@ handle('academy:chat:load', async (modelHint) => {
   await store.set('ai.chat.model', result.modelName);
   return result;
 });
+handle('academy:chat:preload', async () => chat.preload());
 handle('academy:chat:send', async (parsed) => {
   const result = await chat.send({
     messages: parsed.messages,
@@ -667,6 +670,11 @@ handle('academy:ocr', async ({ image }) => ocr.readTextFromImage(image));
 handle('academy:classify-image', async ({ image }) => classify.classifyImage(image));
 handle('academy:text-to-speech', async ({ text }) => tts.speak(text));
 handle('academy:speech-to-text', async ({ audio }) => transcribe.transcribeAudio(audio));
+handle('academy:voice:start', async (parsed) => voice.start({ stopPhrase: parsed.stopPhrase, maxDurationMs: parsed.maxDurationMs, record: parsed.record }));
+handle('academy:voice:stop', async (requestId) => voice.stop(requestId));
+handle('academy:voice:startConversation', async (parsed) => voice.startConversation({ stopPhrase: parsed.stopPhrase, endOfTurnSilenceMs: parsed.endOfTurnSilenceMs }));
+handle('academy:voice:stopConversation', async (conversationId) => voice.stopConversation(conversationId));
+handle('academy:voice:preload', async () => voice.preload());
 handle('academy:generate-image', async ({ prompt, model }) => diffusion.generateImage(prompt, model));
 handle('academy:generate-video', async ({ prompt, model, frames, steps }) => diffusion.generateVideo(prompt, model, frames, steps));
 handle('academy:generate-video:cancel', async () => diffusion.cancelVideo());
@@ -679,6 +687,8 @@ handle('academy:device:info', async () => getDeviceInfo());
 // renderer subscribes once on mount and dispatches by requestId. We register
 // the listeners at module load so they're live for the lifetime of the app;
 // late subscribers pick up chunks from any in-flight requests.
+voice.onEvent((event) => sendToAll('academy:voice:event', event));
+modelStatus.onStatus((status) => sendToAll('academy:model:status', status));
 chat.onChunk((chunk) => sendToAll('academy:chat:chunk', chunk));
 chat.onVerifyResult((result) => sendToAll('academy:chat:verify-result', result));
 chat.onSecurityResult((result) => sendToAll('academy:chat:security-result', result));
@@ -954,7 +964,7 @@ async function createWindow() {
     // 720 so two windows fit side by side on a 1512pt laptop screen for a paired run.
     minWidth: 720,
     minHeight: 600,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: '#070707',
     title: 'Tether Academy',
     icon: ICON_PATH, // window/taskbar icon on Linux and Windows; macOS uses the dock icon set at top-of-file
     // No native title bar on macOS; the web header doubles as one. Other

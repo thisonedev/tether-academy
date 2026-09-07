@@ -46,7 +46,7 @@ import { buildNodeCatalogue, parseGeneratedWorkflow, summarizeCurrentWorkflow } 
 import { BRANCH_COLOR, PLAYGROUND_NODE_DEFS, PORT_COLOR, typesCompatible } from './playground-node-defs.js';
 import { PLAYGROUND_DRAG_MIME, PlaygroundPalette } from './playground-palette.js';
 import type { PlaygroundTable } from './playground-table.js';
-import type { PlaygroundNodeData } from './playground-types.js';
+import type { PlaygroundNodeData, PlaygroundRunContext } from './playground-types.js';
 import {
   canPickFiles,
   downloadWorkflow,
@@ -80,6 +80,39 @@ const DEFAULT_PANEL_WIDTH = 410;
 // canvas) never gets shoved out of the row by the panel claiming its width too.
 const RESIZE_HANDLE_WIDTH = 12;
 const EXPORT_FORMATS: ExportFormat[] = ['pdf', 'markdown', 'txt', 'csv', 'docx', 'xlsx'];
+
+// Matches the `kind` tag each backend's model-status event carries, so a
+// download/load line reads as "the X model" instead of a bare model name.
+const MODEL_KIND_LABEL: Record<string, string> = {
+  voice: 'voice model',
+  ai: 'AI model',
+  image: 'image model',
+  video: 'video model',
+  music: 'music model',
+  ocr: 'text-reading model',
+  translate: 'translation model',
+};
+
+// `→ label...` / `  ✓ outcome` on stderr is the exact convention
+// lesson-stages.ts's splitStages() parses into the connected-dot rail
+// (lesson-console.tsx's StageRow); this rides that same rail, not a lookalike.
+function formatModelStatusLine(status: { name: string; kind: string; phase: 'downloading' | 'loading' | 'ready'; downloaded?: number; total?: number }): string {
+  const noun = MODEL_KIND_LABEL[status.kind] ?? 'model';
+  if (status.phase === 'ready') return `  ✓ Loaded the ${noun} (${status.name})`;
+  // The percentage goes before the "...", which tells splitStages
+  // (lesson-stages.ts) this line is a real phase it should later swap for
+  // "Loaded". A trailing "50%" broke that and stuck the line at "Loading".
+  const pct = status.total
+    ? ` ${Math.min(100, Math.round(((status.downloaded ?? 0) / status.total) * 100))}%`
+    : '';
+  const verb = status.phase === 'downloading' ? 'Downloading' : 'Loading';
+  return `→ ${verb} the ${noun} (${status.name})${pct}...`;
+}
+
+// Only a model-progress line may collapse into the one before it. Matching a
+// bare "→" would let a progress tick overwrite a node's own activity line and
+// leave its closing ✓ with no opener to pair with.
+const MODEL_STATUS_OPEN = /^→ (?:Downloading|Loading) the /;
 
 let idSeq = 1;
 const nextId = () => `n${idSeq++}`;
@@ -159,9 +192,10 @@ function PlaygroundCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(heldState?.edges ?? INITIAL_GRAPH.edges);
   const [entries, setEntries] = useState<ConsoleEntry[]>(heldState?.entries ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Bundled sample files only make sense for a preset's own workflow; a
-  // from-scratch, opened, or generated one only ever offers "Your file".
-  const [isPresetWorkflow, setIsPresetWorkflow] = useState(false);
+  // Bundled samples only make sense for a node that came in with a preset;
+  // a node dragged in afterward only ever offers "Your file". Per-node, so
+  // loading one preset doesn't leak samples onto everything added later.
+  const presetNodeIdsRef = useRef<Set<string>>(new Set());
   const [rejectMessage, setRejectMessage] = useState<string | null>(null);
   const [exportRequest, setExportRequest] = useState<{
     title: string;
@@ -266,12 +300,70 @@ function PlaygroundCanvas({
   // only ever see the value from when the closure was created, not a Stop
   // click that happens mid-run.
   const stopRequestedRef = useRef(false);
+  // Set while a node's activity stage is open. Every entry appended to the
+  // feed goes through appendEntry below, so output closes its own stage first
+  // whichever call produced it, including calls added later.
+  const closeActivityRef = useRef<(() => { entryId: string; line: string } | null) | null>(null);
+  const appendEntry = useCallback((entry: ConsoleEntry) => {
+    // The result sits between the two halves of its stage: "Reading the
+    // text", the text, "Read the text". Entries render in order, so the
+    // closing line becomes its own entry below the output.
+    const closing = closeActivityRef.current?.() ?? null;
+    setEntries((prev) => {
+      const next = [...prev, entry];
+      if (closing) {
+        next.push({
+          kind: 'run',
+          id: nextEntryId(),
+          lines: [{ stream: 'stderr' as const, line: closing.line }],
+          status: 'ok',
+        });
+      }
+      return next;
+    });
+  }, []);
   const pendingRequestIdRef = useRef<string | null>(null);
+  const pendingVoiceRequestIdRef = useRef<string | null>(null);
+  const pendingVoiceConversationIdRef = useRef<string | null>(null);
   const [stopRequested, setStopRequested] = useState(false);
   // Which node kind is inside its own `run` right now, so Stop can tell the
   // user when a kind has no way to interrupt an already-started call (the
   // SDK gives ocr/classify-image/generate-image no requestId to cancel).
   const runningKindRef = useRef<string | null>(null);
+  // Which console entry the running spinner is currently showing, so a
+  // model-status event can append to it like a lesson run's own stage lines.
+  const runningEntryIdRef = useRef<string | null>(null);
+
+  // A cold model load can take real time; each phase gets its own line,
+  // updated in place while in progress and turned into a checkmark once done.
+  useEffect(() => {
+    return window.academy?.onModelStatus?.((status) => {
+      const entryId = runningEntryIdRef.current;
+      if (!entryId) return;
+      const line = formatModelStatusLine(status);
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.id !== entryId || e.kind !== 'run') return e;
+          const lines = e.lines.length === 1 && e.lines[0].line === '' ? [] : e.lines.slice();
+          // Most nodes load their model inside run(), once their own stage is
+          // open, so appending would file the load under work it precedes.
+          // Writing above that open line keeps the model first everywhere.
+          const openIdx = lines.findIndex((l) => l.line.startsWith('→') && !MODEL_STATUS_OPEN.test(l.line));
+          const at = openIdx === -1 ? lines.length : openIdx;
+          const prevLine = lines[at - 1];
+          // Replaced in place while the stage is still open, since splitStages
+          // re-reads this line. A closing ✓ stays its own line, or splitStages
+          // loses the opener and renders a stray checkmark.
+          if (prevLine && MODEL_STATUS_OPEN.test(prevLine.line) && MODEL_STATUS_OPEN.test(line)) {
+            lines[at - 1] = { stream: 'stderr', line };
+          } else {
+            lines.splice(at, 0, { stream: 'stderr', line });
+          }
+          return { ...e, lines };
+        }),
+      );
+    });
+  }, []);
 
   // Routes through the same `chat.send` bridge lesson chat uses (already
   // tuned: stripping, token budget), not a hand-rolled `academy.run` call.
@@ -300,8 +392,15 @@ function PlaygroundCanvas({
             unsubscribe = window.academy?.chat?.onChunk?.((chunk) => {
               if (chunk.requestId !== requestId) return;
               if (chunk.error) {
-                content = chunk.error ?? 'Run failed.';
-                setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+                // Stop aborts the in-flight request itself, so the SDK's abort
+                // text (a worker exiting mid-request, say) is an expected side
+                // effect here and would read as if it were the reply.
+                if (stopRequestedRef.current) {
+                  setEntries((prev) => prev.filter((e) => e.id !== entryId));
+                } else {
+                  content = chunk.error ?? 'Run failed.';
+                  setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+                }
               } else if (!chunk.done) {
                 content = chunk.replace ? chunk.delta : content + chunk.delta;
                 setAssistantEntry(entryId, (e) => ({ ...e, content }));
@@ -315,8 +414,12 @@ function PlaygroundCanvas({
             });
           })
           .catch((err: unknown) => {
-            content = err instanceof Error ? err.message : 'Run failed.';
-            setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+            if (stopRequestedRef.current) {
+              setEntries((prev) => prev.filter((e) => e.id !== entryId));
+            } else {
+              content = err instanceof Error ? err.message : 'Run failed.';
+              setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+            }
             pendingRequestIdRef.current = null;
             resolve(content);
           });
@@ -331,7 +434,7 @@ function PlaygroundCanvas({
     async (text: string, language: string): Promise<string> => {
       if (typeof window.academy?.translate === 'function') {
         const entryId = nextEntryId();
-        setEntries((prev) => [...prev, { kind: 'chat-assistant', id: entryId, content: '', streaming: true }]);
+        appendEntry({ kind: 'chat-assistant', id: entryId, content: '', streaming: true });
         try {
           const result = await window.academy.translate(text, language);
           setAssistantEntry(entryId, (e) => ({ ...e, content: result, streaming: false }));
@@ -355,7 +458,7 @@ function PlaygroundCanvas({
       new Promise<boolean>((resolve) => {
         const entryId = nextEntryId();
         confirmResolversRef.current.set(entryId, resolve);
-        setEntries((prev) => [...prev, { kind: 'confirm', id: entryId, message, answer: null }]);
+        appendEntry({ kind: 'confirm', id: entryId, message, answer: null });
       }),
     [],
   );
@@ -374,7 +477,7 @@ function PlaygroundCanvas({
   const searchDocumentsNode = useCallback(
     async (documents: string[], query: string): Promise<string> => {
       const entryId = nextEntryId();
-      setEntries((prev) => [...prev, { kind: 'chat-assistant', id: entryId, content: '', streaming: true }]);
+      appendEntry({ kind: 'chat-assistant', id: entryId, content: '', streaming: true });
       if (typeof window.academy?.ragSearch !== 'function') {
         const content = 'Search documents is only available in the desktop app.';
         setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
@@ -420,6 +523,100 @@ function PlaygroundCanvas({
   const classifyImageNode = useCallback(bridgeCall((a) => a.classifyImage, 'Classify image'), []);
   const textToSpeechNode = useCallback(bridgeCall((a) => a.textToSpeech, 'Text to speech'), []);
   const speechToTextNode = useCallback(bridgeCall((a) => a.speechToText, 'Speech to text'), []);
+  // Not a bridgeCall: the stop phrase can end the whole run, not just this
+  // node, so it sets stopRequestedRef itself instead of only resolving.
+  const recordVoiceNode = useCallback(
+    (opts: { stopPhrase?: string; maxDurationMs?: number; record?: boolean }) =>
+      new Promise<{ transcript: string; stoppedByPhrase: boolean; audioDataUrl: string | null; error: string | null }>((resolve) => {
+        if (typeof window.academy?.voice?.start !== 'function') {
+          resolve({ transcript: '', stoppedByPhrase: false, audioDataUrl: null, error: 'Voice recording is only available in the desktop app.' });
+          return;
+        }
+        let unsubscribe: (() => void) | undefined;
+        window.academy.voice
+          .start(opts)
+          .then(({ requestId }) => {
+            pendingVoiceRequestIdRef.current = requestId;
+            unsubscribe = window.academy?.voice?.onEvent?.((event) => {
+              if (!('requestId' in event) || event.requestId !== requestId) return;
+              if (!event.done) return;
+              unsubscribe?.();
+              pendingVoiceRequestIdRef.current = null;
+              if (event.stoppedByPhrase) {
+                stopRequestedRef.current = true;
+                setStopRequested(true);
+              }
+              resolve({ transcript: event.transcript, stoppedByPhrase: event.stoppedByPhrase, audioDataUrl: event.audioDataUrl, error: event.error });
+            });
+          })
+          .catch((err: unknown) =>
+            resolve({
+              transcript: '',
+              stoppedByPhrase: false,
+              audioDataUrl: null,
+              error: err instanceof Error ? err.message : 'Voice recording failed.',
+            }),
+          );
+      }),
+    [],
+  );
+  // Not a bridgeCall: this is an async generator (one session, many turns),
+  // and a stop phrase ends the whole run the same way recordVoiceNode's does.
+  const voiceConversationTurns = useCallback(async function* (opts: { stopPhrase?: string; endOfTurnSilenceMs?: number }) {
+    if (typeof window.academy?.voice?.startConversation !== 'function') {
+      yield { transcript: '', stoppedByPhrase: false, error: 'Voice recording is only available in the desktop app.' };
+      return;
+    }
+    const { conversationId } = await window.academy.voice.startConversation(opts);
+    pendingVoiceConversationIdRef.current = conversationId;
+    // Events arrive push-style via onEvent; the generator consumes them
+    // pull-style via yield, so a small queue bridges the two.
+    const queue: Array<{ transcript: string; stoppedByPhrase: boolean; done: boolean; error: string | null }> = [];
+    let wake: (() => void) | null = null;
+    const unsubscribe = window.academy.voice.onEvent((event) => {
+      if (!('conversationId' in event) || event.conversationId !== conversationId) return;
+      queue.push(event);
+      wake?.();
+    });
+    try {
+      while (true) {
+        if (queue.length === 0) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+        const event = queue.shift();
+        if (!event) continue;
+        if (event.stoppedByPhrase) {
+          stopRequestedRef.current = true;
+          setStopRequested(true);
+        }
+        yield { transcript: event.transcript, stoppedByPhrase: event.stoppedByPhrase, error: event.error };
+        if (event.done) return;
+      }
+    } finally {
+      unsubscribe();
+      pendingVoiceConversationIdRef.current = null;
+    }
+  }, []);
+  // Spoken replies play with no player card in the feed: once the answer has
+  // been said out loud, the clip has no second use. It plays through a real
+  // hidden element because a detached `new Audio()` stayed silent here.
+  const replyAudioRef = useRef<HTMLAudioElement | null>(null);
+  const replySeqRef = useRef(0);
+  const [replyClip, setReplyClip] = useState<{ url: string; seq: number } | null>(null);
+  const playAudio = useCallback((dataUrl: string) => {
+    replySeqRef.current += 1;
+    setReplyClip({ url: dataUrl, seq: replySeqRef.current });
+  }, []);
+  const ensureVoiceModelReady = useCallback(async () => {
+    await window.academy?.voice?.preload?.().catch(() => undefined);
+  }, []);
+  // chat.cjs's preload() owns the fallback chain. A renderer-side copy of it
+  // once dropped the last fallback and preloaded nothing.
+  const ensureChatModelReady = useCallback(async () => {
+    await window.academy?.chat?.preload?.().catch(() => undefined);
+  }, []);
   const generateImageNode = useCallback(bridgeCall((a) => a.generateImage, 'Generate image'), []);
   const generateVideoNode = useCallback(bridgeCall((a) => a.generateVideo, 'Generate video'), []);
   const generateMusicNode = useCallback(bridgeCall((a) => a.generateMusic, 'Generate music'), []);
@@ -443,12 +640,9 @@ function PlaygroundCanvas({
     // not run with empty input, so "connect to No" actually means conditional.
     const skippedNodes = new Set<string>();
     const pushResult = (content: string, opts?: { raw?: boolean }) =>
-      setEntries((prev) => [
-        ...prev,
-        { kind: 'chat-assistant', id: nextEntryId(), content, streaming: false, raw: opts?.raw },
-      ]);
+      appendEntry({ kind: 'chat-assistant', id: nextEntryId(), content, streaming: false, raw: opts?.raw });
     const pushMedia = (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) =>
-      setEntries((prev) => [...prev, { kind: 'media', id: nextEntryId(), mediaType, dataUrl, caption }]);
+      appendEntry({ kind: 'media', id: nextEntryId(), mediaType, dataUrl, caption });
     try {
       for (const id of topoOrderIds(nodes, edges)) {
         if (stopRequestedRef.current) break;
@@ -509,28 +703,79 @@ function PlaygroundCanvas({
           return upstream;
         };
         runningKindRef.current = node.data.kind;
+        runningEntryIdRef.current = runningEntryId;
+        const pushStageLine = (line: string) =>
+          setEntries((prev) =>
+            prev.map((e) => {
+              if (e.id !== runningEntryId || e.kind !== 'run') return e;
+              const lines = e.lines.length === 1 && e.lines[0].line === '' ? [] : e.lines.slice();
+              lines.push({ stream: 'stderr', line });
+              return { ...e, lines };
+            }),
+          );
+        // The stage closes on the node's first visible output. A result is
+        // pushed before run() returns, so waiting for that would print the ✓
+        // underneath the very thing it announces.
+        let activityStartedAt = 0;
+        let activityOpen = false;
+        // Hands the line back, so appendEntry can fold the close and the
+        // result it precedes into one state update.
+        const closeActivity = () => {
+          if (!activityOpen || !def.activity) return null;
+          activityOpen = false;
+          closeActivityRef.current = null;
+          // A streaming node closes its stage when the bubble appears, before
+          // the text fills in, so the elapsed time here would read 0.0s and
+          // claim work that has not happened. Under a tenth of a second, omit it.
+          const elapsed = (Date.now() - activityStartedAt) / 1000;
+          const took = elapsed >= 0.1 ? ` (${elapsed.toFixed(1)}s)` : '';
+          return { entryId: runningEntryId, line: `  ✓ ${def.activity.done}${took}` };
+        };
+        const runCtx: PlaygroundRunContext = {
+          fields: node.data.fields,
+          readInput,
+          resolveContent,
+          pushResult,
+          pushRunLine,
+          runAgent: runAgentNode,
+          translate: translateNode,
+          confirm: confirmNode,
+          search: searchDocumentsNode,
+          setOutput: (value, handle) => nodeOutputs.set(outKey(id, handle), value),
+          pushMedia,
+          playAudio,
+          ocr: ocrNode,
+          classifyImage: classifyImageNode,
+          textToSpeech: textToSpeechNode,
+          speechToText: speechToTextNode,
+          recordVoice: recordVoiceNode,
+          voiceConversationTurns,
+          ensureVoiceModelReady,
+          ensureChatModelReady,
+          generateImage: generateImageNode,
+          generateVideo: generateVideoNode,
+          generateMusic: generateMusicNode,
+          stopRequested: () => stopRequestedRef.current,
+        };
         try {
-          await def.run({
-            fields: node.data.fields,
-            readInput,
-            resolveContent,
-            pushResult,
-            pushRunLine,
-            runAgent: runAgentNode,
-            translate: translateNode,
-            confirm: confirmNode,
-            search: searchDocumentsNode,
-            setOutput: (value, handle) => nodeOutputs.set(outKey(id, handle), value),
-            pushMedia,
-            ocr: ocrNode,
-            classifyImage: classifyImageNode,
-            textToSpeech: textToSpeechNode,
-            speechToText: speechToTextNode,
-            generateImage: generateImageNode,
-            generateVideo: generateVideoNode,
-            generateMusic: generateMusicNode,
-            stopRequested: () => stopRequestedRef.current,
-          });
+          // Always awaited before run(), for every node kind: a node needing
+          // more than one model declares preload, so no visible work starts
+          // while a later model is still downloading. Opening the stage after
+          // it keeps a model's own loading lines above this node's work.
+          if (def.preload) await def.preload(runCtx);
+          if (def.activity && !stopRequestedRef.current) {
+            activityStartedAt = Date.now();
+            activityOpen = true;
+            closeActivityRef.current = closeActivity;
+            pushStageLine(`→ ${def.activity.doing}...`);
+          }
+          if (!stopRequestedRef.current) await def.run(runCtx);
+          // Still open when a node finished without showing anything.
+          if (!stopRequestedRef.current) {
+            const closing = closeActivity();
+            if (closing) pushStageLine(closing.line);
+          }
+          closeActivityRef.current = null;
         } catch (err) {
           // A handler that throws instead of reporting through pushRunLine (an
           // unexpected exception, not a modeled "nothing connected" case) still
@@ -538,7 +783,20 @@ function PlaygroundCanvas({
           pushRunLine('err', err instanceof Error ? err.message : 'This step failed.');
         } finally {
           runningKindRef.current = null;
-          setEntries((prev) => prev.filter((e) => e.id !== runningEntryId));
+          runningEntryIdRef.current = null;
+          const stopped = stopRequestedRef.current;
+          setEntries((prev) => {
+            const entry = prev.find((e) => e.id === runningEntryId);
+            // A node still holding its empty placeholder gets dropped, but one
+            // a model-status update filled with a real load trace survives
+            // teardown of the "running" placeholder.
+            if (entry?.kind === 'run' && entry.lines.length === 1 && entry.lines[0].line === '') {
+              return prev.filter((e) => e.id !== runningEntryId);
+            }
+            return prev.map((e) =>
+              e.id === runningEntryId && e.kind === 'run' ? { ...e, status: stopped ? 'stopped' : 'ok' } : e,
+            );
+          });
         }
       }
     } finally {
@@ -557,6 +815,10 @@ function PlaygroundCanvas({
     classifyImageNode,
     textToSpeechNode,
     speechToTextNode,
+    recordVoiceNode,
+    voiceConversationTurns,
+    ensureVoiceModelReady,
+    ensureChatModelReady,
     generateImageNode,
     generateVideoNode,
     generateMusicNode,
@@ -574,8 +836,14 @@ function PlaygroundCanvas({
     if (!isRunning || stopRequestedRef.current) return;
     stopRequestedRef.current = true;
     setStopRequested(true);
+    replyAudioRef.current?.pause();
+    setReplyClip(null);
     const requestId = pendingRequestIdRef.current;
     if (requestId) void window.academy?.chat?.stop?.(requestId).catch(() => undefined);
+    const voiceRequestId = pendingVoiceRequestIdRef.current;
+    if (voiceRequestId) void window.academy?.voice?.stop?.(voiceRequestId).catch(() => undefined);
+    const voiceConversationId = pendingVoiceConversationIdRef.current;
+    if (voiceConversationId) void window.academy?.voice?.stopConversation?.(voiceConversationId).catch(() => undefined);
     void window.academy?.cancelGenerateVideo?.().catch(() => undefined);
     void window.academy?.cancelGenerateMusic?.().catch(() => undefined);
     if (runningKindRef.current && UNCANCELABLE_KINDS.has(runningKindRef.current)) {
@@ -618,7 +886,7 @@ function PlaygroundCanvas({
     setEntries([]);
     setNodeErrors(new Set());
     setWorkflowName('My Workflow');
-    setIsPresetWorkflow(false);
+    presetNodeIdsRef.current = new Set();
     fileHandleRef.current = null;
     centerOnStart(200);
   }, [setNodes, setEdges, centerOnStart]);
@@ -691,7 +959,7 @@ function PlaygroundCanvas({
       // are worth keeping so the user can see which request produced it.
       if (!options?.keepConsole) setEntries([]);
       setNodeErrors(new Set());
-      setIsPresetWorkflow(!!options?.isPreset);
+      presetNodeIdsRef.current = options?.isPreset ? new Set(idMap.values()) : new Set();
       centerOnStart(0);
     },
     [setNodes, setEdges, centerOnStart],
@@ -1074,7 +1342,7 @@ function PlaygroundCanvas({
               fields={selectedNode.data.fields}
               anchorEl={anchorEl}
               inputKind={selectedInputKind}
-              isPreset={isPresetWorkflow}
+              isPreset={presetNodeIdsRef.current.has(selectedNode.id)}
               onChange={(key, value) =>
                 setNodes((nds) =>
                   nds.map((n) =>
@@ -1148,6 +1416,16 @@ function PlaygroundCanvas({
         />
       )}
       {showPresets && <PlaygroundPresetsModal onClose={() => setShowPresets(false)} onSelect={handleLoadPreset} />}
+      {replyClip && (
+        // biome-ignore lint/a11y/useMediaCaption: synthesized speech has no caption track to attach
+        <audio
+          key={replyClip.seq}
+          ref={replyAudioRef}
+          src={replyClip.url}
+          autoPlay
+          className="hidden"
+        />
+      )}
     </div>
   );
 }

@@ -7,6 +7,8 @@ const { createLazyModel } = require('./media-models.cjs');
 
 const lazy = createLazyModel({
   label: 'transcribe',
+  modelName: 'Whisper Tiny',
+  modelKind: 'voice',
   registryKeys: ['WHISPER_TINY'],
   buildLoadArgs: (sdk) => ({
     modelSrc: sdk.WHISPER_TINY,
