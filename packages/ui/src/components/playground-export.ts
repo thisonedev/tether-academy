@@ -8,7 +8,7 @@ export type ExportFormat = 'pdf' | 'markdown' | 'txt' | 'csv' | 'docx' | 'xlsx';
 export type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'paragraph'; text: string }
-  | { type: 'table'; headers: string[]; rows: string[][] }
+  | { type: 'table'; headers: string[]; rows: string[][]; borderless?: boolean }
   | { type: 'list'; ordered: boolean; items: string[] }
   | { type: 'code'; text: string };
 
@@ -216,7 +216,12 @@ export async function exportPdf(rawBlocks: Block[], name: string): Promise<void>
   const blocks = sanitizeForPdf(rawBlocks);
   const doc = new jsPDF({ unit: 'pt' });
   const margin = 40;
-  const pageWidth = doc.internal.pageSize.getWidth() - margin * 2;
+  // autoTable insets cell text this far from its own left edge (pinned here
+  // instead of trusting its default); every other block uses the same
+  // offset so a paragraph and a table row share one left edge.
+  const CELL_PADDING = 5;
+  const textX = margin + CELL_PADDING;
+  const pageWidth = doc.internal.pageSize.getWidth() - textX - margin;
   const pageHeight = doc.internal.pageSize.getHeight();
   let y = margin;
   // One color and body size for every block, table included: autoTable ships
@@ -237,7 +242,7 @@ export async function exportPdf(rawBlocks: Block[], name: string): Promise<void>
       doc.setTextColor(...TEXT_COLOR);
       const wrapped = doc.splitTextToSize(block.text, pageWidth);
       ensureRoom(wrapped.length * size * 1.25);
-      doc.text(wrapped, margin, y);
+      doc.text(wrapped, textX, y);
       y += wrapped.length * size * 1.25 + 6;
     } else if (block.type === 'paragraph' || block.type === 'code') {
       doc.setFont(block.type === 'code' ? 'courier' : 'helvetica', 'normal');
@@ -245,7 +250,7 @@ export async function exportPdf(rawBlocks: Block[], name: string): Promise<void>
       doc.setTextColor(...TEXT_COLOR);
       const wrapped = doc.splitTextToSize(block.text, pageWidth);
       ensureRoom(wrapped.length * 14);
-      doc.text(wrapped, margin, y);
+      doc.text(wrapped, textX, y);
       y += wrapped.length * 14 + 8;
     } else if (block.type === 'list') {
       doc.setFont('helvetica', 'normal');
@@ -254,7 +259,7 @@ export async function exportPdf(rawBlocks: Block[], name: string): Promise<void>
       block.items.forEach((item, i) => {
         const wrapped = doc.splitTextToSize(`${block.ordered ? `${i + 1}.` : '•'} ${item}`, pageWidth);
         ensureRoom(wrapped.length * 14);
-        doc.text(wrapped, margin, y);
+        doc.text(wrapped, textX, y);
         y += wrapped.length * 14 + 2;
       });
       y += 6;
@@ -264,11 +269,11 @@ export async function exportPdf(rawBlocks: Block[], name: string): Promise<void>
         head: [block.headers],
         body: block.rows,
         margin: { left: margin, right: margin },
-        // jspdf-autotable's default theme fills the header blue and sets its
-        // own smaller, greyer body font; both overridden to match the plain
-        // black-on-white, same-size look of the rest of the page.
-        theme: 'grid',
-        styles: { font: 'helvetica', fontSize: BODY_SIZE, textColor: TEXT_COLOR },
+        // jspdf-autotable's grid theme fills the header blue and shrinks the
+        // body font; overridden below to match the page. 'plain' drops the
+        // cell borders so a borderless table reads as text, not a grid.
+        theme: block.borderless ? 'plain' : 'grid',
+        styles: { font: 'helvetica', fontSize: BODY_SIZE, textColor: TEXT_COLOR, cellPadding: CELL_PADDING },
         headStyles: { fillColor: [240, 240, 240], textColor: TEXT_COLOR, fontStyle: 'bold' },
       });
       // biome-ignore lint/suspicious/noExplicitAny: jspdf-autotable augments the doc instance at runtime
@@ -279,7 +284,9 @@ export async function exportPdf(rawBlocks: Block[], name: string): Promise<void>
 }
 
 export async function exportDocx(blocks: Block[], name: string): Promise<void> {
-  const { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun } = await import('docx');
+  const { BorderStyle, Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun } = await import('docx');
+  const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+  const noBorders = { top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER };
   const HEADING_LEVELS = [
     HeadingLevel.HEADING_1,
     HeadingLevel.HEADING_2,
@@ -299,13 +306,14 @@ export async function exportDocx(blocks: Block[], name: string): Promise<void> {
     } else if (block.type === 'list') {
       for (const item of block.items) children.push(new Paragraph({ text: item, bullet: { level: 0 } }));
     } else if (block.type === 'table') {
+      const borders = block.borderless ? noBorders : undefined;
       const headerRow = new TableRow({
         children: block.headers.map(
-          (h) => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: h, bold: true })] })] }),
+          (h) => new TableCell({ borders, children: [new Paragraph({ children: [new TextRun({ text: h, bold: true })] })] }),
         ),
       });
       const bodyRows = block.rows.map(
-        (row) => new TableRow({ children: row.map((cell) => new TableCell({ children: [new Paragraph(cell)] })) }),
+        (row) => new TableRow({ children: row.map((cell) => new TableCell({ borders, children: [new Paragraph(cell)] })) }),
       );
       children.push(new Table({ rows: [headerRow, ...bodyRows] }));
       children.push(new Paragraph(''));
