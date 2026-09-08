@@ -39,7 +39,7 @@ import { generateStandaloneScript } from './playground-codegen.js';
 import { buildConversationMarkdown, downloadBlob, type ExportFormat, slugFilename } from './playground-export.js';
 import { PlaygroundExportPopup } from './playground-export-popup.js';
 import { PlaygroundFlowEdge } from './playground-flow-edge.js';
-import type { PresetEntry } from './playground-preset-data.js';
+import { loadPresetWorkflow, type PresetEntry } from './playground-preset-data.js';
 import { PlaygroundPresetsModal } from './playground-presets-modal.js';
 import { PlaygroundFlowNode } from './playground-flow-node.js';
 import { buildNodeCatalogue, parseGeneratedWorkflow, summarizeCurrentWorkflow } from './playground-generate.js';
@@ -1055,9 +1055,11 @@ function PlaygroundCanvas({
 
   const [showPresets, setShowPresets] = useState(false);
   const handleLoadPreset = useCallback(
-    (entry: PresetEntry) => {
+    async (entry: PresetEntry) => {
       fileHandleRef.current = null;
-      applyLoadedWorkflow(entry.workflow, { isPreset: true });
+      // The card carries no workflow, so fetching it here downloads only the
+      // preset the user actually picked.
+      applyLoadedWorkflow(await loadPresetWorkflow(entry.file), { isPreset: true });
       setShowPresets(false);
     },
     [applyLoadedWorkflow],

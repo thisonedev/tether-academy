@@ -7,7 +7,7 @@ import { isPdf, pdfPageCount } from './playground-pdf.js';
 import { PdfFirstPage, PdfPageStrip, PdfPreviewStrip } from './playground-pdf-strip.js';
 import { PLAYGROUND_NODE_DEFS } from './playground-node-defs.js';
 import { ThemedSelect } from './themed-select.js';
-import { samplesFor } from './playground-sample-data.js';
+import { loadSample, type SampleRef, samplesFor } from './playground-sample-data.js';
 import type { PlaygroundDataType, PlaygroundFieldDef } from './playground-types.js';
 
 /** Page counts for picked PDFs, so you can type a page range against a real
@@ -161,7 +161,17 @@ function FileFieldInput({
   const [source, setSource] = useState<'sample' | 'upload' | null>(isPreset ? null : 'upload');
   const files = parsePickedFiles(value);
   const uploadFiles = source === 'upload' ? files : [];
-  const [samples, setSamples] = useState<PickedFile[]>([]);
+  // Switching tabs drops the other tab's pick. The button already reads
+  // "Choose file…" at that point, and leaving the value behind kept the page
+  // preview and the file name showing a sample the tab said was gone.
+  const switchMode = (next: 'sample' | 'upload') => {
+    setMode(next);
+    if (source !== null && source !== next) {
+      setSource(null);
+      onChange('');
+    }
+  };
+  const [samples, setSamples] = useState<SampleRef[]>([]);
   useEffect(() => {
     if (!isPreset) return;
     let cancelled = false;
@@ -190,15 +200,15 @@ function FileFieldInput({
     onChange(multiple ? JSON.stringify(read) : JSON.stringify(read[0]));
   }
 
-  function toggleSample(sample: PickedFile) {
+  async function toggleSample(sample: SampleRef) {
     setSource('sample');
-    if (!multiple) {
-      onChange(JSON.stringify(sample));
+    const already = files.some((f) => f.name === sample.name);
+    if (multiple && already) {
+      onChange(JSON.stringify(files.filter((f) => f.name !== sample.name)));
       return;
     }
-    const already = files.some((f) => f.name === sample.name);
-    const next = already ? files.filter((f) => f.name !== sample.name) : [...files, sample];
-    onChange(JSON.stringify(next));
+    const picked = await loadSample(sample.name);
+    onChange(JSON.stringify(multiple ? [...files, picked] : picked));
   }
 
   return (
@@ -207,14 +217,14 @@ function FileFieldInput({
         <div className="mb-1.5 flex rounded-md border border-canvas-border p-0.5 text-[11px]">
           <button
             type="button"
-            onClick={() => setMode('sample')}
+            onClick={() => switchMode('sample')}
             className={`flex-1 rounded px-2 py-1 ${mode === 'sample' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
           >
             Sample
           </button>
           <button
             type="button"
-            onClick={() => setMode('upload')}
+            onClick={() => switchMode('upload')}
             className={`flex-1 rounded px-2 py-1 ${mode === 'upload' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
           >
             Your file
@@ -230,7 +240,7 @@ function FileFieldInput({
               <button
                 key={s.name}
                 type="button"
-                onClick={() => toggleSample(s)}
+                onClick={() => void toggleSample(s)}
                 className={`flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left text-[11.5px] hover:bg-canvas-muted ${selected ? 'text-emerald-400' : 'text-canvas-foreground'}`}
               >
                 {selected ? '✓' : '·'} {s.name}
