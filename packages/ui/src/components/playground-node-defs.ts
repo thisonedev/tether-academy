@@ -483,14 +483,14 @@ const searchDocsFields: PlaygroundNodeKindDef['fields'] = [
  *  node kind follows this exact shape, so adding one never touches the canvas or engine. */
 /** A PDF node's input: the wired upstream value when the node is set to it,
  *  the picked file otherwise. Reports the reason and returns null on a miss. */
-async function readPdfSource(ctx: PlaygroundRunContext): Promise<{ dataUrl: string; name: string } | null> {
+async function readPdfSource(ctx: PlaygroundRunContext): Promise<string | null> {
   if (ctx.fields.source === 'Upstream input') {
     const upstream = ctx.readInput();
     if (typeof upstream !== 'string' || !upstream.startsWith('data:application/pdf')) {
       ctx.pushRunLine('err', 'The connected step did not produce a PDF.');
       return null;
     }
-    return { dataUrl: upstream, name: 'document.pdf' };
+    return upstream;
   }
   const picked = parsePickedFiles(ctx.fields.file)[0];
   if (!picked) {
@@ -501,12 +501,7 @@ async function readPdfSource(ctx: PlaygroundRunContext): Promise<{ dataUrl: stri
     ctx.pushRunLine('err', `${picked.name} is not a PDF.`);
     return null;
   }
-  return { dataUrl: picked.dataUrl, name: picked.name };
-}
-
-/** Drops the extension so a part can be named "report (pages 1-3).pdf". */
-function baseName(name: string): string {
-  return name.replace(/\.[^.]+$/, '');
+  return picked.dataUrl;
 }
 
 export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
@@ -556,7 +551,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       }
       const { dataUrl, pageCount } = await mergeToPdf(files);
       ctx.setOutput(dataUrl);
-      ctx.pushMedia('pdf', dataUrl, 'merged.pdf');
+      ctx.pushMedia('pdf', dataUrl, 'myfile.pdf');
       ctx.pushRunLine('ok', `Merged ${files.length} files into ${pageCount} pages.`);
     },
   },
@@ -579,16 +574,15 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
         return;
       }
       const parts = everyN
-        ? await splitPdf(source.dataUrl, Number(ctx.fields.pagesPerFile || '1'))
-        : await splitPdfByPages(source.dataUrl, ctx.fields.pages);
-      const stem = baseName(source.name);
+        ? await splitPdf(source, Number(ctx.fields.pagesPerFile || '1'))
+        : await splitPdfByPages(source, ctx.fields.pages);
       const named = parts.map((part) => ({
-        name: `${stem} (page ${part.firstPage === part.lastPage ? part.firstPage : `${part.firstPage}-${part.lastPage}`}).pdf`,
+        name: `page${part.firstPage === part.lastPage ? part.firstPage : `${part.firstPage}-${part.lastPage}`}.pdf`,
         dataUrl: part.dataUrl,
       }));
       // The zip goes first, since saving everything at once is the common case
       // and a long list of parts would push it out of view.
-      if (named.length > 1) ctx.pushMedia('zip', await zipPdfParts(named), `${stem} (${named.length} files).zip`);
+      if (named.length > 1) ctx.pushMedia('zip', await zipPdfParts(named), 'myfile.zip');
       for (const part of named) {
         if (ctx.stopRequested()) return;
         ctx.pushMedia('pdf', part.dataUrl, part.name);
@@ -608,11 +602,10 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     async run(ctx) {
       const source = await readPdfSource(ctx);
       if (!source) return;
-      const total = await pdfPageCount(source.dataUrl);
-      const { dataUrl, pages } = await extractPages(source.dataUrl, ctx.fields.pages || '1');
-      const name = `${baseName(source.name)} (pages ${pages.join(', ')}).pdf`;
+      const total = await pdfPageCount(source);
+      const { dataUrl, pages } = await extractPages(source, ctx.fields.pages || '1');
       ctx.setOutput(dataUrl);
-      ctx.pushMedia('pdf', dataUrl, name);
+      ctx.pushMedia('pdf', dataUrl, 'myfile.pdf');
       ctx.pushRunLine('ok', `Took ${pages.length} of ${total} pages.`);
     },
   },
