@@ -565,18 +565,17 @@ function PlaygroundCanvas({
       }),
     [],
   );
-  // Not a bridgeCall: this is an async generator (one session, many turns),
-  // and a stop phrase ends the whole run the same way recordVoiceNode's does.
-  const voiceConversationTurns = useCallback(async function* (opts: { stopPhrase?: string; endOfTurnSilenceMs?: number }) {
+  // Not a bridgeCall: this is an async generator, one session yielding many turns.
+  const voiceConversationTurns = useCallback(async function* (opts: { endOfTurnSilenceMs?: number } = {}) {
     if (typeof window.academy?.voice?.startConversation !== 'function') {
-      yield { transcript: '', stoppedByPhrase: false, error: 'Voice recording is only available in the desktop app.' };
+      yield { transcript: '', error: 'Voice recording is only available in the desktop app.' };
       return;
     }
     const { conversationId } = await window.academy.voice.startConversation(opts);
     pendingVoiceConversationIdRef.current = conversationId;
     // Events arrive push-style via onEvent; the generator consumes them
     // pull-style via yield, so a small queue bridges the two.
-    const queue: Array<{ transcript: string; stoppedByPhrase: boolean; done: boolean; error: string | null }> = [];
+    const queue: Array<{ transcript: string; done: boolean; error: string | null }> = [];
     let wake: (() => void) | null = null;
     const unsubscribe = window.academy.voice.onEvent((event) => {
       if (!('conversationId' in event) || event.conversationId !== conversationId) return;
@@ -592,11 +591,7 @@ function PlaygroundCanvas({
         }
         const event = queue.shift();
         if (!event) continue;
-        if (event.stoppedByPhrase) {
-          stopRequestedRef.current = true;
-          setStopRequested(true);
-        }
-        yield { transcript: event.transcript, stoppedByPhrase: event.stoppedByPhrase, error: event.error };
+        yield { transcript: event.transcript, error: event.error };
         if (event.done) return;
       }
     } finally {

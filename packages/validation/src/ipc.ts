@@ -209,12 +209,10 @@ export const academyVoiceStartSchema = z
   })
   .strict();
 
-/** One session for the whole multi-turn conversation. Fields mirror
- *  academyVoiceStartSchema minus record/maxDurationMs, which don't apply
- *  to a standing session. */
+/** One session for the whole multi-turn conversation, ended by
+ *  stopConversation(). A standing session has no record/maxDurationMs. */
 export const academyVoiceStartConversationSchema = z
   .object({
-    stopPhrase: z.string().min(1).max(64).optional(),
     endOfTurnSilenceMs: z.number().int().min(200).max(10_000).optional(),
   })
   .strict();

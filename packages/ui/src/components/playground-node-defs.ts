@@ -335,7 +335,6 @@ const voiceLoopFields: PlaygroundNodeKindDef['fields'] = [
     type: 'textarea',
     default: "You're a helpful voice assistant. Reply conversationally in 1-3 short sentences.",
   },
-  { key: 'stopPhrase', label: 'Stop word', type: 'text', default: 'stop' },
   { key: 'voiceReply', label: 'Reply with voice', type: 'select', options: ['Off', 'On'], default: 'Off' },
 ];
 const imageGenFields: PlaygroundNodeKindDef['fields'] = [
@@ -814,19 +813,16 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       await ctx.ensureChatModelReady();
     },
     async run(ctx) {
-      const stopPhrase = ctx.fields.stopPhrase || 'stop';
       const task = ctx.fields.task || voiceLoopFields[0].default || '';
-      for await (const { transcript, stoppedByPhrase, error } of ctx.voiceConversationTurns({ stopPhrase })) {
+      // The spoken stop word was unreliable, so it's gone: the conversation
+      // runs until the Stop button ends it.
+      for await (const { transcript, error } of ctx.voiceConversationTurns()) {
         // Stop aborts the turn itself, so an error arriving then is expected.
         if (error && !ctx.stopRequested()) {
           ctx.pushRunLine('err', error);
           return;
         }
         if (error) return;
-        if (stoppedByPhrase) {
-          ctx.pushRunLine('ok', `Heard "${stopPhrase}".`);
-          return;
-        }
         if (!transcript || ctx.stopRequested()) continue;
         ctx.pushResult(transcript);
         const { text: prompt } = buildAgentPrompt(task, `User said: ${transcript}`, AGENT_MESSAGE_MAX);

@@ -55,10 +55,9 @@ export interface PlaygroundRunContext {
    *  matches the SDK's own voice-assistant lessons, which open transcribeStream
    *  once and iterate it for the entire loop instead of reopening it turn to
    *  turn. Yields one result per turn until the conversation ends. */
-  voiceConversationTurns: (opts: {
-    stopPhrase?: string;
+  voiceConversationTurns: (opts?: {
     endOfTurnSilenceMs?: number;
-  }) => AsyncGenerator<{ transcript: string; stoppedByPhrase: boolean; error: string | null }, void, void>;
+  }) => AsyncGenerator<{ transcript: string; error: string | null }, void, void>;
   /** Loads the voice model without opening the mic, so a conversation node
    *  can get every model it needs ready before recording starts. */
   ensureVoiceModelReady: () => Promise<void>;
