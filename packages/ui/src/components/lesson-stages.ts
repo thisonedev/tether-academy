@@ -22,8 +22,9 @@ export interface StageSegment {
   openLabel: string;
   /** Wording when the stage closes (or the open wording if it never closed). */
   closeLabel: string;
-  /** 'note' is a ✓ with no opener, such as a stage the host skipped. */
-  state: 'open' | 'done' | 'note';
+  /** 'note' is a ✓ with no opener, such as a stage the host skipped.
+   *  'settled' is an opener whose ✓ went to a later entry. */
+  state: 'open' | 'done' | 'note' | 'settled';
   seconds: number | null;
   /** An SDK call the lesson made, rather than a stage the host ran. */
   call: boolean;
@@ -38,8 +39,10 @@ export interface LinesSegment {
 
 export type RunSegment = StageSegment | LinesSegment;
 
-/** Splits a run's output into stage rows and the output printed under each. */
-export function splitStages(lines: StageLine[]): RunSegment[] {
+/** Splits a run's output into stage rows and the output printed under each.
+ *  `settled` reports an opener whose ✓ never appears in these lines: `true` for
+ *  a run that has ended, or the label of one closed by a later entry. */
+export function splitStages(lines: StageLine[], settled: boolean | string = false): RunSegment[] {
   const segments: RunSegment[] = [];
   let open: StageSegment | null = null;
   // A marker ends the run of lines it interrupts. Reading the tail of
@@ -89,6 +92,13 @@ export function splitStages(lines: StageLine[]): RunSegment[] {
       printed = { kind: 'lines', from: i, count: 1 };
       segments.push(printed);
     }
+  }
+
+  // A label settles only the stage it names, so a model load opening after it
+  // in the same run keeps pulsing. An ended run settles every stage it left open.
+  for (const segment of segments) {
+    if (segment.kind !== 'stage' || segment.state !== 'open') continue;
+    if (settled === true || segment.openLabel.replace(HOST_PHASE, '') === settled) segment.state = 'settled';
   }
 
   return segments;

@@ -303,14 +303,19 @@ function PlaygroundCanvas({
   // Set while a node's activity stage is open. Every entry appended to the
   // feed goes through appendEntry below, so output closes its own stage first
   // whichever call produced it, including calls added later.
-  const closeActivityRef = useRef<(() => { entryId: string; line: string } | null) | null>(null);
+  const closeActivityRef = useRef<(() => { entryId: string; line: string; label: string } | null) | null>(null);
   const appendEntry = useCallback((entry: ConsoleEntry) => {
     // The result sits between the two halves of its stage: "Reading the
     // text", the text, "Read the text". Entries render in order, so the
     // closing line becomes its own entry below the output.
     const closing = closeActivityRef.current?.() ?? null;
     setEntries((prev) => {
-      const next = [...prev, entry];
+      // The opener stays behind in its own entry, so it has to be marked closed
+      // there; otherwise it pulses as in-flight for the rest of the run.
+      const next = closing
+        ? prev.map((e) => (e.id === closing.entryId && e.kind === 'run' ? { ...e, settledStage: closing.label } : e))
+        : [...prev];
+      next.push(entry);
       if (closing) {
         next.push({
           kind: 'run',
@@ -729,7 +734,7 @@ function PlaygroundCanvas({
           // claim work that has not happened. Under a tenth of a second, omit it.
           const elapsed = (Date.now() - activityStartedAt) / 1000;
           const took = elapsed >= 0.1 ? ` (${elapsed.toFixed(1)}s)` : '';
-          return { entryId: runningEntryId, line: `  ✓ ${def.activity.done}${took}` };
+          return { entryId: runningEntryId, line: `  ✓ ${def.activity.done}${took}`, label: def.activity.doing };
         };
         const runCtx: PlaygroundRunContext = {
           fields: node.data.fields,
