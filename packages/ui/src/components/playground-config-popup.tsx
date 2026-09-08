@@ -1,12 +1,140 @@
 'use client';
 
-import { Paperclip, X } from 'lucide-react';
+import { GripVertical, Paperclip, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { parsePickedFiles, type PickedFile, readFileAsDataUrl } from './playground-files.js';
+import { isPdf, pdfPageCount } from './playground-pdf.js';
+import { PdfFirstPage, PdfPageStrip, PdfPreviewStrip } from './playground-pdf-strip.js';
 import { PLAYGROUND_NODE_DEFS } from './playground-node-defs.js';
 import { ThemedSelect } from './themed-select.js';
-import { samplesFor } from './playground-sample-data.js';
-import type { PlaygroundDataType } from './playground-types.js';
+import { loadSample, type SampleRef, samplesFor } from './playground-sample-data.js';
+import type { PlaygroundDataType, PlaygroundFieldDef } from './playground-types.js';
+
+/** Page counts for picked PDFs, so you can type a page range against a real
+ *  number. Non-PDFs and unreadable files stay null. */
+function usePdfPageCounts(files: PickedFile[]): (number | null)[] {
+  const [counts, setCounts] = useState<(number | null)[]>([]);
+  // Keyed on identity, not the array: parsePickedFiles builds a new one every
+  // render, which as a dependency would reload the counts forever.
+  const key = files.map((f) => `${f.name}:${f.dataUrl.length}`).join('|');
+  useEffect(() => {
+    let cancelled = false;
+    setCounts([]);
+    Promise.all(files.map((f) => (isPdf(f) ? pdfPageCount(f.dataUrl).catch(() => null) : Promise.resolve(null)))).then(
+      (next) => {
+        if (!cancelled) setCounts(next);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+  return counts;
+}
+
+function pageLabel(count: number): string {
+  return `${count} page${count === 1 ? '' : 's'}`;
+}
+
+/** Multi-file fields feed nodes where the order is itself a setting: Merge
+ *  stacks the pages in this sequence. */
+function PickedFileOrder({ files, onChange }: { files: PickedFile[]; onChange: (next: PickedFile[]) => void }) {
+  const counts = usePdfPageCounts(files);
+  const known = counts.filter((c): c is number => c !== null);
+  const total = known.length === files.length ? known.reduce((sum, c) => sum + c, 0) : null;
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= files.length || from === to) return;
+    const next = files.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
+  const remove = (index: number) => onChange(files.filter((_, i) => i !== index));
+  const endDrag = () => {
+    setDragging(null);
+    setOver(null);
+  };
+  return (
+    <div className="mt-1 space-y-0.5">
+      <div className="px-0.5 text-[10.5px] text-canvas-muted-foreground">
+        Order{total !== null ? ` · ${pageLabel(total)} total` : ''}
+      </div>
+      {files.map((file, i) => (
+        <div
+          key={`${file.name}-${i}`}
+          draggable
+          onDragStart={(e) => {
+            setDragging(i);
+            e.dataTransfer.effectAllowed = 'move';
+            // Firefox starts no drag at all unless some data is set.
+            e.dataTransfer.setData('text/plain', String(i));
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (dragging !== null && over !== i) setOver(i);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (dragging !== null) move(dragging, i);
+            endDrag();
+          }}
+          onDragEnd={endDrag}
+          className={`flex cursor-grab items-center gap-1 rounded border bg-canvas px-1.5 py-1 text-[11.5px] text-canvas-foreground ${
+            dragging === i ? 'opacity-40' : ''
+          } ${over === i && dragging !== null && dragging !== i ? 'border-emerald-500' : 'border-canvas-border'}`}
+        >
+          {/* Arrow keys as well as the mouse: a drag handle alone leaves no way
+              to reorder from the keyboard. */}
+          <button
+            type="button"
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowUp') move(i, i - 1);
+              else if (e.key === 'ArrowDown') move(i, i + 1);
+              else return;
+              e.preventDefault();
+            }}
+            className="shrink-0 cursor-grab text-canvas-muted-foreground hover:text-canvas-foreground"
+            aria-label={`Reorder ${file.name}, currently ${i + 1} of ${files.length}`}
+            title="Drag to reorder"
+          >
+            <GripVertical className="size-3" />
+          </button>
+          <span className="w-3 shrink-0 text-canvas-muted-foreground">{i + 1}</span>
+          {isPdf(file) && <PdfFirstPage dataUrl={file.dataUrl} />}
+          <span className="flex-1 truncate" title={file.name}>
+            {file.name}
+          </span>
+          {counts[i] != null && (
+            <span className="shrink-0 text-[10.5px] text-canvas-muted-foreground">{pageLabel(counts[i] as number)}</span>
+          )}
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            className="shrink-0 rounded p-0.5 text-canvas-muted-foreground hover:text-red-400"
+            aria-label={`Remove ${file.name}`}
+            title="Remove"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SingleFileNote({ files, source }: { files: PickedFile[]; source: 'sample' | 'upload' | null }) {
+  const [pages] = usePdfPageCounts(files);
+  const names = files.map((f) => f.name).join(', ');
+  return (
+    <div className="mt-1 truncate text-[10.5px] text-canvas-muted-foreground" title={names}>
+      Using {source === 'sample' ? 'sample' : 'your file'}: {names}
+      {pages != null ? ` · ${pageLabel(pages)}` : ''}
+    </div>
+  );
+}
 
 function FileFieldInput({
   id,
@@ -33,7 +161,17 @@ function FileFieldInput({
   const [source, setSource] = useState<'sample' | 'upload' | null>(isPreset ? null : 'upload');
   const files = parsePickedFiles(value);
   const uploadFiles = source === 'upload' ? files : [];
-  const [samples, setSamples] = useState<PickedFile[]>([]);
+  // Switching tabs drops the other tab's pick. The button already reads
+  // "Choose file…" at that point, and leaving the value behind kept the page
+  // preview and the file name showing a sample the tab said was gone.
+  const switchMode = (next: 'sample' | 'upload') => {
+    setMode(next);
+    if (source !== null && source !== next) {
+      setSource(null);
+      onChange('');
+    }
+  };
+  const [samples, setSamples] = useState<SampleRef[]>([]);
   useEffect(() => {
     if (!isPreset) return;
     let cancelled = false;
@@ -62,15 +200,15 @@ function FileFieldInput({
     onChange(multiple ? JSON.stringify(read) : JSON.stringify(read[0]));
   }
 
-  function toggleSample(sample: PickedFile) {
+  async function toggleSample(sample: SampleRef) {
     setSource('sample');
-    if (!multiple) {
-      onChange(JSON.stringify(sample));
+    const already = files.some((f) => f.name === sample.name);
+    if (multiple && already) {
+      onChange(JSON.stringify(files.filter((f) => f.name !== sample.name)));
       return;
     }
-    const already = files.some((f) => f.name === sample.name);
-    const next = already ? files.filter((f) => f.name !== sample.name) : [...files, sample];
-    onChange(JSON.stringify(next));
+    const picked = await loadSample(sample.name);
+    onChange(JSON.stringify(multiple ? [...files, picked] : picked));
   }
 
   return (
@@ -79,14 +217,14 @@ function FileFieldInput({
         <div className="mb-1.5 flex rounded-md border border-canvas-border p-0.5 text-[11px]">
           <button
             type="button"
-            onClick={() => setMode('sample')}
+            onClick={() => switchMode('sample')}
             className={`flex-1 rounded px-2 py-1 ${mode === 'sample' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
           >
             Sample
           </button>
           <button
             type="button"
-            onClick={() => setMode('upload')}
+            onClick={() => switchMode('upload')}
             className={`flex-1 rounded px-2 py-1 ${mode === 'upload' ? 'bg-canvas-muted text-canvas-foreground' : 'text-canvas-muted-foreground'}`}
           >
             Your file
@@ -102,7 +240,7 @@ function FileFieldInput({
               <button
                 key={s.name}
                 type="button"
-                onClick={() => toggleSample(s)}
+                onClick={() => void toggleSample(s)}
                 className={`flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left text-[11.5px] hover:bg-canvas-muted ${selected ? 'text-emerald-400' : 'text-canvas-foreground'}`}
               >
                 {selected ? '✓' : '·'} {s.name}
@@ -131,10 +269,11 @@ function FileFieldInput({
           </button>
         </>
       )}
-      {files.length > 0 && (
-        <div className="mt-1 truncate text-[10.5px] text-canvas-muted-foreground" title={files.map((f) => f.name).join(', ')}>
-          Using {source === 'sample' ? 'sample' : 'your file'}: {files.map((f) => f.name).join(', ')}
-        </div>
+      {files.length > 0 && multiple && (
+        <PickedFileOrder files={files} onChange={(next) => onChange(JSON.stringify(next))} />
+      )}
+      {files.length > 0 && !multiple && (
+        <SingleFileNote files={files} source={source} />
       )}
     </div>
   );
@@ -158,6 +297,51 @@ export interface PlaygroundConfigPopupProps {
 }
 
 const POPUP_WIDTH = 300;
+// A filmstrip needs room for more than two pages at a time, so the nodes that
+// show one get a wider popup than a plain form does.
+const WIDE_POPUP_WIDTH = 420;
+const hasFilmstrip = (fields: PlaygroundFieldDef[] | undefined) =>
+  fields?.some((f) => f.type === 'page-spec' || f.type === 'page-ranges') === true;
+
+/** The typed spec stays the source of truth and the strip writes into it, so
+ *  a range can be edited by hand or clicked off the pages. */
+function PageSpecInput({
+  id,
+  value,
+  pdf,
+  clickable,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  pdf: PickedFile | null;
+  clickable: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <input
+        id={id}
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+      />
+      {pdf && (
+        <div className="mt-1.5">
+          {clickable ? (
+            <>
+              <PdfPageStrip dataUrl={pdf.dataUrl} value={value} onChange={onChange} />
+              <p className="mt-1 px-0.5 text-[10.5px] text-canvas-muted-foreground">Click a page to select it.</p>
+            </>
+          ) : (
+            <PdfPreviewStrip dataUrl={pdf.dataUrl} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Floats next to the node that opened it, flipping to the left edge if there's no room on the right. */
 export function PlaygroundConfigPopup({
@@ -172,6 +356,7 @@ export function PlaygroundConfigPopup({
   onClose,
 }: PlaygroundConfigPopupProps) {
   const def = PLAYGROUND_NODE_DEFS[kind];
+  const width = hasFilmstrip(def?.fields) ? WIDE_POPUP_WIDTH : POPUP_WIDTH;
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const dragStartRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
@@ -179,11 +364,11 @@ export function PlaygroundConfigPopup({
 
   useLayoutEffect(() => {
     const rect = anchorEl.getBoundingClientRect();
-    const fitsRight = rect.right + 16 + POPUP_WIDTH <= window.innerWidth;
-    const left = fitsRight ? rect.right + 16 : Math.max(12, rect.left - 16 - POPUP_WIDTH);
+    const fitsRight = rect.right + 16 + width <= window.innerWidth;
+    const left = fitsRight ? rect.right + 16 : Math.max(12, rect.left - 16 - width);
     const top = Math.max(12, Math.min(window.innerHeight - 320, rect.top - 20));
     setPos({ left, top });
-  }, [anchorEl]);
+  }, [anchorEl, width]);
 
   // Dragging by the header overrides the anchored position above; re-selecting
   // the node (a new anchorEl) resets it via the effect above.
@@ -222,8 +407,8 @@ export function PlaygroundConfigPopup({
   return (
     <div
       ref={ref}
-      className="fixed z-50 w-[300px] overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted font-mono shadow-2xl"
-      style={{ left: pos.left, top: pos.top }}
+      className="fixed z-50 overflow-hidden rounded-2xl border border-canvas-border bg-canvas-muted font-mono shadow-2xl"
+      style={{ left: pos.left, top: pos.top, width }}
     >
       <div
         onPointerDown={(e) => {
@@ -266,6 +451,14 @@ export function PlaygroundConfigPopup({
                 value={fields[f.key] ?? ''}
                 onChange={(e) => onChange(f.key, e.target.value)}
                 className="w-full resize-none rounded-lg border border-canvas-border bg-canvas px-2.5 py-2 text-[12.5px] text-canvas-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+              />
+            ) : f.type === 'page-spec' || f.type === 'page-ranges' ? (
+              <PageSpecInput
+                id={`${nodeId}-${f.key}`}
+                value={fields[f.key] ?? ''}
+                pdf={parsePickedFiles(fields.file).find(isPdf) ?? null}
+                clickable={f.type === 'page-spec'}
+                onChange={(v) => onChange(f.key, v)}
               />
             ) : f.type === 'file' ? (
               <FileFieldInput

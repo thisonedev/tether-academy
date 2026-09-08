@@ -1,7 +1,7 @@
 'use client';
 
 import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
-import { Check, Download, Loader2, Settings, Square, X } from 'lucide-react';
+import { Check, Download, FileArchive, FileText, Loader2, Settings, Square, X } from 'lucide-react';
 import Link from 'next/link';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -37,6 +37,9 @@ export type ConsoleEntry =
       status: 'running' | 'ok' | 'err' | 'stopped';
       /** Paired device's display name; unset/null means this device. */
       deviceLabel?: string | null;
+      /** Label of a stage opener closed by a ✓ in a later entry, which happens
+       *  when output sits between the two halves of one stage. */
+      settledStage?: string;
     }
   | {
       kind: 'check';
@@ -59,7 +62,9 @@ export type ConsoleEntry =
   | {
       kind: 'media';
       id: string;
-      mediaType: 'image' | 'audio' | 'video';
+      /** 'pdf' and 'zip' have nothing to play or show inline, so they render
+       *  as a named row whose only affordance is the Save button. */
+      mediaType: 'image' | 'audio' | 'video' | 'pdf' | 'zip';
       dataUrl: string;
       caption?: string;
     };
@@ -1219,8 +1224,20 @@ function MediaCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'media' }> 
             // biome-ignore lint/a11y/useMediaCaption: generated clip has no caption track to attach
             <video controls src={entry.dataUrl} className="max-w-full rounded-md" />
           )}
+          {(entry.mediaType === 'pdf' || entry.mediaType === 'zip') && (
+            <div className="flex items-center gap-2 rounded-md border border-canvas-border bg-canvas-muted px-2.5 py-2 pr-9">
+              {entry.mediaType === 'zip' ? (
+                <FileArchive className="size-4 shrink-0 text-emerald-400" />
+              ) : (
+                <FileText className="size-4 shrink-0 text-canvas-muted-foreground" />
+              )}
+              <span className="truncate text-canvas-foreground">{entry.caption ?? 'Document.pdf'}</span>
+            </div>
+          )}
         </div>
-        {entry.caption && <p className="mt-1.5 text-canvas-muted-foreground">{entry.caption}</p>}
+        {entry.caption && entry.mediaType !== 'pdf' && entry.mediaType !== 'zip' && (
+          <p className="mt-1.5 text-canvas-muted-foreground">{entry.caption}</p>
+        )}
       </div>
     </EntryCard>
   );
@@ -1233,7 +1250,11 @@ function MediaCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'media' }> 
 function RunCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'run' }> }) {
   return (
     <div className="font-mono text-xs">
-      <OutputView lines={entry.lines} isAnimating={entry.status === 'running'} />
+      <OutputView
+        lines={entry.lines}
+        isAnimating={entry.status === 'running'}
+        settledStage={entry.settledStage}
+      />
     </div>
   );
 }
@@ -1359,10 +1380,20 @@ function SavedPreview({ file }: { file: string }) {
   return <audio src={src} controls preload="metadata" className="w-full" />;
 }
 
-function OutputView({ lines: allLines, isAnimating }: { lines: OutputLine[]; isAnimating: boolean }) {
+function OutputView({
+  lines: allLines,
+  isAnimating,
+  settledStage,
+}: {
+  lines: OutputLine[];
+  isAnimating: boolean;
+  settledStage?: string;
+}) {
   const savedFiles = savedFilesFrom(allLines);
   const progress = parseProgress(allLines);
-  const segments = splitStages(allLines);
+  // A run that has finished cannot still be inside a stage, so an opener left
+  // hanging by a stop or a throw settles too.
+  const segments = splitStages(allLines, !isAnimating || settledStage || false);
   const firstLines = segments.find((s) => s.kind === 'lines');
   // One rail row per segment: a stage as a labelled row, output as a card.
   const body: React.ReactNode[] = [];
@@ -1436,6 +1467,15 @@ function StageRow({ stage }: { stage: StageSegment }) {
   // openLabel. The trailing percentage goes, or the kept line reads as frozen
   // mid-download.
   const opened = opener.replace(/\s\d{1,3}%$/, '');
+  // The ✓ for this opener sits in a later entry, under the output that split
+  // the pair, so the opener is settled rather than still running.
+  if (stage.state === 'settled') {
+    return (
+      <RailRow dot={DOT_IDLE}>
+        <span className="text-canvas-foreground">{opened}</span>
+      </RailRow>
+    );
+  }
   const keepsOpener = stage.state === 'done' && !stage.call && stage.closeLabel !== opened;
   return (
     <>

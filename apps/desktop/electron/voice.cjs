@@ -389,9 +389,8 @@ const conversations = new Map();
 // One transcribeStream session for the whole conversation, yielding an event
 // per turn. The SDK's voice-assistant lessons iterate a single session the
 // same way; reopening one per turn caused "model not found" on a second turn.
-async function startConversation({ stopPhrase, endOfTurnSilenceMs }) {
+async function startConversation({ endOfTurnSilenceMs }) {
   const sdk = require('@qvac/sdk');
-  const phrase = stopPhrase ? stopPhrase.trim().toLowerCase() : null;
   const conversationId = `conv-${crypto.randomUUID()}`;
 
   let ffmpeg = null;
@@ -399,7 +398,7 @@ async function startConversation({ stopPhrase, endOfTurnSilenceMs }) {
   let finished = false;
   let parts = [];
 
-  function endConversation({ error = null, transcript = '', stoppedByPhrase = false } = {}) {
+  function endConversation({ error = null, transcript = '' } = {}) {
     if (finished) return;
     finished = true;
     conversations.delete(conversationId);
@@ -412,7 +411,7 @@ async function startConversation({ stopPhrase, endOfTurnSilenceMs }) {
     // Always emits, even on a clean explicit stop with nothing pending: the
     // renderer's turn loop is only listening for events, so a silent end
     // here (no error, nothing said) would leave it waiting forever.
-    emitEvent({ conversationId, transcript, stoppedByPhrase, done: true, error });
+    emitEvent({ conversationId, transcript, done: true, error });
   }
 
   conversations.set(conversationId, () => endConversation());
@@ -459,21 +458,13 @@ async function startConversation({ stopPhrase, endOfTurnSilenceMs }) {
         if (event.type === 'text') {
           const text = event.text.trim();
           if (!text) continue;
-          const lower = text.toLowerCase();
-          const isStopPhrase = phrase !== null && (lower === phrase || lower.endsWith(` ${phrase}`));
-          if (isStopPhrase) {
-            const stripped = text.slice(0, text.length - phrase.length).trim();
-            if (stripped) parts.push(stripped);
-            endConversation({ transcript: parts.join(' ').trim(), stoppedByPhrase: true });
-            return;
-          }
           parts.push(text);
         } else if (event.type === 'endOfTurn' && parts.length > 0) {
           const transcript = parts.join(' ').trim();
           parts = [];
           // done:false marks one finished turn, not the end of the
           // conversation: the same session keeps listening for the next one.
-          emitEvent({ conversationId, transcript, stoppedByPhrase: false, done: false, error: null });
+          emitEvent({ conversationId, transcript, done: false, error: null });
         }
       }
       endConversation();

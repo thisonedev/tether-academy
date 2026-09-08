@@ -642,7 +642,6 @@ export interface AcademyVoiceEvent {
 export interface AcademyVoiceConversationEvent {
   conversationId: string;
   transcript: string;
-  stoppedByPhrase: boolean;
   done: boolean;
   error: string | null;
 }
@@ -656,7 +655,7 @@ export interface AcademyVoiceAPI {
   /** One session for a whole multi-turn conversation. Turn events arrive via
    *  `onEvent` keyed by the returned `conversationId`, one per completed turn,
    *  until a `done: true` event ends the conversation. */
-  startConversation: (opts?: { stopPhrase?: string; endOfTurnSilenceMs?: number }) => Promise<{ conversationId: string }>;
+  startConversation: (opts?: { endOfTurnSilenceMs?: number }) => Promise<{ conversationId: string }>;
   /** Ends an in-flight conversation; a final `done: true` event still arrives via `onEvent`. */
   stopConversation: (conversationId: string) => Promise<boolean>;
   /** Loads the voice model without opening the mic or a session. */

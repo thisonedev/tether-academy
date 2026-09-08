@@ -1,0 +1,74 @@
+[
+  {
+    "name": "business-card.png",
+    "mime": "image/png"
+  },
+  {
+    "name": "doc-kubernetes.txt",
+    "mime": "text/plain"
+  },
+  {
+    "name": "doc-postgres.txt",
+    "mime": "text/plain"
+  },
+  {
+    "name": "doc-solar.txt",
+    "mime": "text/plain"
+  },
+  {
+    "name": "doc-wind.txt",
+    "mime": "text/plain"
+  },
+  {
+    "name": "invoice.png",
+    "mime": "image/png"
+  },
+  {
+    "name": "meeting-notes.txt",
+    "mime": "text/plain"
+  },
+  {
+    "name": "ocr-test.png",
+    "mime": "image/png"
+  },
+  {
+    "name": "pdf-example-1.pdf",
+    "mime": "application/pdf"
+  },
+  {
+    "name": "pdf-example-2.pdf",
+    "mime": "application/pdf"
+  },
+  {
+    "name": "receipt.png",
+    "mime": "image/png"
+  },
+  {
+    "name": "sample-expenses.csv",
+    "mime": "text/csv"
+  },
+  {
+    "name": "sample-students.xlsx",
+    "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  },
+  {
+    "name": "speech-meeting-notes.wav",
+    "mime": "audio/wav"
+  },
+  {
+    "name": "speech-quarterly-report.wav",
+    "mime": "audio/wav"
+  },
+  {
+    "name": "speech-team-sync-notes.wav",
+    "mime": "audio/wav"
+  },
+  {
+    "name": "support-complaint.txt",
+    "mime": "text/plain"
+  },
+  {
+    "name": "sushi.jpeg",
+    "mime": "image/jpeg"
+  }
+]

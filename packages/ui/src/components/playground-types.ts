@@ -33,9 +33,9 @@ export interface PlaygroundRunContext {
   /** Records this node's output for whatever's wired downstream. `handle`
    *  selects the output port for dual-output kinds (If's "true"/"false"). */
   setOutput: (value: PlaygroundTable | string, handle?: string) => void;
-  /** Appends an inline image/audio/video result to the output feed. `dataUrl`
-   *  is a full `data:` URL (already carries its own MIME type). */
-  pushMedia: (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) => void;
+  /** Appends a media or document result to the output feed. `dataUrl` is a
+   *  full `data:` URL (already carries its own MIME type). */
+  pushMedia: (mediaType: 'image' | 'audio' | 'video' | 'pdf' | 'zip', dataUrl: string, caption?: string) => void;
   /** Speaks a clip without adding anything to the output feed. */
   playAudio: (dataUrl: string) => void;
   /** `image` is a data: URL. All six below throw when the desktop bridge isn't available (web). */
@@ -55,10 +55,9 @@ export interface PlaygroundRunContext {
    *  matches the SDK's own voice-assistant lessons, which open transcribeStream
    *  once and iterate it for the entire loop instead of reopening it turn to
    *  turn. Yields one result per turn until the conversation ends. */
-  voiceConversationTurns: (opts: {
-    stopPhrase?: string;
+  voiceConversationTurns: (opts?: {
     endOfTurnSilenceMs?: number;
-  }) => AsyncGenerator<{ transcript: string; stoppedByPhrase: boolean; error: string | null }, void, void>;
+  }) => AsyncGenerator<{ transcript: string; error: string | null }, void, void>;
   /** Loads the voice model without opening the mic, so a conversation node
    *  can get every model it needs ready before recording starts. */
   ensureVoiceModelReady: () => Promise<void>;
@@ -77,7 +76,10 @@ export type PlaygroundCategory = 'trigger' | 'data' | 'logic' | 'ai-text' | 'ai-
 export interface PlaygroundFieldDef {
   key: string;
   label: string;
-  type: 'text' | 'select' | 'textarea' | 'file';
+  /** Both show a text field over a filmstrip of the PDF in this node's `file`
+   *  field. 'page-spec' makes the pages clickable and writes "1-3, 7" back;
+   *  'page-ranges' leaves the strip as a read-only preview. */
+  type: 'text' | 'select' | 'textarea' | 'file' | 'page-spec' | 'page-ranges';
   /** A plain string is both the stored value and the shown label; use
    *  `{ value, label }` when the stored value (a model key, say) shouldn't
    *  be what the user reads in the dropdown. */

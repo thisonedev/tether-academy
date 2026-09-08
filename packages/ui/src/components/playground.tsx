@@ -39,7 +39,7 @@ import { generateStandaloneScript } from './playground-codegen.js';
 import { buildConversationMarkdown, downloadBlob, type ExportFormat, slugFilename } from './playground-export.js';
 import { PlaygroundExportPopup } from './playground-export-popup.js';
 import { PlaygroundFlowEdge } from './playground-flow-edge.js';
-import type { PresetEntry } from './playground-preset-data.js';
+import { loadPresetWorkflow, type PresetEntry } from './playground-preset-data.js';
 import { PlaygroundPresetsModal } from './playground-presets-modal.js';
 import { PlaygroundFlowNode } from './playground-flow-node.js';
 import { buildNodeCatalogue, parseGeneratedWorkflow, summarizeCurrentWorkflow } from './playground-generate.js';
@@ -303,22 +303,29 @@ function PlaygroundCanvas({
   // Set while a node's activity stage is open. Every entry appended to the
   // feed goes through appendEntry below, so output closes its own stage first
   // whichever call produced it, including calls added later.
-  const closeActivityRef = useRef<(() => { entryId: string; line: string } | null) | null>(null);
+  const closeActivityRef = useRef<(() => { entryId: string; line: string; label: string } | null) | null>(null);
   const appendEntry = useCallback((entry: ConsoleEntry) => {
-    // The result sits between the two halves of its stage: "Reading the
-    // text", the text, "Read the text". Entries render in order, so the
-    // closing line becomes its own entry below the output.
+    // Text sits between the two halves of its stage ("Reading the text", the
+    // text, "Read the text") because the stage narrates producing it. A
+    // finished file is the stage's product instead, so its ✓ goes above it.
     const closing = closeActivityRef.current?.() ?? null;
     setEntries((prev) => {
-      const next = [...prev, entry];
-      if (closing) {
-        next.push({
-          kind: 'run',
-          id: nextEntryId(),
-          lines: [{ stream: 'stderr' as const, line: closing.line }],
-          status: 'ok',
-        });
-      }
+      // The opener stays behind in its own entry, so it has to be marked closed
+      // there; otherwise it pulses as in-flight for the rest of the run.
+      const next = closing
+        ? prev.map((e) => (e.id === closing.entryId && e.kind === 'run' ? { ...e, settledStage: closing.label } : e))
+        : [...prev];
+      const closingEntry = closing
+        ? ({
+            kind: 'run',
+            id: nextEntryId(),
+            lines: [{ stream: 'stderr' as const, line: closing.line }],
+            status: 'ok',
+          } as ConsoleEntry)
+        : null;
+      if (closingEntry && entry.kind === 'media') next.push(closingEntry, entry);
+      else if (closingEntry) next.push(entry, closingEntry);
+      else next.push(entry);
       return next;
     });
   }, []);
@@ -560,18 +567,17 @@ function PlaygroundCanvas({
       }),
     [],
   );
-  // Not a bridgeCall: this is an async generator (one session, many turns),
-  // and a stop phrase ends the whole run the same way recordVoiceNode's does.
-  const voiceConversationTurns = useCallback(async function* (opts: { stopPhrase?: string; endOfTurnSilenceMs?: number }) {
+  // Not a bridgeCall: this is an async generator, one session yielding many turns.
+  const voiceConversationTurns = useCallback(async function* (opts: { endOfTurnSilenceMs?: number } = {}) {
     if (typeof window.academy?.voice?.startConversation !== 'function') {
-      yield { transcript: '', stoppedByPhrase: false, error: 'Voice recording is only available in the desktop app.' };
+      yield { transcript: '', error: 'Voice recording is only available in the desktop app.' };
       return;
     }
     const { conversationId } = await window.academy.voice.startConversation(opts);
     pendingVoiceConversationIdRef.current = conversationId;
     // Events arrive push-style via onEvent; the generator consumes them
     // pull-style via yield, so a small queue bridges the two.
-    const queue: Array<{ transcript: string; stoppedByPhrase: boolean; done: boolean; error: string | null }> = [];
+    const queue: Array<{ transcript: string; done: boolean; error: string | null }> = [];
     let wake: (() => void) | null = null;
     const unsubscribe = window.academy.voice.onEvent((event) => {
       if (!('conversationId' in event) || event.conversationId !== conversationId) return;
@@ -587,11 +593,7 @@ function PlaygroundCanvas({
         }
         const event = queue.shift();
         if (!event) continue;
-        if (event.stoppedByPhrase) {
-          stopRequestedRef.current = true;
-          setStopRequested(true);
-        }
-        yield { transcript: event.transcript, stoppedByPhrase: event.stoppedByPhrase, error: event.error };
+        yield { transcript: event.transcript, error: event.error };
         if (event.done) return;
       }
     } finally {
@@ -641,7 +643,7 @@ function PlaygroundCanvas({
     const skippedNodes = new Set<string>();
     const pushResult = (content: string, opts?: { raw?: boolean }) =>
       appendEntry({ kind: 'chat-assistant', id: nextEntryId(), content, streaming: false, raw: opts?.raw });
-    const pushMedia = (mediaType: 'image' | 'audio' | 'video', dataUrl: string, caption?: string) =>
+    const pushMedia = (mediaType: 'image' | 'audio' | 'video' | 'pdf' | 'zip', dataUrl: string, caption?: string) =>
       appendEntry({ kind: 'media', id: nextEntryId(), mediaType, dataUrl, caption });
     try {
       for (const id of topoOrderIds(nodes, edges)) {
@@ -729,7 +731,7 @@ function PlaygroundCanvas({
           // claim work that has not happened. Under a tenth of a second, omit it.
           const elapsed = (Date.now() - activityStartedAt) / 1000;
           const took = elapsed >= 0.1 ? ` (${elapsed.toFixed(1)}s)` : '';
-          return { entryId: runningEntryId, line: `  ✓ ${def.activity.done}${took}` };
+          return { entryId: runningEntryId, line: `  ✓ ${def.activity.done}${took}`, label: def.activity.doing };
         };
         const runCtx: PlaygroundRunContext = {
           fields: node.data.fields,
@@ -1053,9 +1055,11 @@ function PlaygroundCanvas({
 
   const [showPresets, setShowPresets] = useState(false);
   const handleLoadPreset = useCallback(
-    (entry: PresetEntry) => {
+    async (entry: PresetEntry) => {
       fileHandleRef.current = null;
-      applyLoadedWorkflow(entry.workflow, { isPreset: true });
+      // The card carries no workflow, so fetching it here downloads only the
+      // preset the user actually picked.
+      applyLoadedWorkflow(await loadPresetWorkflow(entry.file), { isPreset: true });
       setShowPresets(false);
     },
     [applyLoadedWorkflow],

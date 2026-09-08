@@ -3,6 +3,8 @@
 import {
   AudioLines,
   ClipboardList,
+  Combine,
+  FileOutput,
   FileQuestion,
   FileSearch,
   Filter,
@@ -15,6 +17,7 @@ import {
   Receipt,
   Repeat,
   ScanText,
+  Scissors,
   Search,
   Sparkles,
   Tags,
@@ -23,7 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { loadPresets, type PresetEntry } from './playground-preset-data.js';
+import { loadPresetIndex, type PresetEntry } from './playground-preset-data.js';
 
 const CATEGORY_COLOR: Record<string, string> = {
   Text: '#4ade80',
@@ -59,6 +62,9 @@ const PRESET_ICON: Record<string, LucideIcon> = {
   Music,
   Filter,
   Repeat,
+  Combine,
+  Scissors,
+  FileOutput,
 };
 
 export function PlaygroundPresetsModal({
@@ -66,7 +72,7 @@ export function PlaygroundPresetsModal({
   onSelect,
 }: {
   onClose: () => void;
-  onSelect: (entry: PresetEntry) => void;
+  onSelect: (entry: PresetEntry) => void | Promise<void>;
 }) {
   const [presets, setPresets] = useState<PresetEntry[] | null>(null);
   const [query, setQuery] = useState('');
@@ -74,7 +80,7 @@ export function PlaygroundPresetsModal({
 
   useEffect(() => {
     let cancelled = false;
-    loadPresets().then((p) => {
+    loadPresetIndex().then((p) => {
       if (!cancelled) setPresets(p);
     });
     return () => {
@@ -139,7 +145,7 @@ export function PlaygroundPresetsModal({
               <button
                 key={p.file}
                 type="button"
-                onClick={() => onSelect(p)}
+                onClick={() => void onSelect(p)}
                 className="rounded-lg border border-canvas-border p-3 text-left transition-colors hover:border-emerald-500/40 hover:bg-canvas-muted"
               >
                 <div className="mb-2 flex items-center gap-2">
