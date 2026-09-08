@@ -1,7 +1,7 @@
 'use client';
 
 import type { AcademyChatChunk, AcademyChatMessage, MatchStatus } from '@academy/validation';
-import { Check, Download, Loader2, Settings, Square, X } from 'lucide-react';
+import { Check, Download, FileArchive, FileText, Loader2, Settings, Square, X } from 'lucide-react';
 import Link from 'next/link';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -62,7 +62,9 @@ export type ConsoleEntry =
   | {
       kind: 'media';
       id: string;
-      mediaType: 'image' | 'audio' | 'video';
+      /** 'pdf' and 'zip' have nothing to play or show inline, so they render
+       *  as a named row whose only affordance is the Save button. */
+      mediaType: 'image' | 'audio' | 'video' | 'pdf' | 'zip';
       dataUrl: string;
       caption?: string;
     };
@@ -1222,8 +1224,20 @@ function MediaCard({ entry }: { entry: Extract<ConsoleEntry, { kind: 'media' }> 
             // biome-ignore lint/a11y/useMediaCaption: generated clip has no caption track to attach
             <video controls src={entry.dataUrl} className="max-w-full rounded-md" />
           )}
+          {(entry.mediaType === 'pdf' || entry.mediaType === 'zip') && (
+            <div className="flex items-center gap-2 rounded-md border border-canvas-border bg-canvas-muted px-2.5 py-2 pr-9">
+              {entry.mediaType === 'zip' ? (
+                <FileArchive className="size-4 shrink-0 text-emerald-400" />
+              ) : (
+                <FileText className="size-4 shrink-0 text-canvas-muted-foreground" />
+              )}
+              <span className="truncate text-canvas-foreground">{entry.caption ?? 'Document.pdf'}</span>
+            </div>
+          )}
         </div>
-        {entry.caption && <p className="mt-1.5 text-canvas-muted-foreground">{entry.caption}</p>}
+        {entry.caption && entry.mediaType !== 'pdf' && entry.mediaType !== 'zip' && (
+          <p className="mt-1.5 text-canvas-muted-foreground">{entry.caption}</p>
+        )}
       </div>
     </EntryCard>
   );

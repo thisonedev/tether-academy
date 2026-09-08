@@ -12,8 +12,9 @@ export interface PresetEntry {
   workflow: SavedWorkflow;
 }
 
-/** Dynamically imported: bundles all preset workflows (~300KB, several
- *  embed sample audio/images), so it only loads when the Presets modal opens. */
+/** Dynamically imported: bundles all preset workflows (~2.4MB, since several
+ *  embed a sample PDF, audio clip or image), so it only loads when the Presets
+ *  modal opens. */
 export async function loadPresets(): Promise<PresetEntry[]> {
   const { default: presets } = await import('@academy/workflows/all-presets.json');
   return presets as unknown as PresetEntry[];

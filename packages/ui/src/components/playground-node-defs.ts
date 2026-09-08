@@ -1,5 +1,14 @@
 import { extractDocumentText, normalizeImageForModel, parsePickedFiles } from './playground-files.js';
 import {
+  extractPages,
+  isPdf,
+  mergeToPdf,
+  pdfPageCount,
+  splitPdf,
+  splitPdfByPages,
+  zipPdfParts,
+} from './playground-pdf.js';
+import {
   filterTable,
   findColumnIndex,
   IF_OPERATORS,
@@ -10,7 +19,13 @@ import {
   splitTable,
   tableToMarkdown,
 } from './playground-table.js';
-import type { PlaygroundCategory, PlaygroundDataType, PlaygroundFieldDef, PlaygroundNodeKindDef } from './playground-types.js';
+import type {
+  PlaygroundCategory,
+  PlaygroundDataType,
+  PlaygroundFieldDef,
+  PlaygroundNodeKindDef,
+  PlaygroundRunContext,
+} from './playground-types.js';
 
 // Bounds real per-row model calls until there's hardware-aware concurrency in the engine.
 const MAX_ITERATE_ROWS = 5;
@@ -295,6 +310,55 @@ const askDocFields: PlaygroundNodeKindDef['fields'] = [
   },
   { key: 'question', label: 'Question', type: 'text' },
 ];
+const PDF_ACCEPT = '.pdf';
+// Scans are page images as often as they are PDFs, so Merge takes both.
+const PDF_MERGE_ACCEPT = '.pdf,.png,.jpg,.jpeg';
+const pdfSourceFields: PlaygroundNodeKindDef['fields'] = [
+  {
+    key: 'source',
+    label: 'PDF source',
+    type: 'select',
+    options: INPUT_SOURCE_OPTIONS,
+    hiddenWhen: (_fields, inputKind) => !hasWiredInput(inputKind),
+  },
+  {
+    key: 'file',
+    label: 'PDF',
+    type: 'file',
+    accept: PDF_ACCEPT,
+    hiddenWhen: (fields, inputKind) => hasWiredInput(inputKind) && !usesStaticSource(fields),
+  },
+];
+const pdfMergeFields: PlaygroundNodeKindDef['fields'] = [
+  { key: 'files', label: 'PDFs and scans', type: 'file', accept: PDF_MERGE_ACCEPT, multiple: true },
+];
+const pdfSplitFields: PlaygroundNodeKindDef['fields'] = [
+  ...pdfSourceFields,
+  {
+    key: 'mode',
+    label: 'Split by',
+    type: 'select',
+    options: ['Selected pages', 'Every N pages'],
+  },
+  {
+    key: 'pages',
+    label: 'Pages (one file each)',
+    type: 'page-spec',
+    default: '1',
+    hiddenWhen: (fields) => fields.mode !== 'Selected pages',
+  },
+  {
+    key: 'pagesPerFile',
+    label: 'Pages per file',
+    type: 'page-ranges',
+    default: '1',
+    hiddenWhen: (fields) => fields.mode !== 'Every N pages',
+  },
+];
+const pdfExtractFields: PlaygroundNodeKindDef['fields'] = [
+  ...pdfSourceFields,
+  { key: 'pages', label: 'Pages (e.g. 1-3, 7)', type: 'page-spec', default: '1' },
+];
 const confirmFields: PlaygroundNodeKindDef['fields'] = [
   { key: 'message', label: 'Message to show', type: 'text' },
 ];
@@ -417,6 +481,34 @@ const searchDocsFields: PlaygroundNodeKindDef['fields'] = [
 
 /** One deterministic source, one deterministic transform, one AI-backed node. Every other
  *  node kind follows this exact shape, so adding one never touches the canvas or engine. */
+/** A PDF node's input: the wired upstream value when the node is set to it,
+ *  the picked file otherwise. Reports the reason and returns null on a miss. */
+async function readPdfSource(ctx: PlaygroundRunContext): Promise<{ dataUrl: string; name: string } | null> {
+  if (ctx.fields.source === 'Upstream input') {
+    const upstream = ctx.readInput();
+    if (typeof upstream !== 'string' || !upstream.startsWith('data:application/pdf')) {
+      ctx.pushRunLine('err', 'The connected step did not produce a PDF.');
+      return null;
+    }
+    return { dataUrl: upstream, name: 'document.pdf' };
+  }
+  const picked = parsePickedFiles(ctx.fields.file)[0];
+  if (!picked) {
+    ctx.pushRunLine('err', 'No PDF selected: open this node and choose one.');
+    return null;
+  }
+  if (!isPdf(picked)) {
+    ctx.pushRunLine('err', `${picked.name} is not a PDF.`);
+    return null;
+  }
+  return { dataUrl: picked.dataUrl, name: picked.name };
+}
+
+/** Drops the extension so a part can be named "report (pages 1-3).pdf". */
+function baseName(name: string): string {
+  return name.replace(/\.[^.]+$/, '');
+}
+
 export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
   start: {
     kind: 'start',
@@ -445,6 +537,83 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
       const table = await parseSpreadsheetFile(picked.name, picked.dataUrl);
       ctx.setOutput(table);
       ctx.pushResult(`**${picked.name}**, ${table.rows.length} rows\n\n${tableToMarkdown(table)}`);
+    },
+  },
+  'pdf-merge': {
+    kind: 'pdf-merge',
+    activity: { doing: 'Merging the pages', done: 'Merged the pages' },
+    label: 'Merge PDFs',
+    category: 'data',
+    input: 'flow',
+    output: 'value',
+    fields: pdfMergeFields,
+    defaultFields: defaultsFrom(pdfMergeFields),
+    async run(ctx) {
+      const files = parsePickedFiles(ctx.fields.files);
+      if (files.length < 2) {
+        ctx.pushRunLine('err', 'Pick at least two files to merge.');
+        return;
+      }
+      const { dataUrl, pageCount } = await mergeToPdf(files);
+      ctx.setOutput(dataUrl);
+      ctx.pushMedia('pdf', dataUrl, 'merged.pdf');
+      ctx.pushRunLine('ok', `Merged ${files.length} files into ${pageCount} pages.`);
+    },
+  },
+  'pdf-split': {
+    kind: 'pdf-split',
+    activity: { doing: 'Splitting the PDF', done: 'Split the PDF' },
+    label: 'Split a PDF',
+    // Each part is its own file, so there is no single value to wire onward.
+    output: null,
+    category: 'data',
+    input: 'any',
+    fields: pdfSplitFields,
+    defaultFields: defaultsFrom(pdfSplitFields),
+    async run(ctx) {
+      const source = await readPdfSource(ctx);
+      if (!source) return;
+      const everyN = ctx.fields.mode === 'Every N pages';
+      if (!everyN && !ctx.fields.pages?.trim()) {
+        ctx.pushRunLine('err', 'No pages selected: click the pages you want on this node.');
+        return;
+      }
+      const parts = everyN
+        ? await splitPdf(source.dataUrl, Number(ctx.fields.pagesPerFile || '1'))
+        : await splitPdfByPages(source.dataUrl, ctx.fields.pages);
+      const stem = baseName(source.name);
+      const named = parts.map((part) => ({
+        name: `${stem} (page ${part.firstPage === part.lastPage ? part.firstPage : `${part.firstPage}-${part.lastPage}`}).pdf`,
+        dataUrl: part.dataUrl,
+      }));
+      // The zip goes first, since saving everything at once is the common case
+      // and a long list of parts would push it out of view.
+      if (named.length > 1) ctx.pushMedia('zip', await zipPdfParts(named), `${stem} (${named.length} files).zip`);
+      for (const part of named) {
+        if (ctx.stopRequested()) return;
+        ctx.pushMedia('pdf', part.dataUrl, part.name);
+      }
+      ctx.pushRunLine('ok', `Split into ${named.length} files. Save them together as the .zip, or one at a time.`);
+    },
+  },
+  'pdf-extract-pages': {
+    kind: 'pdf-extract-pages',
+    activity: { doing: 'Pulling out the pages', done: 'Pulled out the pages' },
+    label: 'Extract PDF pages',
+    category: 'data',
+    input: 'any',
+    output: 'value',
+    fields: pdfExtractFields,
+    defaultFields: defaultsFrom(pdfExtractFields),
+    async run(ctx) {
+      const source = await readPdfSource(ctx);
+      if (!source) return;
+      const total = await pdfPageCount(source.dataUrl);
+      const { dataUrl, pages } = await extractPages(source.dataUrl, ctx.fields.pages || '1');
+      const name = `${baseName(source.name)} (pages ${pages.join(', ')}).pdf`;
+      ctx.setOutput(dataUrl);
+      ctx.pushMedia('pdf', dataUrl, name);
+      ctx.pushRunLine('ok', `Took ${pages.length} of ${total} pages.`);
     },
   },
   'text-input': {

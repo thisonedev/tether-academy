@@ -3,6 +3,8 @@
 import {
   AudioLines,
   ClipboardList,
+  Combine,
+  FileOutput,
   FileQuestion,
   FileSearch,
   Filter,
@@ -15,6 +17,7 @@ import {
   Receipt,
   Repeat,
   ScanText,
+  Scissors,
   Search,
   Sparkles,
   Tags,
@@ -59,6 +62,9 @@ const PRESET_ICON: Record<string, LucideIcon> = {
   Music,
   Filter,
   Repeat,
+  Combine,
+  Scissors,
+  FileOutput,
 };
 
 export function PlaygroundPresetsModal({

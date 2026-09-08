@@ -82,6 +82,8 @@ const MEDIA_EXT: Partial<Record<string, string>> = {
   'audio/wav': 'wav',
   'video/avi': 'avi',
   'video/mp4': 'mp4',
+  'application/pdf': 'pdf',
+  'application/zip': 'zip',
 };
 
 function dataUrlToBlob(dataUrl: string): Blob {
