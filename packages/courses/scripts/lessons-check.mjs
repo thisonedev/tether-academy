@@ -18,6 +18,10 @@
 //   pnpm <name>:check -- --since <ref>    # override baseline
 //   pnpm <name>:check -- --quick          # skip docs site fetch
 //   pnpm <name>:check -- --json           # JSON only, no markdown
+//   pnpm <name>:check -- --head           # diff against upstream HEAD, not
+//                                         # the latest release tag (default)
+//   pnpm <name>:check -- --advance        # re-baseline from the dependency
+//                                         # (baseline is sticky otherwise)
 //
 // Output is namespaced per project under temp/lessons-check/<key>/.
 
@@ -138,6 +142,12 @@ const RAW_PROJECT = (() => {
 })() ?? 'qvac';
 const QUICK = args.has('--quick');
 const JSON_ONLY = args.has('--json');
+// Default `to` is the latest tagged release, not upstream HEAD, so a run
+// a few days after a release doesn't pull in unshipped commits.
+const INCLUDE_UNRELEASED = args.has('--head');
+// Baseline is sticky: it won't jump ahead just because the app's SDK
+// dependency did. --advance re-resolves it from the dependency.
+const ADVANCE_BASELINE = args.has('--advance');
 
 if (!PROJECTS[RAW_PROJECT]) {
   console.error(`[check] unknown project "${RAW_PROJECT}". Known: ${Object.keys(PROJECTS).join(', ')}`);
@@ -179,6 +189,14 @@ function loadCheckedKeys() {
 
 let CHECKED_KEYS = new Set();
 const box = (key) => (CHECKED_KEYS.has(key) ? 'x' : ' ');
+
+// Sticky baseline: the ref each repo was last diffed from, keyed by repo.key.
+function loadPriorBaseline(key) {
+  try {
+    const state = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+    return state.perRepoFrom?.[key] ?? null;
+  } catch { return null; }
+}
 
 // ────────────────────────────────────────────────────────────────────
 // Repo handles — each bundles a `git` function bound to its clone dir, so
@@ -1486,7 +1504,7 @@ function partitionChanges(changes, commits, index, examplesRepoDir, examplesFrom
   // Strip example FILE_ADDED entries that are a rename's `to` half, so they
   // don't double up as a separate action item. Checked against allRenames,
   // not the narrowed `renames`: a resolved/orphan rename still needs
-  // suppressing here even once it's dropped from section 2a.
+  // suppressing here even once it's dropped from section 3a.
   const filteredRelevant = relevant.filter((c) => {
     if (c.category !== 'FILE_ADDED') return true;
     if (!c.file?.startsWith(CONFIG.examplesPathPrefix)) return true;
@@ -1882,28 +1900,57 @@ function classifyDiscriminantUsage(schemaName, discriminantKey, literal, index) 
 // Renders the full markdown report from every computed section.
 // ────────────────────────────────────────────────────────────────────
 
-function renderReport({ from, to, modelChanges, allChanges, relevant, informational, renames, falseRenames, relevantCommits, newOpportunities, docs, index, docChapterMap, releaseNoteSnippets }) {
+function renderReport({ from, to, modelChanges, allChanges, relevant, informational, renames, falseRenames, relevantCommits, newOpportunities, docs, index, docChapterMap, releaseNoteSnippets, unreleasedAhead, uncoveredSnippets }) {
   const out = [];
   out.push(`# ${CONFIG.project} change report`);
   out.push('');
   out.push(`_Generated: ${new Date().toISOString()}_`);
-  out.push(`_Baseline: \`${from.ref}\` (\`${from.sha.slice(0, 8)}\`, ${from.date.slice(0, 10)})_  ·  _Current: \`${to.ref}\` (\`${to.sha.slice(0, 8)}\`, ${to.date.slice(0, 10)})_`);
+  const toLabel = to.ref === 'HEAD' ? `\`HEAD\` (\`${to.sha.slice(0, 8)}\`, ${to.date.slice(0, 10)}, unreleased)` : `\`${to.ref}\` (\`${to.sha.slice(0, 8)}\`, ${to.date.slice(0, 10)}, released)`;
+  out.push(`_Baseline: \`${from.ref}\` (\`${from.sha.slice(0, 8)}\`, ${from.date.slice(0, 10)})_  ·  _Current: ${toLabel}_`);
   out.push(`_Upstream: ${CONFIG.projectUrl}_`);
+  if (unreleasedAhead) {
+    out.push('');
+    out.push(`> **${unreleasedAhead.count} commit(s) merged upstream since \`${to.ref}\` are not yet released and excluded from this report.** Rerun with \`--head\` to include them (they aren't part of any published version yet).`);
+  }
   out.push('');
-  out.push(`> ${allChanges.length} raw changes in upstream since baseline. ${relevant.length} affect existing lessons. ${newOpportunities.length} new example files could become lessons. ${renames.length} detected renames. ${informational.length} body-only changes flagged as informational.`);
+  out.push(`> ${allChanges.length} raw changes in upstream since baseline. ${relevant.length} affect existing lessons. ${newOpportunities.length} new example files could become lessons. ${renames.length} detected renames. ${informational.length} body-only changes flagged as informational.${uncoveredSnippets?.length ? ` ${uncoveredSnippets.length} academy-content candidate(s) from the changelog below.` : ''}`);
   out.push('');
 
-  // ─── PART 1: SDK changes ──────────────────────────────────────────────
-// Two views: (1a) what needs to change in existing lessons, as a
-// per-lesson table; (1b) new SDK symbols added but no lesson touches
+  // ─── PART 1: New capabilities to consider for the academy ──────────────
+  // Sourced from CONFIG.changelogDir, not the SDK-surface/example diff, so
+  // it catches a capability shipped through a sibling package (see
+  // findUncoveredReleaseSnippets below). No "Touches:" file list here on
+  // purpose: those are SDK-source paths, not something a lesson author
+  // needs, only the usage snippet is.
+  out.push(`## 1. New capabilities to consider for the academy (${uncoveredSnippets?.length ?? 0})`);
+  out.push('');
+  out.push(`Already shipped upstream, nothing to build. Not reflected in any section below, so decide for each: an existing lesson, a new one, somewhere else in the academy, or skip it.`);
+  out.push('');
+  if (!uncoveredSnippets?.length) {
+    out.push('_Nothing in the changelog is unaccounted for elsewhere in this report._');
+  } else {
+    for (const s of uncoveredSnippets) {
+      const key = `chg:${s.version}:${s.prNumber ?? s.title}`;
+      const prList = [s.prNumber, ...s.extraPrNumbers].filter(Boolean).map((n) => `#${n}`).join(', ');
+      out.push(`- [${box(key)}] **${s.title}** (v${s.version}${prList ? `, PR ${prList}` : ''}) <!-- id:${key} -->`);
+      out.push('    ```typescript');
+      for (const line of s.code.split('\n')) out.push(`    ${line}`);
+      out.push('    ```');
+    }
+  }
+  out.push('');
+
+  // ─── PART 2: SDK changes ────────────────────────────────────────────────
+// Two views: (2a) what needs to change in existing lessons, as a
+// per-lesson table; (2b) new SDK symbols added but no lesson touches
 // them yet, as a plain list (no need for checkboxes).
   const sdkChanges = relevant.filter((c) => categorizeChange(c) === 'sdk');
-  out.push(`## 1. SDK changes (${sdkChanges.length})`);
+  out.push(`## 2. SDK changes (${sdkChanges.length})`);
   out.push('');
   out.push('Functions, types, Zod schemas, and model constants in the upstream SDK surface.');
   out.push('');
 
-  // 1a. Per-lesson view: only changes that have a known affected lesson.
+  // 2a. Per-lesson view: only changes that have a known affected lesson.
   const sdkChangesByLesson = new Map();
   const orphanedSdkChanges = [];
   for (const c of sdkChanges) {
@@ -1932,7 +1979,7 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
   out.push('- `[optional]`: purely additive (new function, new optional field). Nothing to fix; only useful if you want to teach it.');
   out.push('');
 
-  out.push(`### 1a. Changes to existing lessons (${sdkChangesByLesson.size} lesson${sdkChangesByLesson.size === 1 ? '' : 's'})`);
+  out.push(`### 2a. Changes to existing lessons (${sdkChangesByLesson.size} lesson${sdkChangesByLesson.size === 1 ? '' : 's'})`);
   out.push('');
   if (sdkChangesByLesson.size === 0) {
     out.push('_No SDK changes have a known affected lesson._');
@@ -1974,8 +2021,8 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
     out.push('');
   }
 
-  // 1b. Orphaned SDK changes: new symbols added that no lesson uses.
-  out.push(`### 1b. New SDK capabilities no lesson uses yet (${orphanedSdkChanges.length})`);
+  // 2b. Orphaned SDK changes: new symbols added that no lesson uses.
+  out.push(`### 2b. New SDK capabilities no lesson uses yet (${orphanedSdkChanges.length})`);
   out.push('');
   out.push('No existing lesson touches these. Nothing broke, they\'re just new; only relevant if you want a new lesson or example to showcase one.');
   out.push('');
@@ -1990,14 +2037,14 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
   }
   out.push('');
 
-  // ─── PART 2: Example changes ──────────────────────────────────────────
-  out.push(`## 2. Example changes (${renames.length + relevantCommits.reduce((n, c) => n + c._files.length, 0)})`);
+  // ─── PART 3: Example changes ──────────────────────────────────────────
+  out.push(`## 3. Example changes (${renames.length + relevantCommits.reduce((n, c) => n + c._files.length, 0)})`);
   out.push('');
   out.push(`Upstream example files added, removed, renamed, or modified. Each row points at the vendored \`examples/${CONFIG.key}/\` file that needs syncing.`);
   out.push('');
 
   if (renames.length > 0) {
-    out.push(`### 2a. Renames (${renames.length}) — content verified (no new lessons needed)`);
+    out.push(`### 3a. Renames (${renames.length}) — content verified (no new lessons needed)`);
     out.push('');
     out.push('These are confirmed renames: the upstream file was moved from one directory to another but the code is essentially identical (just usage-string updates). Pull the new file and refresh the vendored copy.');
     out.push('');
@@ -2025,7 +2072,7 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
   }
 
   if (falseRenames.length > 0) {
-    out.push(`### 2b. False renames (${falseRenames.length}) — content diverged, treated as new lessons`);
+    out.push(`### 3b. False renames (${falseRenames.length}) — content diverged, treated as new lessons`);
     out.push('');
     out.push('The basename matched between a removed file and an added file, but the content is too different to call this a rename. Listed here so Dee can verify; the corresponding \`to\` path is also in Section 4 (new chapters).');
     out.push('');
@@ -2043,7 +2090,7 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
     c.file?.startsWith(CONFIG.examplesPathPrefix)
   );
   if (exampleFileChanges.length > 0 || relevantCommits.length > 0) {
-    out.push('### 2b. File-level changes');
+    out.push('### 3b. File-level changes');
     out.push('');
     out.push('| [ ] | Upstream file | Vendored mirror | Change |');
     out.push('| --- | ------------- | ---------------- | ------ |');
@@ -2063,7 +2110,7 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
   }
 
   if (relevantCommits.length > 0) {
-    out.push('### 2c. Per-commit context');
+    out.push('### 3c. Per-commit context (reference only, no action needed)');
     out.push('');
     out.push('| Commit | Date | Subject | Files |');
     out.push('| ------ | ---- | ------- | ----- |');
@@ -2074,10 +2121,10 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
     out.push('');
   }
 
-  // ─── PART 3: Docs changes ─────────────────────────────────────────────
+  // ─── PART 4: Docs changes ─────────────────────────────────────────────
   const docsDiverged = docs?.results.filter((r) => r.status === 'diverged') ?? [];
   const docsMissing = docs?.results.filter((r) => r.status === 'upstream-missing') ?? [];
-  out.push(`## 3. Docs changes (${docsDiverged.length + docsMissing.length})`);
+  out.push(`## 4. Docs changes (${docsDiverged.length + docsMissing.length})`);
   out.push('');
   if (!docs) {
     out.push('_Docs check skipped (--quick). Re-run without --quick to check._');
@@ -2110,8 +2157,8 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
     }
   }
 
-  // ─── PART 4: New chapters (optional) ──────────────────────────────────
-  out.push(`## 4. New chapters / optional additions (${newOpportunities.length})`);
+  // ─── PART 5: New chapters (optional) ──────────────────────────────────
+  out.push(`## 5. New chapters / optional additions (${newOpportunities.length})`);
   out.push('');
   out.push('Upstream example files that have no matching vendored copy. Each row proposes where a new lesson would live.');
   out.push('');
@@ -2131,11 +2178,11 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
   }
   out.push('');
 
-  // ─── PART 5: Model registry ───────────────────────────────────────────
+  // ─── PART 6: Model registry ───────────────────────────────────────────
   // One sentence per direction: comma-separated constant lists. Saves
   // ~150 lines vs. one-line-per-constant in the 48/109 case.
   if (modelChanges.added.length || modelChanges.removed.length) {
-    out.push(`## 5. Model registry (${CONFIG.modelRegistryFile})`);
+    out.push(`## 6. Model registry (${CONFIG.modelRegistryFile}) (reference only, no action needed)`);
     out.push('');
     if (modelChanges.added.length) {
       out.push(`**Added models (${modelChanges.added.length}):** ${modelChanges.added.map((m) => '`' + m + '`').join(', ')}.`);
@@ -2147,11 +2194,11 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
     }
   }
 
-  // ─── PART 6: Informational (body-only, no signature drift) ────────────
+  // ─── PART 7: Informational (body-only, no signature drift) ────────────
   // Group by upstream file. One row per file, listing the symbols whose
   // body changed but signature didn't. These are *not* action items.
   if (informational.length > 0) {
-    out.push(`## 6. Informational (${informational.length})`);
+    out.push(`## 7. Informational (${informational.length}) (reference only, no action needed)`);
     out.push('');
     out.push('Body fingerprint changed but the function/type signature is identical. Lessons probably still work, but a smoke run is cheap insurance. Not action items.');
     out.push('');
@@ -2172,10 +2219,10 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
     out.push('');
   }
 
-  // ─── PART 7: Per-commit trail (covered) ───────────────────────────────
+  // ─── PART 8: Per-commit trail (covered) ───────────────────────────────
   const coveredTouchedCommits = relevantCommits.filter((c) => c._files.length > 0);
   if (coveredTouchedCommits.length > 0) {
-    out.push(`## 7. Per-commit trail (${coveredTouchedCommits.length})`);
+    out.push(`## 8. Per-commit trail (${coveredTouchedCommits.length}) (reference only, no action needed)`);
     out.push('');
     out.push('For traceability: every commit since baseline that touched a covered example file.');
     out.push('');
@@ -2189,9 +2236,10 @@ function renderReport({ from, to, modelChanges, allChanges, relevant, informatio
     out.push('');
   }
 
+
   out.push('---');
   out.push('');
-  out.push(`Re-run: \`node scripts/lessons-check.mjs --project ${CONFIG.key}\`. Override baseline: \`--since <ref>\`. Skip docs: \`--quick\`.`);
+  out.push(`Re-run: \`node scripts/lessons-check.mjs --project ${CONFIG.key}\`. Override baseline: \`--since <ref>\`. Advance baseline to the dependency: \`--advance\`. Skip docs: \`--quick\`. Include unreleased upstream commits: \`--head\`.`);
   out.push('');
   return out.join('\n');
 }
@@ -2340,6 +2388,82 @@ function appendReleaseNoteSnippet(out, indent, change, snippets) {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// Resolves a changelog snippet's PR number to the files its commit(s)
+// touched, straight from git rather than the (possibly out-of-scope)
+// AST-based surface diff.
+// ────────────────────────────────────────────────────────────────────
+
+async function resolveSnippetTouchedFiles(git, prNumber) {
+  if (!prNumber) return { files: [], commitType: null };
+  try {
+    const subjects = (await git(['log', '--all', '--format=%H %s', '--fixed-strings', '--grep', `(#${prNumber})`]))
+      .trim().split('\n').filter(Boolean);
+    if (!subjects.length) return { files: [], commitType: null };
+    const shas = subjects.map((l) => l.split(' ')[0]);
+    const firstSubject = subjects[0].slice(subjects[0].indexOf(' ') + 1);
+    const ticket = subjects[0].split(' ')[1] ?? null;
+    // Conventional-commit type, e.g. "QVAC-1234 feat[api]: ..." -> "feat".
+    const commitType = firstSubject.match(/^\S+\s+(\w+)(?:\[[^\]]*\])?:/)?.[1] ?? null;
+    const files = new Set();
+    for (const sha of shas) {
+      for (const f of (await git(['diff-tree', '--no-commit-id', '--name-only', '-r', sha])).trim().split('\n').filter(Boolean)) files.add(f);
+    }
+    return { files: [...files], commitType, ticket };
+  } catch {
+    return { files: [], commitType: null, ticket: null };
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Finds changelog snippets whose symbol matches no detected change and
+// whose PR's touched files aren't already a known example or covered file
+// (e.g. a capability shipped entirely through a sibling package).
+// ────────────────────────────────────────────────────────────────────
+
+// A snippet whose code, once comments are stripped, is nothing but a
+// `schema.shape.field.description` accessor only documents a Zod
+// .describe() string; that's never lesson material.
+function isDescribeOnlySnippet(code) {
+  const lines = code.split('\n')
+    .map((l) => l.replace(/\/\/.*$/, '').trim())
+    .filter((l) => l && !/^import\b/.test(l));
+  if (!lines.length) return false;
+  const last = lines[lines.length - 1].replace(/\s+/g, '');
+  return /^[$\w]+(\.[$\w]+|\[\d+\]|\['[^']*'\])*\.description$/.test(last);
+}
+
+async function findUncoveredReleaseSnippets(git, snippets, allChanges, newOpportunities, coveredExampleFiles) {
+  const knownSymbols = allChanges.map((c) => c.field ?? c.param ?? c.name ?? c.schema).filter(Boolean);
+  const newOpportunitySet = new Set(newOpportunities);
+  const uncovered = [];
+  const byTicket = new Map(); // one entry per ticket: same ticket, split across PRs, is one feature.
+  for (const s of snippets) {
+    if (isDescribeOnlySnippet(s.code)) continue;
+    const symbolMatch = knownSymbols.some((sym) => new RegExp(`\\b${escapeRegExp(sym)}\\b`).test(s.code));
+    if (symbolMatch) continue;
+    const { files: touched, commitType, ticket } = await resolveSnippetTouchedFiles(git, s.prNumber);
+    // test[...]/chore[...] PRs (lint guards, dependency bumps) aren't lesson material either.
+    if (commitType === 'test' || commitType === 'chore') continue;
+    const alreadyKnown = touched.some((f) => newOpportunitySet.has(f) || coveredExampleFiles.has(f));
+    if (alreadyKnown) continue;
+    // Zero touched files under packages/sdk/ at all (not even package.json,
+    // a contract regen, or an e2e test) means no @qvac/sdk footprint to
+    // teach, only an internal tool in a sibling package.
+    if (touched.length > 0 && touched.every((f) => !f.startsWith(CONFIG.surfacePathPrefix))) continue;
+    if (ticket && byTicket.has(ticket)) {
+      const existing = byTicket.get(ticket);
+      existing.extraPrNumbers.push(s.prNumber);
+      existing.touched = [...new Set([...existing.touched, ...touched])];
+      continue;
+    }
+    const entry = { ...s, touched, extraPrNumbers: [] };
+    if (ticket) byTicket.set(ticket, entry);
+    uncovered.push(entry);
+  }
+  return uncovered;
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Guesses which lesson chapter an upstream file belongs to.
 // ────────────────────────────────────────────────────────────────────
 
@@ -2371,12 +2495,36 @@ function chapterGuess(upstreamFile, docChapterMap) {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Resolves a repo's baseline: --since if given, else its own tag/dep constraint.
+// Resolves a repo's baseline: --since wins outright, else the last-used
+// baseline wins over the dependency (see ADVANCE_BASELINE above).
 // ────────────────────────────────────────────────────────────────────
 
 async function resolveRepoBaseline(repo) {
   if (RAW_SINCE) return resolveRef(repo.git, RAW_SINCE);
-  return baselineFromDep(repo.git, repo.config);
+  const depBaseline = await baselineFromDep(repo.git, repo.config);
+  if (ADVANCE_BASELINE) return depBaseline;
+  const prior = loadPriorBaseline(repo.key);
+  if (prior && prior.sha !== depBaseline.sha) {
+    console.error(`[check] baseline stays at ${prior.ref} (last used); the dependency now allows ${depBaseline.ref}. Pass --advance once the current checklist is cleared.`);
+    return resolveRef(repo.git, prior.ref);
+  }
+  return depBaseline;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Resolves the `to` ref for a repo: the latest tagged release by default
+// (so the report only ever reflects code that's actually shipped), or HEAD
+// when --head is passed or the repo has no tag glob to resolve against.
+// ────────────────────────────────────────────────────────────────────
+
+async function resolveToRef(repo) {
+  if (INCLUDE_UNRELEASED) return resolveRef(repo.git, 'HEAD');
+  const tagGlob = repo.config.baselineTagGlob;
+  if (!tagGlob) return resolveRef(repo.git, 'HEAD');
+  const tags = (await repo.git(['tag', '--list', tagGlob, '--sort=-version:refname'])).trim().split('\n').filter(Boolean);
+  const latest = tags.find((t) => parseSemver(t));
+  if (!latest) return resolveRef(repo.git, 'HEAD');
+  return resolveRef(repo.git, latest);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -2397,13 +2545,25 @@ async function main() {
   // Each repo baselines independently; main/examples/docs only share
   // `from`/`to` when they're literally the same repo.
   const from = await resolveRepoBaseline(mainRepo);
-  const to = await resolveRef(mainRepo.git, 'HEAD');
+  const to = await resolveToRef(mainRepo);
   console.error(`[check] baseline: ${from.ref} (${from.sha.slice(0, 8)}, ${from.date.slice(0, 10)})`);
-  console.error(`[check] current:  ${to.ref} (${to.sha.slice(0, 8)}, ${to.date.slice(0, 10)})`);
+  console.error(`[check] current:  ${to.ref} (${to.sha.slice(0, 8)}, ${to.date.slice(0, 10)})${INCLUDE_UNRELEASED ? ' [includes unreleased commits]' : ''}`);
+
+  // Commits merged since `to` that this run deliberately excludes, so the
+  // report can distinguish "nothing new released" from "nothing new".
+  let unreleasedAhead = null;
+  if (!INCLUDE_UNRELEASED && to.ref !== 'HEAD') {
+    const headRef = await resolveRef(mainRepo.git, 'HEAD');
+    if (headRef.sha !== to.sha) {
+      const count = parseInt((await mainRepo.git(['rev-list', '--count', `${to.sha}..${headRef.sha}`])).trim(), 10);
+      unreleasedAhead = { count, headSha: headRef.sha, headDate: headRef.date };
+      console.error(`[check] ${count} commit(s) merged since ${to.ref}, not yet released, excluded (rerun with --head to include)`);
+    }
+  }
 
   const examplesFrom = examplesRepo.dir === mainRepo.dir ? from : await resolveRepoBaseline(examplesRepo);
-  const examplesTo = examplesRepo.dir === mainRepo.dir ? to : await resolveRef(examplesRepo.git, 'HEAD');
-  const docsTo = docsRepo.dir === mainRepo.dir ? to : (docsRepo.dir === examplesRepo.dir ? examplesTo : await resolveRef(docsRepo.git, 'HEAD'));
+  const examplesTo = examplesRepo.dir === mainRepo.dir ? to : await resolveToRef(examplesRepo);
+  const docsTo = docsRepo.dir === mainRepo.dir ? to : (docsRepo.dir === examplesRepo.dir ? examplesTo : await resolveToRef(docsRepo));
   const docsFrom = docsRepo.dir === mainRepo.dir ? from : (docsRepo.dir === examplesRepo.dir ? examplesFrom : await resolveRepoBaseline(docsRepo));
 
   const docChapterMap = await buildChapterMapFromDocs(docsRepo.git, docsTo.sha);
@@ -2454,6 +2614,9 @@ async function main() {
   const { relevant, informational, renames, falseRenames, relevantCommits, newOpportunities, resolvedRenameCount } = partition;
   console.error(`[check] relevant: ${relevant.length}, informational: ${informational.length}, renames: ${renames.length} (${resolvedRenameCount} already synced, dropped), falseRenames: ${falseRenames.length}, new opportunities: ${newOpportunities.length}`);
 
+  const uncoveredSnippets = await findUncoveredReleaseSnippets(mainRepo.git, releaseNoteSnippets, allChanges, newOpportunities, index.coveredExampleFiles);
+  console.error(`[check] changelog entries not reflected elsewhere in the report: ${uncoveredSnippets.length}`);
+
   // Docs site.
   let docs = null;
   if (!QUICK) {
@@ -2465,7 +2628,7 @@ async function main() {
   // Render and write.
   CHECKED_KEYS = loadCheckedKeys();
   console.error(`[check] carrying forward ${CHECKED_KEYS.size} checked item(s) from prior runs`);
-  const report = renderReport({ from, to, modelChanges, allChanges, relevant, informational, renames, falseRenames, relevantCommits, newOpportunities, docs, index, docChapterMap, releaseNoteSnippets });
+  const report = renderReport({ from, to, modelChanges, allChanges, relevant, informational, renames, falseRenames, relevantCommits, newOpportunities, docs, index, docChapterMap, releaseNoteSnippets, unreleasedAhead, uncoveredSnippets });
   mkdirSync(path.dirname(REPORT_MD), { recursive: true });
   if (!JSON_ONLY) writeFileSync(REPORT_MD, report);
 
@@ -2474,6 +2637,7 @@ async function main() {
     generated: new Date().toISOString(),
     from: { ref: from.ref, sha: from.sha, date: from.date },
     to: { ref: to.ref, sha: to.sha, date: to.date },
+    unreleasedAhead,
     summary: {
       rawChanges: allChanges.length,
       relevantChanges: relevant.length,
@@ -2481,6 +2645,7 @@ async function main() {
       renames: renames.length,
       falseRenames: falseRenames.length,
       newOpportunities: newOpportunities.length,
+      uncoveredChangelogEntries: uncoveredSnippets.length,
       modelsAdded: modelChanges.added.length,
       modelsRemoved: modelChanges.removed.length,
       examplesCommits: commits.length,
@@ -2496,12 +2661,16 @@ async function main() {
     falseRenames,
     relevantCommits,
     newOpportunities,
+    uncoveredSnippets,
     docs: docs?.results ?? null,
   };
   writeFileSync(REPORT_JSON, JSON.stringify(jsonOut, null, 2));
 
   // Save state.
-  writeFileSync(STATE_FILE, JSON.stringify({ lastRun: new Date().toISOString(), from, to, checkedKeys: [...CHECKED_KEYS].sort() }, null, 2));
+  const perRepoFrom = { [mainRepo.key]: from };
+  if (examplesRepo.key !== mainRepo.key) perRepoFrom[examplesRepo.key] = examplesFrom;
+  if (docsRepo.key !== mainRepo.key && docsRepo.key !== examplesRepo.key) perRepoFrom[docsRepo.key] = docsFrom;
+  writeFileSync(STATE_FILE, JSON.stringify({ lastRun: new Date().toISOString(), from, to, perRepoFrom, checkedKeys: [...CHECKED_KEYS].sort() }, null, 2));
 
   // Stdout summary for CI.
   console.log(JSON.stringify(jsonOut.summary, null, 2));
