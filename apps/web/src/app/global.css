@@ -48,6 +48,12 @@ html {
   outline-offset: 2px;
 }
 
+/* The lesson search tints its wrapper border on focus instead. This rule is
+   unlayered, so a Tailwind utility in @layer utilities cannot override it. */
+input[type="search"]:focus-visible {
+  outline: none;
+}
+
 /* Dark-theme scrollbar */
 * {
   scrollbar-width: thin;
