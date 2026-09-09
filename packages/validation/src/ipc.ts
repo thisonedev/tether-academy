@@ -250,6 +250,8 @@ export const playgroundCredentialSetSchema = z.object({
   value: z.string().min(1).max(8192),
 });
 
+export const ragIndexBackendSchema = z.enum(['hyperdb', 'turbovec']);
+
 /** A model cache entry id, used as a relative path under the models root; `removeModel()` containment-checks the resolved result too, so this is the earlier of two gates. */
 export const modelIdSchema = z
   .string()

@@ -84,6 +84,8 @@ const academy = {
       ipcRenderer.invoke('academy:workflow:generate', { prompt, catalogue, currentWorkflow }),
   },
   ragSearch: (documents, query, topK) => ipcRenderer.invoke('academy:rag-search', { documents, query, topK }),
+  ragIndexBackend: () => ipcRenderer.invoke('academy:rag:index-backend'),
+  setRagIndexBackend: (backend) => ipcRenderer.invoke('academy:rag:set-index-backend', backend),
   ocr: (image) => ipcRenderer.invoke('academy:ocr', { image }),
   classifyImage: (image) => ipcRenderer.invoke('academy:classify-image', { image }),
   textToSpeech: (text) => ipcRenderer.invoke('academy:text-to-speech', { text }),

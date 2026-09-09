@@ -172,6 +172,31 @@ const pearStore = cmd.flags.storage;
 const updates = cmd.flags.updates;
 if (pearStore) app.setPath('userData', pearStore);
 
+// Point @qvac/sdk at a config this app controls, before anything requires it,
+// so the playground's RAG search (rag.cjs) picks up the chosen index backend.
+// The RPC worker reads this file once, on its first spawn, so a change here
+// only takes effect after the app restarts.
+const RAG_INDEX_BACKENDS = ['hyperdb', 'turbovec'];
+const DEFAULT_RAG_INDEX_BACKEND = 'turbovec';
+const ragConfigPath = path.join(app.getPath('userData'), 'qvac.config.json');
+
+function readRagIndexBackend() {
+  try {
+    const parsed = JSON.parse(fsSync().readFileSync(ragConfigPath, 'utf8'));
+    return parsed.ragTurbovec ? 'turbovec' : 'hyperdb';
+  } catch {
+    return DEFAULT_RAG_INDEX_BACKEND;
+  }
+}
+
+function writeRagIndexBackend(backend) {
+  if (!RAG_INDEX_BACKENDS.includes(backend)) throw new Error(`Unknown RAG index backend: ${backend}`);
+  fsSync().writeFileSync(ragConfigPath, JSON.stringify({ ragTurbovec: backend === 'turbovec' }, null, 2));
+}
+
+if (!fsSync().existsSync(ragConfigPath)) writeRagIndexBackend(DEFAULT_RAG_INDEX_BACKEND);
+if (!process.env.QVAC_CONFIG_PATH) process.env.QVAC_CONFIG_PATH = ragConfigPath;
+
 ipcMain.on('pkg', (evt) => {
   evt.returnValue = pkg;
 });
@@ -666,6 +691,11 @@ handle('academy:playground-credentials:delete', async (name) => playgroundCreden
 handle('academy:translate', async ({ text, language }) => translate.translateText(text, language));
 handle('academy:workflow:generate', async ({ prompt, catalogue, currentWorkflow }) => chat.generateWorkflow({ prompt, catalogue, currentWorkflow }));
 handle('academy:rag-search', async ({ documents, query, topK }) => rag.searchDocuments(documents, query, topK));
+handle('academy:rag:index-backend', async () => readRagIndexBackend());
+handle('academy:rag:set-index-backend', async (backend) => {
+  writeRagIndexBackend(backend);
+  return backend;
+});
 handle('academy:ocr', async ({ image }) => ocr.readTextFromImage(image));
 handle('academy:classify-image', async ({ image }) => classify.classifyImage(image));
 handle('academy:text-to-speech', async ({ text }) => tts.speak(text));

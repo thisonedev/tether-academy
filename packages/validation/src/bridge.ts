@@ -580,6 +580,10 @@ export interface AcademyAPI {
   /** Real chunk + embed + vector search over `documents` for `query`, via a
    *  throwaway RAG workspace that's deleted after the call returns. */
   ragSearch?: (documents: string[], query: string, topK?: number) => Promise<AcademyRagSearchResult[]>;
+  /** The RAG index backend new workspaces are created with. Persisted app-wide;
+   *  a change here applies after the app's next restart. */
+  ragIndexBackend?: () => Promise<'hyperdb' | 'turbovec'>;
+  setRagIndexBackend?: (backend: 'hyperdb' | 'turbovec') => Promise<'hyperdb' | 'turbovec'>;
   /** `image` is a data: URL, as read from a picked file via FileReader. */
   ocr?: (image: string) => Promise<string>;
   classifyImage?: (image: string) => Promise<string>;

@@ -52,6 +52,17 @@ questions:
         feedback: "Check what `ragIngest` logs as the document count in the expected output."
       - text: "The workspace persists vectors to disk instead of keeping them only in memory."
         correct: true
+  - id: ragturbovec-pinning
+    text: "A workspace was created while `ragTurbovec` was unset, so it's on HyperDB. What happens to it after `qvac.config.json` sets `ragTurbovec: true`?"
+    answers:
+      - text: "It keeps using HyperDB; the adapter is decided once, at creation, not re-evaluated on every open."
+        correct: true
+      - text: "It switches to TurboVec the next time `ragIngest` runs against it."
+        correct: false
+        feedback: "Check whether the adapter choice is re-evaluated on each run, or fixed when the workspace was first created."
+      - text: "`ragIngest` refuses to open it until the workspace is deleted and recreated."
+        correct: false
+        feedback: "Nothing blocks reopening an existing workspace; re-read what changes and what doesn't once the flag turns on later."
 ---
 
 Now that we've built the smallest useful search engine in chapter 3, we're going to scale it up to a workspace that lives on disk.
@@ -76,3 +87,5 @@ console.log("First entry:", result.processed[0]);
 `chunk: false` tells the SDK to skip splitting. The next lesson uses chunking for longer text.
 
 > Note: re-running `ragIngest` against the same workspace doesn't double-ingest. The SDK identifies already-embedded documents and skips them. The first run takes the longest; the second is faster.
+
+> Note: the built-in store defaults to HyperDB. Set `ragTurbovec: true` in `qvac.config.json` to put new workspaces on a TurboVec index instead; `ragIngest` and `ragSearch` don't change. `ragIngest` fixes the adapter once, when it creates the workspace: a workspace already on HyperDB stays there even after the flag turns on. TurboVec needs an embedding dimension divisible by 8 and no larger than 1024, which `GTE_LARGE_FP16` meets exactly.
