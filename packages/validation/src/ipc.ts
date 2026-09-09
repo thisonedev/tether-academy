@@ -172,7 +172,11 @@ export const academyRagSearchSchema = z.object({
 });
 
 export const academyTranslateSchema = z.object({
-  text: z.string().min(1).max(20_000),
+  /** An array runs Bergamot's batch mode and resolves one translation per entry. */
+  text: z.union([
+    z.string().min(1).max(20_000),
+    z.array(z.string().min(1).max(20_000)).min(1).max(50),
+  ]),
   /** Matches a key in translate.cjs's NMT_PRESETS (English source only). */
   language: z.string().min(1).max(64),
 });

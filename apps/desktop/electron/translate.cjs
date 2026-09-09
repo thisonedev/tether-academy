@@ -170,7 +170,8 @@ async function ensureLoaded(language) {
   return current;
 }
 
-/** Non-streaming: the playground node wants one final string, not tokens. */
+/** Non-streaming: the playground node wants finished strings, not tokens.
+ *  An array of texts resolves `translations`, one entry per input. */
 async function translateText(text, language) {
   const sdk = require('@qvac/sdk');
   if (typeof sdk.translate !== 'function') {
@@ -183,7 +184,7 @@ async function translateText(text, language) {
     stream: false,
     modelType: 'nmtcpp-translation',
   });
-  return result.text;
+  return Array.isArray(text) ? result.translations : result.text;
 }
 
 module.exports = {

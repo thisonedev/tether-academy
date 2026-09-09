@@ -561,7 +561,10 @@ export interface AcademyAPI {
   playgroundCredentials?: AcademyPlaygroundCredentialsAPI;
   /** English -> target only, via the SDK's dedicated per-language Bergamot NMT
    *  models, not the general chat model. Throws for an unsupported language. */
-  translate?: (text: string, language: string) => Promise<string>;
+  translate?: {
+    (text: string, language: string): Promise<string>;
+    (text: string[], language: string): Promise<string[]>;
+  };
   /** Turns a plain-language request into a workflow graph, via the chat model.
    *  `catalogue` is the live node-kind/field list from PLAYGROUND_NODE_DEFS;
    *  the caller still validates the raw `text` before touching the canvas. */

@@ -438,24 +438,36 @@ function PlaygroundCanvas({
   // translation, not a chat-model guess); silently falls back to runAgentNode
   // when the bridge is unavailable (web) or the language has no NMT model.
   const translateNode = useCallback(
-    async (text: string, language: string): Promise<string> => {
+    async (text: string | string[], language: string): Promise<string | string[]> => {
+      const prompt = (one: string) =>
+        `Translate the following text to ${language}. Reply with only the translation, nothing else.\n\n${one}`;
       if (typeof window.academy?.translate === 'function') {
         const entryId = nextEntryId();
         appendEntry({ kind: 'chat-assistant', id: entryId, content: '', streaming: true });
         try {
-          const result = await window.academy.translate(text, language);
-          setAssistantEntry(entryId, (e) => ({ ...e, content: result, streaming: false }));
+          // One entry point for both arities; the overloads split again on return.
+          const call = window.academy.translate as (
+            value: string | string[],
+            target: string,
+          ) => Promise<string | string[]>;
+          const result = await call(text, language);
+          const shown = Array.isArray(result) ? result.join('\n') : result;
+          setAssistantEntry(entryId, (e) => ({ ...e, content: shown, streaming: false }));
           return result;
         } catch {
           setEntries((prev) => prev.filter((e) => e.id !== entryId));
         }
       }
-      return runAgentNode(
-        `Translate the following text to ${language}. Reply with only the translation, nothing else.\n\n${text}`,
-      );
+      // Without the NMT bridge each entry still needs its own agent round trip.
+      if (Array.isArray(text)) {
+        const out: string[] = [];
+        for (const one of text) out.push(await runAgentNode(prompt(one)));
+        return out;
+      }
+      return runAgentNode(prompt(text));
     },
     [runAgentNode, setAssistantEntry],
-  );
+  ) as PlaygroundRunContext['translate'];
 
   // Keyed by confirm entry id; handleStop resolves every pending one as `false`
   // so a run stuck waiting on the user isn't the one thing Stop can't stop.

@@ -30,6 +30,10 @@ import type {
 // Bounds real per-row model calls until there's hardware-aware concurrency in the engine.
 const MAX_ITERATE_ROWS = 5;
 
+// Must stay at or under academyTranslateSchema's array cap in
+// packages/validation/src/ipc.ts, or the IPC call rejects the whole batch.
+const MAX_TRANSLATE_LINES = 50;
+
 // Same convention as the Randomize node's own list field: one per line, or
 // comma-separated on a single line.
 function splitIntoItems(text: string): string[] {
@@ -37,6 +41,13 @@ function splitIntoItems(text: string): string[] {
     .split(/\r?\n|,/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+function splitIntoLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 // Must stay at or under academyTranslateSchema/chatMessageSchema's own caps
@@ -281,6 +292,12 @@ const translateFields: PlaygroundNodeKindDef['fields'] = [
     label: 'Text to translate',
     type: 'textarea',
     hiddenWhen: (fields, inputKind) => hasWiredInput(inputKind) && !usesStaticSource(fields),
+  },
+  {
+    key: 'mode',
+    label: 'Translate',
+    type: 'select',
+    options: ['Whole text', 'Line by line'],
   },
   {
     key: 'language',
@@ -842,6 +859,23 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
         return;
       }
       const language = ctx.fields.language || 'Spanish';
+      if (ctx.fields.mode === 'Line by line') {
+        const lines = splitIntoLines(text);
+        if (lines.length === 0) {
+          ctx.pushRunLine('err', 'Nothing to work with: every line was blank.');
+          return;
+        }
+        const batch = lines.slice(0, MAX_TRANSLATE_LINES);
+        if (lines.length > batch.length) {
+          ctx.pushRunLine('ok', `Capped to the first ${MAX_TRANSLATE_LINES} of ${lines.length} lines.`);
+        }
+        const translated = await ctx.translate(
+          batch.map((line) => truncateForLimit(line, TRANSLATE_TEXT_MAX).text),
+          language,
+        );
+        ctx.setOutput(translated.join('\n'));
+        return;
+      }
       const { text: safeText, truncated } = truncateForLimit(text, TRANSLATE_TEXT_MAX);
       if (truncated) ctx.pushRunLine('ok', `Text was long: only the first ${TRANSLATE_TEXT_MAX.toLocaleString()} characters were translated.`);
       ctx.setOutput(await ctx.translate(safeText, language));
