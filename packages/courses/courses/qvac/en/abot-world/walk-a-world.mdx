@@ -1,0 +1,110 @@
+---
+title: "Walk a world from a single image"
+sourceExample: "packages/sdk/examples/abot-world.ts"
+platforms: ['node']
+requirements:
+  - "Needs a dedicated GPU with at least 20 GB free VRAM at the default 832x480 tier (a 24 GB card in practice); a 448x256 low-VRAM tier runs on ~6 GB cards, well below interactive frame rates"
+tests:
+  - id: sets-world-mode
+    description: 'Sets mode: "world" in modelConfig'
+    pattern: "mode\\s*:\\s*[`\"']world[`\"']"
+  - id: loads-abot-world-model
+    description: 'Loads ABOT_WORLD_0_5B_Q8_0 as modelSrc'
+    pattern: "modelSrc\\s*:\\s*ABOT_WORLD_0_5B_Q8_0"
+  - id: creates-scene-from-image
+    description: 'Calls worldCreateScene with an image'
+    pattern: "worldCreateScene\\s*\\(\\s*\\{[^}]*image"
+  - id: streams-step-frames
+    description: 'Iterates a worldStep frameStream in a for-await loop'
+    pattern: "for\\s+await\\s*\\([^)]*frameStream"
+hints:
+  - "modelType: 'sdcpp-generation' with modelConfig.mode: 'world' switches the engine into ABot-World mode. taehvModelSrc is the streaming decoder every worldStep uses; vaeModelSrc is the full VAE that only runs once, inside worldCreateScene, to encode the first frame."
+  - "worldCreateScene({ modelId, prompt, image, width, height }) builds the scene. It lives on the session once created, so awaiting stats is enough to know it's ready."
+  - "worldStep({ modelId, keys }) walks one block per call. keys is an array like ['W', 'L'] for forward-while-turning, or [] to idle. Await one block's frameStream before doing it again; a second one while the first is still streaming is rejected."
+expectedOutput:
+  - "Scene created"
+  - "Walked 4 blocks"
+questions:
+  - id: why-two-vaes
+    text: "Why does the ABot-World model load need both `taehvModelSrc` and `vaeModelSrc`?"
+    answers:
+      - text: "`taehvModelSrc` decodes every step's frames; `vaeModelSrc` converts the first frame into latents once, at scene creation."
+        correct: true
+      - text: "Both decode every block's frames; loading only one would halve the frame rate."
+        correct: false
+        feedback: "Check which VAE the concept paragraph says runs per step, and which one runs only at scene creation."
+      - text: "`vaeModelSrc` only runs when `returnPack: true` is passed to `worldCreateScene`."
+        correct: false
+        feedback: "Check whether the first-frame encode happens regardless of `returnPack`, or only when it's set."
+  - id: why-sequential-steps
+    text: "What happens if you run `worldStep` again before the previous block's `frameStream` finishes?"
+    answers:
+      - text: "A second `worldStep` invocation while one is still streaming is rejected; only one block can be in flight per session."
+        correct: true
+      - text: "`worldStep` is stateless, so doing it again in parallel would just walk from the wrong `keys`."
+        correct: false
+        feedback: "Check whether the SDK rejects a `worldStep` that overlaps another, or silently applies the wrong `keys`."
+      - text: "It still works in parallel, just slower, since both share one GPU."
+        correct: false
+        feedback: "Re-read what the concept paragraph says happens to a `worldStep` request issued mid-stream."
+  - id: cancel-race-outcome
+    text: "What happens when a `worldStep` run is cancelled after its block already finished?"
+    answers:
+      - text: "The cancel loses the race; the block completes normally, and the SDK treats that as a success."
+        correct: true
+      - text: "The SDK still throws `InferenceCancelledError`, even though the block already delivered its frames."
+        correct: false
+        feedback: "Check what the Note says happens when the cancel arrives after the block already completed."
+      - text: "The already-written frames get discarded, and the block has to run again."
+        correct: false
+        feedback: "Think about whether a completed block's output is kept or thrown away when a cancel arrives too late."
+---
+
+In this first lesson, we're going to build a walkable world from a single image. Unlike the diffusion models in earlier chapters, ABot-World doesn't render a fixed clip. Instead, it starts from a photo, and each `worldStep` call extends the walk in whatever direction the keys point.
+
+The model load needs three side files alongside the main DiT checkpoint: `t5XxlModelSrc` encodes the prompt, `taehvModelSrc` decodes every step's frames, and `vaeModelSrc` converts the first frame into latents once, at scene creation. The two VAEs are easy to swap by name. A swapped pair still loads without error, and only fails once the walk starts.
+
+```ts
+const modelId = await loadModel({
+  modelSrc: ABOT_WORLD_0_5B_Q8_0,
+  modelType: "sdcpp-generation",
+  modelConfig: {
+    mode: "world",
+    taehvModelSrc: ABOT_WORLD_0_5B_LF_VAE,
+    t5XxlModelSrc: UMT5_XXL_ENC_Q8_0,
+    vaeModelSrc: ABOT_WORLD_0_5B_LF_VAE_F16,
+    world: { seed: 42, kvCache: true },
+  },
+});
+```
+
+`worldCreateScene` turns a still image and a prompt into a walkable scene. The scene stays live on the session, so awaiting `stats` is enough to know it's ready:
+
+```ts
+const creation = worldCreateScene({
+  modelId,
+  prompt: "A realistic outdoor world scene with a navigable path.",
+  image: firstFrame,
+  width: 832,
+  height: 480,
+});
+await creation.stats;
+console.log("Scene created");
+```
+
+`worldStep({ modelId, keys })` walks the scene one block at a time. Pass `keys` like `['W', 'L']` to move forward while turning left, or `[]` to idle. `frameStream` delivers that block's decoded frames as they're produced:
+
+```ts
+const tape: string[][] = [["W"], ["W", "L"], ["W"], []];
+for (const keys of tape) {
+  const { frameStream } = worldStep({ modelId, keys });
+  for await (const frame of frameStream) {
+    fs.writeFileSync(`output/abot-world/frame-${String(frameNumber++).padStart(4, "0")}.jpg`, frame);
+  }
+}
+console.log(`Walked ${tape.length} blocks`);
+```
+
+That's why the loop above runs sequentially. The SDK rejects a second `worldStep` request made before the previous block's `frameStream` finishes.
+
+> Note: `worldStep` itself can also be cancelled mid-block with `cancel({ requestId })`. Cancellation is block-granular, since the engine finishes the current block internally regardless. The cancel either arrives in time or loses the race to a block that already completed, and both outcomes are correct.

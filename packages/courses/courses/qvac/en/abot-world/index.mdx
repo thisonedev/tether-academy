@@ -1,0 +1,14 @@
+---
+title: ABot-World
+description: Interactive world generation from a single image.
+---
+
+ABot-World builds a walkable video world from one photo, then lets you steer it while it plays.
+
+Unlike the other diffusion models, ABot-World doesn't render a fixed clip. `worldCreateScene` turns a still image into a live scene on the session, and each `worldStep` call extends the walk by one block in whatever direction the keys point. The engine streams back decoded frames as it generates them, so the walk plays out in real time rather than resolving all at once.
+
+[Start Lesson 1 →](/courses/qvac/en/abot-world/walk-a-world)
+
+### All lessons in this chapter
+
+1. [Walk a world from a single image](/courses/qvac/en/abot-world/walk-a-world)

@@ -657,6 +657,20 @@ export const CURRICULUM: CurriculumChapter[] = [
       },
     ],
   },
+  {
+    num: '19',
+    label: 'ABot-World',
+    slug: 'abot-world',
+    href: chapterHref('abot-world'),
+    lessons: [
+      {
+        num: '01',
+        title: 'Walk a world from a single image',
+        slug: 'walk-a-world',
+        href: lessonHref('abot-world', 'walk-a-world'),
+      },
+    ],
+  },
 ];
 
 /** Finds a chapter by its URL slug, or undefined. */
