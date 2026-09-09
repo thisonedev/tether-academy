@@ -442,8 +442,6 @@ function PlaygroundCanvas({
       const prompt = (one: string) =>
         `Translate the following text to ${language}. Reply with only the translation, nothing else.\n\n${one}`;
       if (typeof window.academy?.translate === 'function') {
-        const entryId = nextEntryId();
-        appendEntry({ kind: 'chat-assistant', id: entryId, content: '', streaming: true });
         try {
           // One entry point for both arities; the overloads split again on return.
           const call = window.academy.translate as (
@@ -452,10 +450,14 @@ function PlaygroundCanvas({
           ) => Promise<string | string[]>;
           const result = await call(text, language);
           const shown = Array.isArray(result) ? result.join('\n') : result;
-          setAssistantEntry(entryId, (e) => ({ ...e, content: shown, streaming: false }));
+          // translate doesn't stream, so the bubble is only added once the
+          // final text is ready: appendEntry then closes the "Translating the
+          // text" stage as it adds it, putting the ✓ line after the result.
+          appendEntry({ kind: 'chat-assistant', id: nextEntryId(), content: shown, streaming: false });
           return result;
         } catch {
-          setEntries((prev) => prev.filter((e) => e.id !== entryId));
+          // Falls through to the agent round trip below; no bubble to clean up
+          // since none was added before the call was known to succeed.
         }
       }
       // Without the NMT bridge each entry still needs its own agent round trip.
@@ -490,43 +492,58 @@ function PlaygroundCanvas({
     }
   }, []);
 
+  // Scraped/pasted source text wraps its lines for a page width that has
+  // nothing to do with this bubble, and marks list items as often with an
+  // inline "; -" as with a real line break. A line starting with a marker
+  // gets its own line; everything else joins the previous line with a
+  // space, so a mid-sentence wrap (or a mid-item one) reads as one sentence.
+  const normalizeChunkText = (text: string): string => {
+    const listMarker = /^(?:[-*+]|\d+[.)])\s/;
+    const withRealBreaks = text.replace(/;\s*(?=(?:[-*+]|\d+[.)])\s)/g, ';\n');
+    const lines = withRealBreaks
+      .split(/\n+/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    return lines.reduce((out, line, i) => (i === 0 ? line : listMarker.test(line) ? `${out}\n${line}` : `${out} ${line}`), '');
+  };
+
   // Real vector search (chunk + embed + ragSearch), not ask-doc's whole-document
   // prompt stuffing. No chat-model fallback: a wrong answer dressed up as a
   // real search result would be worse than a plain "not available" here.
   const searchDocumentsNode = useCallback(
     async (documents: string[], query: string): Promise<string> => {
-      const entryId = nextEntryId();
-      appendEntry({ kind: 'chat-assistant', id: entryId, content: '', streaming: true });
+      // ragSearch doesn't stream, so there's no partial content to show while
+      // it runs: the bubble is only added once the final text is ready, in
+      // one appendEntry call. appendEntry closes the node's "Searching the
+      // documents" stage as it adds the bubble, which puts the stage's ✓ line
+      // right after the result instead of before it.
       if (typeof window.academy?.ragSearch !== 'function') {
         const content = 'Search documents is only available in the desktop app.';
-        setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+        appendEntry({ kind: 'chat-assistant', id: nextEntryId(), content, streaming: false });
         return content;
       }
       try {
         const results = await window.academy.ragSearch(documents, query);
-        // A source document's own text can start a line with "- " or "1. ",
-        // which markdown reads as a real list; escaping it keeps a quoted
-        // passage as plain text instead of turning into a one-item bullet.
-        const escapeMarkdownList = (text: string) => text.replace(/^([ \t]*)([-*+]|\d+[.)])(\s)/gm, '$1\\$2$3');
-        // Bold "Result N" labels, not a markdown ordered list: multi-paragraph
-        // result text breaks list continuation, which silently restarts the
-        // rendered numbering at 1 for every item after the first.
+        // A quoted chunk is the source document's own text, not something to
+        // run through Markdown: its own "- " lines and single newlines would
+        // otherwise be read as list syntax and soft breaks. raw: true renders
+        // it as OCR results already do, preformatted with real line breaks.
         const content =
           results.length === 0
             ? `No matches for "${query}".`
-            : `**${results.length} result(s) for "${query}"**\n\n` +
+            : `${results.length} result(s) for "${query}"\n\n` +
               results
-                .map((r, i) => `**Result ${i + 1}** (score ${r.score.toFixed(3)})\n\n${escapeMarkdownList(r.content)}`)
-                .join('\n\n---\n\n');
-        setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+                .map((r, i) => `Result ${i + 1} (score ${r.score.toFixed(3)})\n${normalizeChunkText(r.content)}`)
+                .join('\n\n');
+        appendEntry({ kind: 'chat-assistant', id: nextEntryId(), content, streaming: false, raw: true });
         return content;
       } catch (err) {
         const content = err instanceof Error ? err.message : 'Search failed.';
-        setAssistantEntry(entryId, (e) => ({ ...e, content, streaming: false }));
+        appendEntry({ kind: 'chat-assistant', id: nextEntryId(), content, streaming: false });
         return content;
       }
     },
-    [setAssistantEntry],
+    [appendEntry],
   );
 
   // Reads window.academy fresh on every call, not captured at render time:

@@ -1173,6 +1173,11 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
     fields: searchDocsFields,
     defaultFields: defaultsFrom(searchDocsFields),
     async run(ctx) {
+      const query = (ctx.fields.query ?? '').trim();
+      if (!query) {
+        ctx.pushRunLine('err', 'No search query: open this node and enter one.');
+        return;
+      }
       let documents: string[];
       if (usesStaticSource(ctx.fields)) {
         const picked = parsePickedFiles(ctx.fields.files);
@@ -1207,7 +1212,7 @@ export const PLAYGROUND_NODE_DEFS: Record<string, PlaygroundNodeKindDef> = {
           return;
         }
       }
-      ctx.setOutput(await ctx.search(documents, ctx.fields.query ?? ''));
+      ctx.setOutput(await ctx.search(documents, query));
     },
   },
   'ask-confirmation': {
