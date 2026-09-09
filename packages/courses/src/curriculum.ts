@@ -514,6 +514,12 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'translate-text',
         href: lessonHref('translation', 'translate-text'),
       },
+      {
+        num: '02',
+        title: 'Translate a batch of texts in one call',
+        slug: 'translate-batch',
+        href: lessonHref('translation', 'translate-batch'),
+      },
     ],
   },
   {
