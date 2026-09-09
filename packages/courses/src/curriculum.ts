@@ -649,6 +649,12 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'generate-music',
         href: lessonHref('music-generation', 'generate-music'),
       },
+      {
+        num: '02',
+        title: 'Generate a cover from an existing track',
+        slug: 'generate-cover',
+        href: lessonHref('music-generation', 'generate-cover'),
+      },
     ],
   },
 ];
