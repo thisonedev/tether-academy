@@ -180,6 +180,10 @@ const RAG_INDEX_BACKENDS = ['hyperdb', 'turbovec'];
 const DEFAULT_RAG_INDEX_BACKEND = 'turbovec';
 const ragConfigPath = path.join(app.getPath('userData'), 'qvac.config.json');
 
+// Covers the SDK's own HTTP downloads too, for models model-sideload.cjs's
+// shortcut doesn't fetch itself.
+const DOWNLOAD_SECURITY_CONFIG = { requireHttpChecksum: true, requireSecureTransport: true };
+
 function readRagIndexBackend() {
   try {
     const parsed = JSON.parse(fsSync().readFileSync(ragConfigPath, 'utf8'));
@@ -191,7 +195,10 @@ function readRagIndexBackend() {
 
 function writeRagIndexBackend(backend) {
   if (!RAG_INDEX_BACKENDS.includes(backend)) throw new Error(`Unknown RAG index backend: ${backend}`);
-  fsSync().writeFileSync(ragConfigPath, JSON.stringify({ ragTurbovec: backend === 'turbovec' }, null, 2));
+  fsSync().writeFileSync(
+    ragConfigPath,
+    JSON.stringify({ ragTurbovec: backend === 'turbovec', ...DOWNLOAD_SECURITY_CONFIG }, null, 2),
+  );
 }
 
 if (!fsSync().existsSync(ragConfigPath)) writeRagIndexBackend(DEFAULT_RAG_INDEX_BACKEND);
