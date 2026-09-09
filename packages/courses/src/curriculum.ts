@@ -520,6 +520,12 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'translate-batch',
         href: lessonHref('translation', 'translate-batch'),
       },
+      {
+        num: '03',
+        title: 'Stream a batch of translations',
+        slug: 'translate-batch-stream',
+        href: lessonHref('translation', 'translate-batch-stream'),
+      },
     ],
   },
   {

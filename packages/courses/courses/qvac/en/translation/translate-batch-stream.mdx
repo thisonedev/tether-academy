@@ -1,0 +1,74 @@
+---
+title: Stream a batch of translations
+sourceExample: "packages/sdk/examples/translation/translation-bergamot-batch-stream.ts"
+platforms: ['node']
+tests:
+  - id: sets-stream-true
+    description: 'Sets stream: true on the translate call'
+    pattern: "stream\\s*:\\s*true"
+  - id: iterates-token-stream
+    description: 'Iterates result.tokenStream with for await'
+    pattern: "for\\s+await[^\\n]*result\\.tokenStream"
+hints:
+  - "Keep the texts array in the text field and set stream to true."
+  - "With stream: true, the result carries tokenStream instead of translations."
+  - "Each turn of the loop hands you one finished translation, so track its position yourself with an index."
+expectedOutput:
+  - "1. Hello world -> \"Bonjour le monde\""
+  - "2. How are you today? -> \"Comment allez-vous aujourd'hui ?\""
+  - "3. This is a test of batch translation -> \"C'est un test de traduction par lots\""
+  - "Translated 3 texts"
+questions:
+  - id: switch-to-streaming
+    text: "What turns a batch `translate()` call into a streaming one?"
+    answers:
+      - text: "Setting `stream: true` on the call."
+        correct: true
+      - text: "Passing an array to `text` instead of a single string."
+        correct: false
+        feedback: "That's what makes it a batch call. Check which flag makes it stream."
+      - text: "Reading `result.tokenStream` instead of `result.translations`."
+        correct: false
+        feedback: "That's how you read a streaming result, not how you request one."
+  - id: why-track-index
+    text: "Why does the loop keep its own `index` counter instead of relying on `result.tokenStream` to pair translations with their source?"
+    answers:
+      - text: "Because the stream gives you the translated string alone, with nothing tying it to a specific entry."
+        correct: true
+      - text: "Because `result.tokenStream` can return entries out of order."
+        correct: false
+        feedback: "Consider whether pairing by position would even work if that were true."
+      - text: "Because `translate()` reads the counter to know how many entries remain."
+        correct: false
+        feedback: "Check whether anything is passed back into the request as the loop runs."
+---
+
+With batch translation already covered, streaming lets Bergamot return each translation as it's ready, instead of everything at once.
+
+`stream: true` turns the same request into a duplex session. Rather than holding the batch until its last entry finishes, the engine hands over each translation as it completes, so a long list shows steady progress.
+
+We can switch to streaming by setting `stream: true`:
+
+```ts
+const result = translate({
+  modelId,
+  text: texts,
+  modelType: "nmtcpp-translation",
+  stream: true,
+});
+```
+
+A streaming request doesn't resolve `result.translations`. Iterate `result.tokenStream` instead, and track an index yourself so you can match each translation to the entry that produced it:
+
+```ts
+let index = 0;
+for await (const translation of result.tokenStream) {
+  console.log(`${index + 1}. ${texts[index]} -> "${translation}"`);
+  index++;
+}
+console.log(`Translated ${index} texts`);
+```
+
+The stream produces the translated string, and `texts[index]` gives you its source.
+
+> Note: despite the name, `tokenStream` yields one finished translation per entry here, not one token at a time.
