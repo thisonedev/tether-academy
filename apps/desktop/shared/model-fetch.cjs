@@ -11,6 +11,52 @@ const { cacheFileName, modelsDir, readRegistry, sideloadModel, sourceUrl } = req
 // A short file touched this recently is one something else is still writing.
 const ACTIVE_WRITE_MS = 60_000;
 
+function formatGiB(bytes) {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+}
+
+async function freeBytesAt(dir) {
+  try {
+    const s = await fs.promises.statfs(dir);
+    return Number(s.bsize) * Number(s.bavail);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Checks the models directory's free space against every named model still
+ * missing from disk, in order, so a later name in the list can't pass by
+ * counting space an earlier name in the same call already claims.
+ * @param {number} [freeBytesOverride] Skips the real statfs call; for tests.
+ * @returns {Promise<{ ok: boolean, name?: string, message?: string }>}
+ */
+async function checkDiskSpace(names, home, freeBytesOverride) {
+  if (!Array.isArray(names) || names.length === 0) return { ok: true };
+  const dir = modelsDir(home);
+  let remaining = freeBytesOverride ?? (await freeBytesAt(dir));
+  // statfs isn't supported on every platform; don't block a download over a
+  // check that couldn't run.
+  if (remaining === null) return { ok: true };
+
+  const registry = readRegistry();
+  for (const name of names) {
+    const entry = registry.get(name);
+    if (!entry || !entry.expectedSize || isPresent(entry, home)) continue;
+    if (entry.expectedSize > remaining) {
+      return {
+        ok: false,
+        name,
+        message:
+          `not enough disk space to download ${name}: needs ${formatGiB(entry.expectedSize)}, ` +
+          `${formatGiB(remaining)} free`,
+      };
+    }
+    remaining -= entry.expectedSize;
+  }
+  return { ok: true };
+}
+
 /**
  * Whether to leave this model alone: already complete, or being written now,
  * where fetching would race that writer for the same path.
@@ -27,7 +73,7 @@ function isPresent(entry, home, now = Date.now()) {
 
 /**
  * @param {string[]} names registry constants, e.g. ['QWEN3_4B_Q4_K_M']
- * @param {{ home?: string, onEvent?: (e: { name: string, phase: string, downloaded?: number, total?: number, message?: string }) => void }} [opts]
+ * @param {{ home?: string, onEvent?: (e: { name: string, phase: string, downloaded?: number, total?: number, message?: string }) => void, freeBytesOverride?: number }} [opts]
  * @returns {Promise<{ fetched: string[], present: string[], unavailable: string[], failed: string[] }>}
  */
 async function ensureModels(names, opts = {}) {
@@ -38,6 +84,10 @@ async function ensureModels(names, opts = {}) {
 
   const registry = readRegistry();
   const report = opts.onEvent ?? (() => {});
+  // Every caller reaches this shortcut differently (some also call
+  // checkDiskSpace themselves first to abort before trying at all), but this
+  // is the one place that can't be skipped, so the space check lives here too.
+  let remaining = opts.freeBytesOverride ?? (await freeBytesAt(modelsDir(opts.home)));
 
   for (const name of names) {
     const entry = registry.get(name);
@@ -55,6 +105,18 @@ async function ensureModels(names, opts = {}) {
       continue;
     }
 
+    if (remaining !== null && entry.expectedSize > remaining) {
+      report({
+        name,
+        phase: 'failed',
+        message:
+          `not enough disk space to download ${name}: needs ${formatGiB(entry.expectedSize)}, ` +
+          `${formatGiB(remaining)} free`,
+      });
+      out.failed.push(name);
+      continue;
+    }
+
     try {
       report({ name, phase: 'start', total: entry.expectedSize });
       await sideloadModel(name, {
@@ -64,6 +126,7 @@ async function ensureModels(names, opts = {}) {
       });
       report({ name, phase: 'done' });
       out.fetched.push(name);
+      if (remaining !== null) remaining -= entry.expectedSize;
     } catch (err) {
       // The SDK still has its own way to get this, so a failure here only
       // costs the shortcut.
@@ -74,4 +137,4 @@ async function ensureModels(names, opts = {}) {
   return out;
 }
 
-module.exports = { ensureModels, isPresent, ACTIVE_WRITE_MS };
+module.exports = { ensureModels, isPresent, checkDiskSpace, ACTIVE_WRITE_MS };

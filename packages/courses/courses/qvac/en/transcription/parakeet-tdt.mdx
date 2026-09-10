@@ -47,7 +47,7 @@ Whisper handles English well and several other languages adequately. For multili
 
 Parakeet TDT is a single GGUF that handles 25+ languages out of the box. The same model file transcribes French, German, Spanish, Mandarin, and more without a language code. The addon auto-detects TDT vs CTC vs Sortformer from the GGUF's internal metadata, so the load is the same as Whisper's.
 
-`modelType: "parakeet-transcription"` tells the engine which Parakeet family to load: TDT (default), CTC (smaller), Sortformer (diarization). The load with that flag set would look like the following:
+`modelType: "parakeet-transcription"` tells the engine which Parakeet family to load: TDT (default, multilingual), CTC (smaller), Sortformer (diarization), or Unified (English-only, one GGUF for both batch and streaming, `PARAKEET_UNIFIED_0_6B_Q8_0`). The load with that flag set would look like the following:
 
 ```ts
 const modelId = await loadModel({

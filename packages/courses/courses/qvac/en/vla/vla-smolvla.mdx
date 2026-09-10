@@ -35,9 +35,9 @@ questions:
       - text: "hparams applies only to π₀.₅; SmolVLA's code never reads it."
         correct: false
         feedback: "Re-read whether the SmolVLA code itself reads and uses hparams."
-      - text: "`vlaHparams` is required to enable the `vla()` call; it has no effect on buffer sizes."
+      - text: "`vlaHparams` is a prerequisite for `vla()` to run; it has no effect on buffer sizes."
         correct: false
-        feedback: "Check what the hparams fields drive: buffer sizes, or call permissions."
+        feedback: "Check what the hparams fields drive: buffer sizes, or whether `vla()` is allowed to run."
   - id: why-smolvla-uses-real-state
     text: "What's the difference between how SmolVLA and π₀.₅ handle the `state` input?"
     answers:
@@ -51,11 +51,11 @@ questions:
         feedback: "Think about what determines whether state is used: model architecture, or camera count."
 ---
 
-VLA (vision-language-action) models are the model class for robot control.
+VLA (vision-language-action) models are the model class for robot control. They take a camera frame and a task description and produce an action chunk the robot should take.
 
-VLA (vision-language-action) models take a camera frame and a task description and produce an action chunk the robot should take. The training data covers real-world manipulation tasks: grasping, picking, placing. The SDK includes two families: SmolVLA (a small, fast model from Hugging Face) and π₀.₅ (a larger model from Physical Intelligence). They share the same API surface but the input sizes differ.
+The training data covers real-world manipulation tasks: grasping, picking, placing. The SDK includes two families: SmolVLA (a small, fast model from Hugging Face) and π₀.₅ (a larger model from Physical Intelligence). Both share the same API surface but the input sizes differ.
 
-The first call loads SmolVLA into memory. SmolVLA is the smaller of the two VLAs in the SDK. The first load would look like the following:
+SmolVLA is the smaller of the two VLAs in the SDK. Load it into memory like this:
 
 ```ts
 const modelId = await loadModel({
@@ -65,7 +65,7 @@ const modelId = await loadModel({
 });
 ```
 
-Each VLA model has different input sizes; reading them up front is the canonical pre-call move:
+Each VLA model has different input sizes, so read `hparams` before building any buffers:
 
 ```ts
 const { hparams } = await vlaHparams({ modelId });
@@ -90,7 +90,7 @@ const state = vlaPadState([0, 0, 0, 0, 0, 0], hparams.maxStateDim);
 const noise = new Float32Array(hparams.chunkSize * hparams.maxActionDim);
 ```
 
-`vla()` takes the model id and the prebuilt inputs, returns an action chunk plus per-stage timings:
+`vla()` takes the model id and the prebuilt inputs, and returns an action chunk and per-stage timings:
 
 ```ts
 const { actions, actionDim, chunkSize, stats } = await vla({
@@ -112,4 +112,4 @@ The `stats` object has per-stage timings: vision encoder, language model, ODE so
 
 > Note: `vlaPadState` is the helper that pads a short state vector to the model's `maxStateDim`. For SmolVLA, the state is six floats (end-effector pose). For π₀.₅ the state is tokenised into the prompt instead, the state buffer is ignored.
 
-> Note: `vlaSetEmbodiment` switches a loaded GR00T multi-embodiment model between robot configurations, such as `vlaSetEmbodiment({ modelId, embodiment: "real_droid" })`. SmolVLA and π₀.₅ do not support this call. See the GR00T example when you need to change embodiments.
+> Note: `vlaSetEmbodiment` switches a loaded GR00T multi-embodiment model between robot configurations, such as `vlaSetEmbodiment({ modelId, embodiment: "real_r1_pro_sharpa" })`. SmolVLA and π₀.₅ reject it. See the GR00T example when you need to change embodiments.

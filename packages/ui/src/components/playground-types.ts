@@ -23,7 +23,10 @@ export interface PlaygroundRunContext {
   runAgent: (task: string) => Promise<string>;
   /** Dedicated per-language Bergamot NMT translation when the language and the
    *  desktop bridge are both available; falls back to `runAgent` otherwise. */
-  translate: (text: string, language: string) => Promise<string>;
+  translate: {
+    (text: string, language: string): Promise<string>;
+    (text: string[], language: string): Promise<string[]>;
+  };
   /** Posts a Yes/No entry to the output feed and resolves once the user answers
    *  (or the run is stopped, which resolves every pending one as `false`). */
   confirm: (message: string) => Promise<boolean>;

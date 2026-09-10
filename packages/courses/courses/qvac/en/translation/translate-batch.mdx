@@ -1,0 +1,82 @@
+---
+title: Translate a batch of texts in one call
+sourceExample: "packages/sdk/examples/translation/translation-bergamot-batch.ts"
+platforms: ['node']
+tests:
+  - id: passes-array
+    description: 'Passes the texts array to the text field'
+    pattern: "text\\s*:\\s*texts"
+  - id: awaits-translations
+    description: 'Awaits result.translations'
+    pattern: "await\\s+result\\.translations"
+hints:
+  - "The text field takes the whole texts array in one go."
+  - "Keep modelType: 'nmtcpp-translation' and stream: false exactly as the single-string call had them."
+  - "An array resolves result.translations. Await it, then walk it with forEach."
+expectedOutput:
+  - "1. Hello world -> \"Bonjour le monde\""
+  - "2. How are you today? -> \"Comment allez-vous aujourd'hui ?\""
+  - "3. This is a test of batch translation -> \"C'est un test de traduction par lots\""
+questions:
+  - id: what-translations-resolves-to
+    text: "When `text` is an array, what does `result.translations` resolve to?"
+    answers:
+      - text: "An array of translated strings, one per entry, in the order they were passed."
+        correct: true
+      - text: "A single string holding every translation, separated by newlines."
+        correct: false
+        feedback: "Look at what the `forEach` in the code example is iterating over."
+      - text: "An array of objects, each pairing a source string with its translation."
+        correct: false
+        feedback: "Check how the code example recovers the source text for each entry."
+  - id: primary-advantage
+    text: "What is the primary advantage of one batch request over invoking `translate()` once per string?"
+    answers:
+      - text: "It hands the engine every entry in a single request instead of one round trip each."
+        correct: true
+      - text: "It avoids reloading the model between entries."
+        correct: false
+        feedback: "Consider where `loadModel` sits relative to the translation work in either approach."
+      - text: "It lets each entry target a different output language."
+        correct: false
+        feedback: "Re-read the Note about how far one `modelConfig` reaches."
+  - id: config-scope
+    text: "What do all the entries passed in a single `text` array share?"
+    answers:
+      - text: "They share one `modelConfig`, so `from` and `to` apply to all of them."
+        correct: true
+      - text: "Each entry carries its own `from` and `to`."
+        correct: false
+        feedback: "Compare this to where `from` and `to` are actually set in the code example."
+      - text: "Their combined length must stay under the single-string limit."
+        correct: false
+        feedback: "Think about whether the Note describes a length constraint or a language one."
+---
+
+Now that you can translate one string, it's time to hand Bergamot several at once.
+
+The `text` field also takes an array, and the engine works through the whole batch in one request. `modelId`, `modelType` and `stream: false` are unchanged.
+
+We can swap the single string for the array as follows:
+
+```ts
+const result = translate({
+  modelId,
+  text: texts,
+  modelType: "nmtcpp-translation",
+  stream: false,
+});
+```
+
+The output changes too: an array resolves `result.translations` instead of `result.text`. Each entry lines up with the same index in `texts`, so `texts[i]` gives you the source for `translation`:
+
+```ts
+const translations = await result.translations;
+translations.forEach((translation, i) => {
+  console.log(`${i + 1}. ${texts[i]} -> "${translation}"`);
+});
+```
+
+The engine translates every entry before the loop above logs a line, so a long list stays silent while it runs.
+
+> Note: one `modelConfig` covers the batch, so `from` and `to` apply to every entry. Mixed source languages need a separate call per pair.

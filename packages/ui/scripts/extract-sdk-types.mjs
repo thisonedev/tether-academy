@@ -16,6 +16,7 @@
 'use strict';
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -90,16 +91,32 @@ function walk(startFile, sdkRoot) {
   return seen;
 }
 
-// Find the SDK package. With pnpm, it lives in `.pnpm/@qvac+sdk@*/`.
-// The symlink under `node_modules/@qvac/sdk` only exists in packages
-// that depend on it directly, so we look in the pnpm store.
+// Resolve the SDK the way Node would, from the app that depends on it.
+// An upgrade leaves the old version in the store, and taking whichever
+// entry readdir returned first silently pinned the stale types.
 function findSdkPackageJson() {
+  try {
+    return createRequire(path.join(REPO_ROOT, 'apps', 'desktop', 'package.json')).resolve(
+      '@qvac/sdk/package',
+    );
+  } catch {
+    // Not linked from there; fall back to the store.
+  }
   const pnpmDir = path.join(REPO_ROOT, 'node_modules', '.pnpm');
   if (!fs.existsSync(pnpmDir)) return null;
-  const entries = fs.readdirSync(pnpmDir);
-  const match = entries.find((e) => e.startsWith('@qvac+sdk@'));
+  const match = fs
+    .readdirSync(pnpmDir)
+    .filter((e) => e.startsWith('@qvac+sdk@'))
+    .sort((a, b) => storeVersion(a) - storeVersion(b))
+    .pop();
   if (!match) return null;
   return path.join(pnpmDir, match, 'node_modules', '@qvac', 'sdk', 'package.json');
+}
+
+// Sorts `@qvac+sdk@0.19.0_<peer hash>` store entries by semver.
+function storeVersion(entry) {
+  const m = entry.match(/^@qvac\+sdk@(\d+)\.(\d+)\.(\d+)/);
+  return m ? Number(m[1]) * 1e6 + Number(m[2]) * 1e3 + Number(m[3]) : -1;
 }
 
 const sdkPkgJson = findSdkPackageJson();
@@ -161,6 +178,62 @@ if (zodPkgJson && fs.existsSync(zodPkgJson)) {
   }
 }
 
+// 0.19 moved the option and descriptor types into `@qvac/inference`, reached
+// by bare subpath imports the relative walker cannot follow. Resolve them
+// through that package's own exports map.
+function findInferencePackageJson() {
+  try {
+    return createRequire(path.join(REPO_ROOT, 'apps', 'desktop', 'package.json')).resolve(
+      '@qvac/inference/package',
+    );
+  } catch {
+    const pnpmDir = path.join(REPO_ROOT, 'node_modules', '.pnpm');
+    if (!fs.existsSync(pnpmDir)) return null;
+    const match = fs.readdirSync(pnpmDir).find((e) => e.startsWith('@qvac+inference@'));
+    return match
+      ? path.join(pnpmDir, match, 'node_modules', '@qvac', 'inference', 'package.json')
+      : null;
+  }
+}
+
+const INFERENCE_SPEC = /from\s+['"](@qvac\/inference(?:\/[^'"]+)?)['"]/g;
+const inferenceFiles = new Map();
+let inferenceRoot = null;
+
+const inferencePkgJson = findInferencePackageJson();
+if (inferencePkgJson && fs.existsSync(inferencePkgJson)) {
+  const pkgDir = path.dirname(inferencePkgJson);
+  const exportsMap = JSON.parse(fs.readFileSync(inferencePkgJson, 'utf8')).exports ?? {};
+  const entryFor = (spec) => {
+    const sub = spec === '@qvac/inference' ? '.' : `.${spec.slice('@qvac/inference'.length)}`;
+    const target = exportsMap[sub];
+    const rel = typeof target === 'string' ? target : target?.types;
+    return rel ? path.resolve(pkgDir, rel) : null;
+  };
+
+  const rootEntry = entryFor('@qvac/inference');
+  inferenceRoot = rootEntry ? path.dirname(rootEntry) : pkgDir;
+
+  // Inference re-exports its own subpaths, so keep resolving until nothing new.
+  const done = new Set();
+  for (;;) {
+    const specs = new Set();
+    for (const content of [...files.values(), ...inferenceFiles.values()]) {
+      let m;
+      INFERENCE_SPEC.lastIndex = 0;
+      while ((m = INFERENCE_SPEC.exec(content)) !== null) specs.add(m[1]);
+    }
+    const pending = [...specs].filter((spec) => !done.has(spec));
+    if (pending.length === 0) break;
+    for (const spec of pending) {
+      done.add(spec);
+      const entryAbs = entryFor(spec);
+      if (!entryAbs || !fs.existsSync(entryAbs)) continue;
+      for (const [abs, content] of walk(entryAbs, inferenceRoot)) inferenceFiles.set(abs, content);
+    }
+  }
+}
+
 const out = [];
 // Use a virtual relative URI scheme so the runtime can register
 // each file at a stable path regardless of where the build ran.
@@ -173,6 +246,11 @@ for (const [absPath, content] of files) {
   const root = inZod ? path.dirname(zodPkgJson) : sdkRoot;
   const rel = path.relative(root, absPath).split(path.sep).join('/');
   out.push({ path: base + '/' + rel, content });
+}
+
+for (const [absPath, content] of inferenceFiles) {
+  const rel = path.relative(inferenceRoot, absPath).split(path.sep).join('/');
+  out.push({ path: 'qvac-inference/' + rel, content });
 }
 
 fs.writeFileSync(OUT, JSON.stringify(out));

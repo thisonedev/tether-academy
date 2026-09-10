@@ -37,6 +37,10 @@ export function setupQvacMonaco(monaco: Monaco): void {
     paths: {
       'zod': ['qvac-zod/v4/index.d.ts'],
       '@qvac/sdk': ['qvac-sdk/index.d.ts'],
+      // 0.19 moved the option and descriptor types here; without these the
+      // SDK's own imports of them do not resolve at all.
+      '@qvac/inference': ['qvac-inference/index.d.ts'],
+      '@qvac/inference/*': ['qvac-inference/*'],
     },
   });
   ts.typescriptDefaults.setDiagnosticsOptions({
@@ -44,7 +48,7 @@ export function setupQvacMonaco(monaco: Monaco): void {
     noSyntaxValidation: false,
   });
 
-  // Virtual files live under the `qvac-sdk/` and `qvac-zod/` URI schemes; TypeScript's resolver follows the relative imports from there.
+  // Virtual files live under the `qvac-sdk/`, `qvac-inference/` and `qvac-zod/` URI schemes; TypeScript's resolver follows the relative imports from there.
   ts.typescriptDefaults.setExtraLibs(
     SDK_FILES.map((f) => ({ content: f.content, filePath: f.path })),
   );

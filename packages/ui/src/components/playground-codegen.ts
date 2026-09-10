@@ -221,11 +221,20 @@ export async function generateStandaloneScript(workflow: SavedWorkflow): Promise
         const isStatic = node.fields.source !== 'Upstream input';
         const inEdge = edgeInto(workflow, node.id);
         const src = isStatic ? f('text') : outKeyExpr(inEdge);
+        const target = f('language') || jsString('Spanish');
+        const instruction = `'Translate the following text to ' + ${target} + '. Reply with only the translation, nothing else.\\n\\n'`;
         lines.push(`  {`);
         lines.push(`    const text = ${src};`);
-        lines.push(
-          `    const ${varName} = await askAgent('Translate the following text to ' + ${f('language') || jsString('Spanish')} + '. Reply with only the translation, nothing else.\\n\\n' + text);`,
-        );
+        if (node.fields.mode === 'Line by line') {
+          lines.push(`    const sources = text.split(/\\r?\\n/).map((s) => s.trim()).filter(Boolean);`);
+          lines.push(`    const translated = [];`);
+          lines.push(`    for (const source of sources) {`);
+          lines.push(`      translated.push(await askAgent(${instruction} + source));`);
+          lines.push(`    }`);
+          lines.push(`    const ${varName} = translated.join('\\n');`);
+        } else {
+          lines.push(`    const ${varName} = await askAgent(${instruction} + text);`);
+        }
         lines.push(`    out[${jsString(node.id)}] = ${varName};`);
         lines.push(`    console.log(${varName});`);
         lines.push(`  }`);

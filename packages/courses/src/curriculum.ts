@@ -86,6 +86,18 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'show-download-progress',
         href: lessonHref('getting-started', 'show-download-progress'),
       },
+      {
+        num: '06',
+        title: 'Read CPU and memory capacity',
+        slug: 'system-resources',
+        href: lessonHref('getting-started', 'system-resources'),
+      },
+      {
+        num: '07',
+        title: 'Check whether a model fits before downloading it',
+        slug: 'assess-model-fit',
+        href: lessonHref('getting-started', 'assess-model-fit'),
+      },
     ],
   },
   {
@@ -514,6 +526,18 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'translate-text',
         href: lessonHref('translation', 'translate-text'),
       },
+      {
+        num: '02',
+        title: 'Translate a batch of texts in one call',
+        slug: 'translate-batch',
+        href: lessonHref('translation', 'translate-batch'),
+      },
+      {
+        num: '03',
+        title: 'Stream a batch of translations',
+        slug: 'translate-batch-stream',
+        href: lessonHref('translation', 'translate-batch-stream'),
+      },
     ],
   },
   {
@@ -603,6 +627,12 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'vla-pi05',
         href: lessonHref('vla', 'vla-pi05'),
       },
+      {
+        num: '03',
+        title: 'Run a GR00T action inference across embodiments',
+        slug: 'vla-groot',
+        href: lessonHref('vla', 'vla-groot'),
+      },
     ],
   },
   {
@@ -623,6 +653,13 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'blind-relays',
         href: lessonHref('p2p', 'blind-relays'),
       },
+      {
+        num: '03',
+        title: 'Download multiple models in parallel',
+        shortTitle: 'Download models in parallel',
+        slug: 'parallel-download',
+        href: lessonHref('p2p', 'parallel-download'),
+      },
     ],
   },
   {
@@ -636,6 +673,26 @@ export const CURRICULUM: CurriculumChapter[] = [
         title: 'Generate music from a caption',
         slug: 'generate-music',
         href: lessonHref('music-generation', 'generate-music'),
+      },
+      {
+        num: '02',
+        title: 'Generate a cover from an existing track',
+        slug: 'generate-cover',
+        href: lessonHref('music-generation', 'generate-cover'),
+      },
+    ],
+  },
+  {
+    num: '19',
+    label: 'ABot-World',
+    slug: 'abot-world',
+    href: chapterHref('abot-world'),
+    lessons: [
+      {
+        num: '01',
+        title: 'Walk a world from a single image',
+        slug: 'walk-a-world',
+        href: lessonHref('abot-world', 'walk-a-world'),
       },
     ],
   },

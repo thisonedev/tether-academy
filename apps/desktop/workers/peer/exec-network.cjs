@@ -5,20 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { scan } = require('../../shared/model-integrity.cjs');
-
-// Read as text: an ESM bundle the Bare worker cannot require.
-const REGISTRY_PATH = path.resolve(
-  __dirname,
-  '..',
-  '..',
-  'node_modules',
-  '@qvac',
-  'sdk',
-  'dist',
-  'models',
-  'registry',
-  'models.js',
-);
+const { resolveRegistryPath } = require('../../shared/model-sideload.cjs');
 
 // Cache entries are prefixed with the SDK's content hash.
 const CACHE_HASH_PREFIX = /^[0-9a-f]{16}_/;
@@ -55,11 +42,14 @@ let registry = null;
 function modelRegistry() {
   if (registry) return registry;
   registry = new Map();
+  const registryPath = resolveRegistryPath();
+  // Nothing resolves to "cached" without a registry, so every run naming a
+  // model asks.
+  if (!registryPath) return registry;
   let src;
   try {
-    src = fs.readFileSync(REGISTRY_PATH, 'utf8');
+    src = fs.readFileSync(registryPath, 'utf8');
   } catch {
-    // Nothing resolves to "cached", so every run naming a model asks.
     return registry;
   }
   const chunks = src.split("name: '");
@@ -194,5 +184,4 @@ module.exports = {
   missingModels,
   modelRegistry,
   modelDownloadProgress,
-  REGISTRY_PATH,
 };

@@ -14,6 +14,16 @@ function spawnFakeWorker(parentPid) {
   return spawn('node', ['-e', script], { stdio: 'ignore' });
 }
 
+// Current SDK layout ships the entry point at dist/src/worker/index.js
+// instead of dist/server/worker.js; this fixture catches a regression back
+// to matching only the old path.
+function spawnFakeWorkerModernPath(parentPid) {
+  const script =
+    "process.title = '@qvac/sdk/dist/src/worker/index.js QVAC_IPC_SOCKET_PATH=/tmp/qvac-worker-"
+    + parentPid + "-abc123-def.sock'; setInterval(() => {}, 1000);";
+  return spawn('node', ['-e', script], { stdio: 'ignore' });
+}
+
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -38,6 +48,23 @@ test('qvac-orphan-reaper - kills a worker whose recorded parent is dead', async 
 
   await new Promise((resolve) => setTimeout(resolve, 300));
   t.absent(isAlive(worker.pid), 'the fake orphan is actually dead');
+});
+
+test('qvac-orphan-reaper - kills a modern-layout worker whose recorded parent is dead', async (t) => {
+  const deadPid = 999998; // not a real, running process
+  const worker = spawnFakeWorkerModernPath(deadPid);
+  t.teardown(() => {
+    try {
+      process.kill(worker.pid, 'SIGKILL');
+    } catch {}
+  });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  const killed = await reapOrphanedQvacWorkers();
+  t.ok(killed.some((k) => k.pid === worker.pid), 'the fake modern-layout orphan is in the killed list');
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  t.absent(isAlive(worker.pid), 'the fake modern-layout orphan is actually dead');
 });
 
 test('qvac-orphan-reaper - leaves a worker whose parent is alive', async (t) => {

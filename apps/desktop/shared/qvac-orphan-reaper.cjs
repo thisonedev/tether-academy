@@ -27,7 +27,10 @@ async function reapOrphanedQvacWorkers() {
     // Windows reports the module path with backslashes and names the socket as
     // a \\.\pipe\ path, so both checks below run against forward slashes.
     const line = raw.replace(/\\/g, '/');
-    if (!line.includes('@qvac/sdk') || !line.includes('worker.js')) continue;
+    // The SDK has shipped this entry point at both dist/server/worker.js and
+    // dist/src/worker/index.js across versions; match either so a future
+    // layout change doesn't silently disable this check again.
+    if (!line.includes('@qvac/sdk') || !(line.includes('worker.js') || line.includes('/worker/'))) continue;
     const socketMatch = line.match(SOCKET_PID_RE);
     if (!socketMatch) continue;
     const parentPid = Number(socketMatch[1]);

@@ -56,6 +56,19 @@ const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
   set: 'Companion set',
 };
 
+const RAG_INDEX_BACKEND_OPTIONS: { value: 'turbovec' | 'hyperdb'; label: string; description: string }[] = [
+  {
+    value: 'turbovec',
+    label: 'TurboVec',
+    description: "Stores the workspace vectors in a TurboVec index. Needs an embedding size that's a multiple of 8, up to 1024.",
+  },
+  {
+    value: 'hyperdb',
+    label: 'HyperDB',
+    description: 'Stores the workspace vectors in a HyperDB index. The default; works with any embedding size.',
+  },
+];
+
 const SETTINGS_TABS = [
   { id: 'models', label: 'Models' },
   { id: 'profile', label: 'Profile' },
@@ -85,6 +98,8 @@ export function SettingsPage() {
   const [configuringChatModel, setConfiguringChatModel] = useState<string | null>(null);
   const [modelProgress, setModelProgress] = useState<Record<string, { loaded: number; total: number }>>({});
   const [useFullDocs, setUseFullDocs] = useState(true);
+  const [ragIndexBackend, setRagIndexBackendState] = useState<'hyperdb' | 'turbovec' | null>(null);
+  const [pendingRagIndexBackend, setPendingRagIndexBackend] = useState<'hyperdb' | 'turbovec' | null>(null);
   const [docsStatus, setDocsStatus] = useState<{ available: boolean; source: string; bytes: number; expiresAt: number } | null>(null);
   const [docsBusy, setDocsBusy] = useState(false);
   const [device, setDevice] = useState<AcademyDeviceInfo | null>(null);
@@ -142,13 +157,14 @@ export function SettingsPage() {
     (async () => {
       setLoadError(null);
       try {
-        const [list, dev, catalogue, configured, useFullDocsRaw, status] = await Promise.all([
+        const [list, dev, catalogue, configured, useFullDocsRaw, status, ragBackend] = await Promise.all([
           window.academy?.models?.list().catch(() => null) ?? Promise.resolve(null),
           window.academy?.device?.info().catch(() => null) ?? Promise.resolve(null),
           window.academy?.models?.catalogue().catch(() => []) ?? Promise.resolve([]),
           window.academy?.chat?.configuredModel().catch(() => null) ?? Promise.resolve(null),
           window.academy?.state?.get?.('ai.chat.useFullDocs').catch(() => null) ?? Promise.resolve(null),
           window.academy?.chat?.docsStatus?.().catch(() => null) ?? Promise.resolve(null),
+          window.academy?.ragIndexBackend?.().catch(() => null) ?? Promise.resolve(null),
         ]);
         if (cancelled) return;
         setModels(list ?? []);
@@ -161,6 +177,7 @@ export function SettingsPage() {
         setDevice(dev);
         if (typeof useFullDocsRaw === 'string') setUseFullDocs(useFullDocsRaw !== 'false');
         if (status && typeof status === 'object') setDocsStatus(status);
+        if (ragBackend === 'hyperdb' || ragBackend === 'turbovec') setRagIndexBackendState(ragBackend);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : 'Failed to load settings');
@@ -221,6 +238,19 @@ export function SettingsPage() {
       if (result && typeof result === 'object') setDocsStatus(result);
     } finally {
       setDocsBusy(false);
+    }
+  }, []);
+
+  const changeRagIndexBackend = useCallback(async (backend: 'hyperdb' | 'turbovec') => {
+    setPendingRagIndexBackend(backend);
+    setLoadError(null);
+    try {
+      const result = await window.academy?.setRagIndexBackend?.(backend);
+      if (result === 'hyperdb' || result === 'turbovec') setRagIndexBackendState(result);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Could not change the RAG index backend');
+    } finally {
+      setPendingRagIndexBackend(null);
     }
   }, []);
 
@@ -518,6 +548,45 @@ export function SettingsPage() {
                     }`}
                   />
                 </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">
+                <Database className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold text-canvas-foreground">Playground settings</h2>
+                <p className="mt-1 text-sm text-canvas-muted-foreground">Configuration for playground nodes.</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-md border border-canvas-border bg-canvas-muted px-3 py-2.5">
+              <p className="text-sm font-medium text-canvas-foreground">RAG search index</p>
+              <p className="mt-0.5 text-xs text-canvas-muted-foreground">
+                The index the Search documents node writes new workspaces to. A change here applies after the app
+                restarts.
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {RAG_INDEX_BACKEND_OPTIONS.map((opt) => (
+                  <div
+                    key={opt.value}
+                    className="flex items-center gap-3 rounded-md border border-canvas-border bg-canvas px-2.5 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-canvas-foreground">{opt.label}</p>
+                      <p className="mt-0.5 text-xs text-canvas-muted-foreground">{opt.description}</p>
+                    </div>
+                    <SelectModelButton
+                      active={ragIndexBackend === opt.value}
+                      busy={pendingRagIndexBackend === opt.value}
+                      disabled={pendingRagIndexBackend !== null || ragIndexBackend === null}
+                      label={opt.label}
+                      onSelect={() => void changeRagIndexBackend(opt.value)}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           </section>
@@ -853,6 +922,8 @@ const CHAPTER_LABELS: Record<string, string> = {
   vla: 'VLA',
   p2p: 'P2P',
   'delegated-inference': 'Delegated inference',
+  'music-generation': 'Music generation',
+  'abot-world': 'Abot world',
 };
 function chapterLabel(slug: string): string {
   return CHAPTER_LABELS[slug] ?? slug;

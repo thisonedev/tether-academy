@@ -43,6 +43,8 @@ const IPC_CHANNELS = Object.freeze({
   'academy:translate': 'academyTranslateSchema',
   'academy:workflow:generate': 'academyWorkflowGenerateSchema',
   'academy:rag-search': 'academyRagSearchSchema',
+  'academy:rag:index-backend': null,
+  'academy:rag:set-index-backend': 'ragIndexBackendSchema',
   'academy:ocr': 'academyImageInputSchema',
   'academy:classify-image': 'academyImageInputSchema',
   'academy:text-to-speech': 'academyTextToSpeechSchema',

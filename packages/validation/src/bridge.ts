@@ -561,7 +561,10 @@ export interface AcademyAPI {
   playgroundCredentials?: AcademyPlaygroundCredentialsAPI;
   /** English -> target only, via the SDK's dedicated per-language Bergamot NMT
    *  models, not the general chat model. Throws for an unsupported language. */
-  translate?: (text: string, language: string) => Promise<string>;
+  translate?: {
+    (text: string, language: string): Promise<string>;
+    (text: string[], language: string): Promise<string[]>;
+  };
   /** Turns a plain-language request into a workflow graph, via the chat model.
    *  `catalogue` is the live node-kind/field list from PLAYGROUND_NODE_DEFS;
    *  the caller still validates the raw `text` before touching the canvas. */
@@ -577,6 +580,10 @@ export interface AcademyAPI {
   /** Real chunk + embed + vector search over `documents` for `query`, via a
    *  throwaway RAG workspace that's deleted after the call returns. */
   ragSearch?: (documents: string[], query: string, topK?: number) => Promise<AcademyRagSearchResult[]>;
+  /** The RAG index backend new workspaces are created with. Persisted app-wide;
+   *  a change here applies after the app's next restart. */
+  ragIndexBackend?: () => Promise<'hyperdb' | 'turbovec'>;
+  setRagIndexBackend?: (backend: 'hyperdb' | 'turbovec') => Promise<'hyperdb' | 'turbovec'>;
   /** `image` is a data: URL, as read from a picked file via FileReader. */
   ocr?: (image: string) => Promise<string>;
   classifyImage?: (image: string) => Promise<string>;

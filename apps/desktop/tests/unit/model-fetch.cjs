@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { ensureModels, isPresent, ACTIVE_WRITE_MS } = require('../../shared/model-fetch.cjs');
+const { ensureModels, isPresent, checkDiskSpace, ACTIVE_WRITE_MS } = require('../../shared/model-fetch.cjs');
 const { cacheFileName, modelsDir } = require('../../shared/model-sideload.cjs');
 
 // Sparse, so a multi-gigabyte model costs nothing to stand in for.
@@ -68,6 +68,71 @@ test('model-fetch - an unknown name is ignored rather than thrown', async (t) =>
   const result = await ensureModels(['NOT_A_REAL_MODEL'], { home: os.tmpdir() });
   t.alike(result.fetched, []);
   t.alike(result.failed, []);
+});
+
+// The peer worker's FETCH_MODELS handler calls this shortcut directly with
+// no checkDiskSpace of its own, so ensureModels has to refuse on its own.
+test('model-fetch - ensureModels skips a fetch that would not fit on disk', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-'));
+  t.teardown(() => fs.rmSync(home, { recursive: true, force: true }));
+  const { readRegistry } = require('../../shared/model-sideload.cjs');
+  const entry = readRegistry().get('QWEN3_4B_Q4_K_M');
+
+  const result = await ensureModels(['QWEN3_4B_Q4_K_M'], {
+    home,
+    freeBytesOverride: entry.expectedSize - 1,
+  });
+  t.alike(result.fetched, [], 'never attempted');
+  t.alike(result.failed, ['QWEN3_4B_Q4_K_M']);
+});
+
+test('model-fetch - checkDiskSpace blocks a download that would not fit', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-'));
+  t.teardown(() => fs.rmSync(home, { recursive: true, force: true }));
+  const { readRegistry } = require('../../shared/model-sideload.cjs');
+  const entry = readRegistry().get('QWEN3_4B_Q4_K_M');
+
+  const result = await checkDiskSpace(['QWEN3_4B_Q4_K_M'], home, entry.expectedSize - 1);
+  t.is(result.ok, false);
+  t.is(result.name, 'QWEN3_4B_Q4_K_M');
+  t.ok(/not enough disk space/.test(result.message));
+});
+
+test('model-fetch - checkDiskSpace allows a download that fits', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-'));
+  t.teardown(() => fs.rmSync(home, { recursive: true, force: true }));
+  const { readRegistry } = require('../../shared/model-sideload.cjs');
+  const entry = readRegistry().get('QWEN3_4B_Q4_K_M');
+
+  const result = await checkDiskSpace(['QWEN3_4B_Q4_K_M'], home, entry.expectedSize + 1);
+  t.is(result.ok, true);
+});
+
+// Two candidates that individually fit but not together must not both pass:
+// the second one has to be checked against what the first already claimed.
+test('model-fetch - checkDiskSpace charges earlier names against the same free space', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-'));
+  t.teardown(() => fs.rmSync(home, { recursive: true, force: true }));
+  const { readRegistry } = require('../../shared/model-sideload.cjs');
+  const entry = readRegistry().get('QWEN3_4B_Q4_K_M');
+
+  const result = await checkDiskSpace(
+    ['QWEN3_4B_Q4_K_M', 'QWEN3_4B_Q4_K_M'],
+    home,
+    entry.expectedSize + 1,
+  );
+  t.is(result.ok, false, 'the second copy no longer fits in what is left');
+});
+
+test('model-fetch - checkDiskSpace skips a model already complete on disk', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-'));
+  t.teardown(() => fs.rmSync(home, { recursive: true, force: true }));
+  const { readRegistry } = require('../../shared/model-sideload.cjs');
+  const entry = readRegistry().get('QWEN3_4B_Q4_K_M');
+  plant(home, entry.registryPath, entry.expectedSize);
+
+  const result = await checkDiskSpace(['QWEN3_4B_Q4_K_M'], home, 0);
+  t.is(result.ok, true, 'nothing left to download, so zero free space is fine');
 });
 
 // exec-host runs under Bare, which has no https. Requiring it at module load

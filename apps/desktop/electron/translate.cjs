@@ -4,7 +4,7 @@
 // asking the general chat model. English -> target only; each language is
 // its own small model, loaded independently of chat.cjs's chat model.
 
-const { ensureModels } = require('../shared/model-fetch.cjs');
+const { ensureModels, checkDiskSpace } = require('../shared/model-fetch.cjs');
 const { notify } = require('./model-status.cjs');
 
 // Maps a language label to its @qvac/sdk registry constant and the lowercase
@@ -148,6 +148,8 @@ async function ensureLoaded(language) {
     throw new Error('@qvac/sdk does not export loadModel in this build');
   }
   const displayName = `English to ${language}`;
+  const spaceCheck = await checkDiskSpace([preset.key]);
+  if (!spaceCheck.ok) throw new Error(spaceCheck.message);
   await ensureModels([preset.key], {
     onEvent: (e) => {
       if (e.phase === 'progress') {
@@ -170,7 +172,8 @@ async function ensureLoaded(language) {
   return current;
 }
 
-/** Non-streaming: the playground node wants one final string, not tokens. */
+/** Non-streaming: the playground node wants finished strings, not tokens.
+ *  An array of texts resolves `translations`, one entry per input. */
 async function translateText(text, language) {
   const sdk = require('@qvac/sdk');
   if (typeof sdk.translate !== 'function') {
@@ -183,7 +186,7 @@ async function translateText(text, language) {
     stream: false,
     modelType: 'nmtcpp-translation',
   });
-  return result.text;
+  return Array.isArray(text) ? result.translations : result.text;
 }
 
 module.exports = {

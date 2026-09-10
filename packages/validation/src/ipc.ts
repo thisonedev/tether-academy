@@ -172,7 +172,11 @@ export const academyRagSearchSchema = z.object({
 });
 
 export const academyTranslateSchema = z.object({
-  text: z.string().min(1).max(20_000),
+  /** An array runs Bergamot's batch mode and resolves one translation per entry. */
+  text: z.union([
+    z.string().min(1).max(20_000),
+    z.array(z.string().min(1).max(20_000)).min(1).max(50),
+  ]),
   /** Matches a key in translate.cjs's NMT_PRESETS (English source only). */
   language: z.string().min(1).max(64),
 });
@@ -245,6 +249,8 @@ export const playgroundCredentialSetSchema = z.object({
   name: playgroundCredentialNameSchema,
   value: z.string().min(1).max(8192),
 });
+
+export const ragIndexBackendSchema = z.enum(['hyperdb', 'turbovec']);
 
 /** A model cache entry id, used as a relative path under the models root; `removeModel()` containment-checks the resolved result too, so this is the earlier of two gates. */
 export const modelIdSchema = z

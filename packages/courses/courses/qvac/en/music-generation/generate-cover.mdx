@@ -1,0 +1,102 @@
+---
+title: Generate a cover from an existing track
+sourceExample: "packages/sdk/examples/audiogen/generate-cover.ts"
+platforms: ['node']
+tests:
+  - id: sets-cover-tasktype
+    description: "Sets taskType: 'cover-nofsq' and sourceAudio on the audioGen call"
+    pattern: "taskType\\s*:\\s*[`'\"]cover-nofsq[`'\"][\\s\\S]*?sourceAudio|sourceAudio[\\s\\S]*?taskType\\s*:\\s*[`'\"]cover-nofsq[`'\"]"
+  - id: drains-progress-then-awaits-audio
+    description: 'Iterates run.progressStream, then Promise.all([run.audio, run.stats])'
+    pattern: "for\\s+await[^\\n]*run\\.progressStream[\\s\\S]*?Promise\\.all"
+  - id: writes-cover-wav
+    description: 'Wraps audio.pcm with createWav and writes it to disk'
+    pattern: "createWav[\\s\\S]*?writeFileSync|writeFileSync[\\s\\S]{0,80}\\.wav"
+hints:
+  - "audioGen({ modelId, caption, lyrics: '[Instrumental]', taskType: 'cover-nofsq', sourceAudio: sourcePath, audioCoverStrength: 1, coverNoiseStrength: 0.75, seed: 22886 }) re-renders sourcePath's audio under the new caption. sourceAudio is required whenever taskType is 'cover-nofsq'."
+  - "Drain run.progressStream the same way as the caption lesson, then const [audio, stats] = await Promise.all([run.audio, run.stats]) to overlap the two remaining awaits."
+  - "Wrap the PCM with createWav(audio.pcm, audio.sampleRate, audio.channels, audio.bitsPerSample), then writeFileSync it to 'output/music-generation/audiogen-cover-output.wav'."
+expectedOutput:
+  - "▸ Saved output/music-generation/audiogen-cover-output.wav"
+  - "▸ Model unloaded"
+questions:
+  - id: what-sourceaudio-does
+    text: "What does `sourceAudio` do when `taskType` is `'cover-nofsq'`?"
+    answers:
+      - text: "It gives the model an existing track to re-render under the new caption, instead of generating from nothing."
+        correct: true
+      - text: "It sets the file path the code writes the finished cover to."
+        correct: false
+        feedback: "Check which variable in the code chunk holds the output path, and which one the code passes into `audioGen`."
+      - text: "It's optional metadata used only to read the source's sample rate."
+        correct: false
+        feedback: "Re-read what the concept paragraph says `sourceAudio` is required for."
+  - id: strength-vs-noise
+    text: "What's the difference between `audioCoverStrength` and `coverNoiseStrength`?"
+    answers:
+      - text: "`audioCoverStrength` sets how much of the source's structure makes it into the cover; `coverNoiseStrength` sets how much the initial diffusion noise starts blended toward the source instead of pure noise."
+        correct: true
+      - text: "They're two names for the same 0-to-1 parameter, and setting either one has the same effect."
+        correct: false
+        feedback: "Look at the concept paragraph again for what each of these two parameters controls on its own."
+      - text: "`audioCoverStrength` controls the output's duration, and `coverNoiseStrength` controls its sample rate."
+        correct: false
+        feedback: "Neither parameter touches duration or sample rate; check what they're described as controlling instead."
+  - id: why-any-audio-format
+    text: "Why does `sourcePath` work with an MP3 or a WAV file instead of requiring one specific format?"
+    answers:
+      - text: "The SDK decodes it through its own ffmpeg pipeline, so any format ffmpeg can read works as the source."
+        correct: true
+      - text: "The ACE-Step DiT model reads compressed audio formats directly, without any decoding step."
+        correct: false
+        feedback: "Check what the concept paragraph says decodes `sourceAudio` before it reaches the model."
+      - text: "Only WAV files under 48 kHz are accepted; every other format is rejected."
+        correct: false
+        feedback: "Re-read whether the concept paragraph names a format restriction, or the opposite of one."
+---
+
+Now that you can turn a caption into music, it's time to feed AudioGen an existing track instead of empty air. Setting `taskType: "cover-nofsq"` tells the same four ACE-Step models to re-render `sourceAudio` under a new caption instead of generating from a blank slate.
+
+Both `audioCoverStrength` and `coverNoiseStrength` accept values between 0 and 1: the former sets how much of the source's structure makes it into the cover, and the latter sets how much of the initial diffusion noise starts out blended toward the source's own latent instead of pure noise.
+
+`sourceAudio` isn't limited to raw PCM or a specific container. The SDK decodes it through its own ffmpeg pipeline, so any format ffmpeg can read works as the source, including an MP3 you already have on disk.
+
+Add `taskType`, `sourceAudio`, and the two strength parameters to `audioGen` alongside the caption:
+
+```ts
+const run = audioGen({
+  modelId,
+  caption,
+  lyrics: "[Instrumental]",
+  taskType: "cover-nofsq",
+  sourceAudio: sourcePath,
+  audioCoverStrength: 1,
+  coverNoiseStrength: 0.75,
+  seed: 22886,
+});
+```
+
+The rest of the call matches the caption-only version. Drain the progress ticks, then resolve `audio` and `stats` together:
+
+```ts
+for await (const progress of run.progressStream) {
+  console.log(`▸ ${progress.stage}: ${progress.step}/${progress.total}`);
+}
+
+const [audio, stats] = await Promise.all([run.audio, run.stats]);
+```
+
+Finally, wrap the PCM in a header, write it to disk, and release the model:
+
+```ts
+const wav = createWav(audio.pcm, audio.sampleRate, audio.channels, audio.bitsPerSample);
+writeFileSync("output/music-generation/audiogen-cover-output.wav", wav);
+
+if (stats) console.log(`▸ Stats: ${JSON.stringify(stats)}`);
+console.log(`▸ Saved output/music-generation/audiogen-cover-output.wav`);
+
+await unloadModel({ modelId });
+console.log("▸ Model unloaded");
+```
+
+> Note: `sourceAudio` is required the moment `taskType` is `"cover-nofsq"`. A cover run re-renders the track it's given, so there's nothing to fall back to without one. A separate `referenceAudio` file can steer the cover's timbre toward a different instrument or voice; this exercise omits it and only supplies `sourceAudio`.
