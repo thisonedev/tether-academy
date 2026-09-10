@@ -395,23 +395,60 @@ async function recommend(lessonKey, hardware) {
     return { pick: null, ranked: chat, reason: 'no-hardware-info' };
   }
 
-  const headroom = 2 * 1024 ** 3;
-  const ranked = chat
-    .map((entry) => {
-      const required = entry.minRamBytes > 0 ? entry.minRamBytes + headroom : 0;
-      if (required === 0) return { entry, fit: 'fits' };
-      if (hardware.memoryBytes >= required * 1.5) return { entry, fit: 'fits' };
-      if (hardware.memoryBytes >= required) return { entry, fit: 'tight' };
-      return { entry, fit: 'too-big' };
-    })
-    .sort((a, b) => {
-      const order = { fits: 0, tight: 1, 'too-big': 2 };
-      return order[a.fit] - order[b.fit] || a.entry.minRamBytes - b.entry.minRamBytes;
-    })
-    .map(({ entry }) => entry);
+  return rankByMemoryFit(chat);
+}
 
-  const firstFit = ranked.find((e) => e.minRamBytes === 0 || hardware.memoryBytes >= e.minRamBytes + headroom);
-  return { pick: firstFit ? firstFit.name : null, ranked, reason: 'hardware-fits-best' };
+// Ranks chat models by the SDK's own assessModelFit instead of a hand-rolled
+// minRamBytes guess, so this reads the same evidence checkMemoryFit gates
+// loadModel on. Falls back to the untouched catalogue order if the SDK's
+// assessModelFit isn't available (e.g. running outside Electron's main
+// process, where the native addon isn't loaded).
+async function rankByMemoryFit(chat) {
+  let sdk;
+  try {
+    sdk = require('@qvac/sdk');
+  } catch {
+    sdk = null;
+  }
+  if (typeof sdk?.assessModelFit !== 'function') {
+    return { pick: null, ranked: chat, reason: 'no-hardware-info' };
+  }
+
+  const candidates = chat
+    .map((entry) => {
+      const key = CHAT_PRESETS[entry.name];
+      const model = key ? sdk[key] : null;
+      return model ? { entry, model } : null;
+    })
+    .filter(Boolean);
+  if (candidates.length === 0) {
+    return { pick: null, ranked: chat, reason: 'no-hardware-info' };
+  }
+
+  const { MODEL_CTX_SIZE } = require('../shared/chat-context-size.cjs');
+  let assessed;
+  try {
+    assessed = await sdk.assessModelFit({
+      models: candidates.map((c) => ({ model: c.model, workload: { kind: 'llm', contextTokens: MODEL_CTX_SIZE } })),
+      execution: 'sequential',
+      policy: 'interactive-v1',
+    });
+  } catch {
+    return { pick: null, ranked: chat, reason: 'no-hardware-info' };
+  }
+
+  const verdictOrder = { 'likely-fits': 0, unknown: 1, 'likely-too-large': 2 };
+  const rankedCandidates = candidates
+    .map((c, i) => ({ entry: c.entry, verdict: assessed.models[i]?.verdict ?? 'unknown' }))
+    .sort((a, b) => verdictOrder[a.verdict] - verdictOrder[b.verdict]);
+
+  const assessedNames = new Set(candidates.map((c) => c.entry.name));
+  const ranked = rankedCandidates
+    .map(({ entry }) => entry)
+    .concat(chat.filter((entry) => !assessedNames.has(entry.name)));
+
+  const firstFit = rankedCandidates.find((r) => r.verdict === 'likely-fits');
+  return { pick: firstFit ? firstFit.entry.name : null, ranked, reason: 'hardware-fits-best' };
 }
 
 module.exports = {

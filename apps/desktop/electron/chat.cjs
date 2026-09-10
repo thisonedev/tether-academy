@@ -26,10 +26,9 @@ const { claim, release, ownerOf } = require('./model-ownership.cjs');
 const { CHAT_PRESETS } = require('../shared/chat-presets.cjs');
 const { ensureModels, checkDiskSpace } = require('../shared/model-fetch.cjs');
 const { checkMemoryFit } = require('../shared/model-memory-fit.cjs');
-
 // What loadModel asks the addon for, and what every prompt here is sized
 // against. See approxContextWindow for why the request is trusted.
-const MODEL_CTX_SIZE = 4096;
+const { MODEL_CTX_SIZE } = require('../shared/chat-context-size.cjs');
 
 // A chat model is several GB resident in RAM/VRAM; nothing here ever evicted
 // it before, so an idle session held that memory indefinitely. 20 minutes of
