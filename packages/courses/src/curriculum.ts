@@ -627,6 +627,12 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'vla-pi05',
         href: lessonHref('vla', 'vla-pi05'),
       },
+      {
+        num: '03',
+        title: 'Run a GR00T action inference across embodiments',
+        slug: 'vla-groot',
+        href: lessonHref('vla', 'vla-groot'),
+      },
     ],
   },
   {
