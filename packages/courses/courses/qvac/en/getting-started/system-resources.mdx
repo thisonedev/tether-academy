@@ -1,0 +1,88 @@
+---
+title: Read CPU and memory capacity
+sourceExample: "packages/sdk/examples/system-resources.ts"
+platforms: ['node']
+tests:
+  - id: calls-get-system-resources-with-sample
+    description: Calls getSystemResources with sample set to true
+    pattern: "getSystemResources\\s*\\(\\s*\\{[^}]*sample\\s*:\\s*true"
+  - id: checks-cpu-status-before-reading
+    description: Narrows capabilities.cpu.status to 'supported' before reading capabilities.cpu.value
+    pattern: "capabilities\\.cpu\\.status\\s*===\\s*[\"']supported[\"']"
+  - id: defines-print-metric-helper
+    description: Defines a printMetric helper that branches on metric.status
+    pattern: "function\\s+printMetric"
+  - id: guards-sample-before-reading
+    description: Checks sample is defined before reading sample.memory
+    pattern: "if\\s*\\(\\s*sample\\s*\\)"
+hints:
+  - "getSystemResources takes one options object; pass { sample: true } to add a live usage sample alongside the static capabilities."
+  - "Every metric has its own status; check capabilities.cpu.status === 'supported' before reading capabilities.cpu.value, and the same for the fields nested inside it."
+  - "sample is only present on the result when you asked for it, so guard the sample.memory reads with if (sample) first."
+expectedOutput:
+  - "▸ Logical cores: 8"
+  - "▸ Total memory: 16.00 GiB"
+  - "▸ Memory in use: 6.42 GiB"
+questions:
+  - id: nested-metric-status
+    text: "What is a key characteristic of the `status` field on a metric object?"
+    answers:
+      - text: "It's checked on every field independently, so a `'supported'` outer object can still contain a field that failed detection."
+        correct: true
+      - text: "It only ever appears on the top-level fields `getSystemResources` returns, not on fields nested inside them."
+        correct: false
+        feedback: "Look at where `logicalCores` gets its own `printMetric` call in the code example."
+      - text: "It's always `'supported'` once `getSystemResources` resolves without throwing."
+        correct: false
+        feedback: "Think about what the `else` branch of `printMetric` prints."
+  - id: sample-opt-in
+    text: "What happens if `getSystemResources` runs without `{ sample: true }`?"
+    answers:
+      - text: "`sample` is `undefined`, and only `capabilities` is returned."
+        correct: true
+      - text: "`sample: true` is required, and leaving it out makes `getSystemResources` fail immediately."
+        correct: false
+        feedback: "Consider whether `{ sample: true }` in the code example makes something required, or adds something optional."
+      - text: "`sample` still returns, reusing whatever reading was taken last."
+        correct: false
+        feedback: "Check the Note below the code example for what a live reading actually costs."
+---
+
+Now that you've watched a model download, it's worth checking what the machine underneath it can actually handle before you pick which model to run next.
+
+`getSystemResources` reports the machine's capacity without loading a model first. It returns two fields:
+
+- `capabilities`: the machine's static hardware profile (CPU, memory, GPUs).
+- `sample`: an optional live usage reading, returned only when you pass `{ sample: true }`.
+
+Each field is a metric object with a `status`. Only a `'supported'` field has a `value` to read. Detection runs per field, so a sandboxed environment can block the CPU vendor name while still reporting core count, or expose total memory but hide live process pressure.
+
+Checking `status === 'supported'` before reading `.value` avoids breaking on the first field a platform doesn't support, instead of assuming detection succeeds or fails for the whole payload at once. A single `printMetric` helper narrows each field's `status` before formatting it. It's reused below for the CPU, memory, and sample fields, like so:
+
+```ts
+const { capabilities, sample } = await getSystemResources({ sample: true });
+
+function printMetric<T>(label: string, metric: ResourceMetric<T>, format: (value: T) => string) {
+  if (metric.status === "supported") {
+    console.log(`▸ ${label}: ${format(metric.value)}`);
+  } else {
+    console.log(`▸ ${label}: ${metric.status}`);
+  }
+}
+
+const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+
+if (capabilities.cpu.status === "supported") {
+  printMetric("Logical cores", capabilities.cpu.value.logicalCores, String);
+}
+
+printMetric("Total memory", capabilities.memory.totalBytes, gib);
+
+if (sample) {
+  printMetric("Memory in use", sample.memory.usedBytes, gib);
+}
+```
+
+Notice `printMetric` runs again for `logicalCores`, even though the CPU's own `status` already passed. That outer check only confirms the CPU object itself was detected; `logicalCores` is wrapped in its own metric one level down, so it can fail independently of the CPU object it belongs to.
+
+> Note: `sample` stays `undefined` unless the request opts in with `{ sample: true }`, since a live reading costs a fresh measurement instead of reusing the static `capabilities` snapshot.

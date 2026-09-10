@@ -88,6 +88,12 @@ export const CURRICULUM: CurriculumChapter[] = [
       },
       {
         num: '06',
+        title: 'Read CPU and memory capacity',
+        slug: 'system-resources',
+        href: lessonHref('getting-started', 'system-resources'),
+      },
+      {
+        num: '07',
         title: 'Check whether a model fits before downloading it',
         slug: 'assess-model-fit',
         href: lessonHref('getting-started', 'assess-model-fit'),
