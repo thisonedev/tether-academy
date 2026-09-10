@@ -15,15 +15,17 @@ const TEXT_TOKEN_ID = 1000;
 const PROMPT_TEXT_TAIL = 20;
 
 console.log("▸ Loading GR00T (multi-embodiment) model...");
+let lastDecile = -1;
 const modelId = await loadModel({
   modelSrc: GROOT_MULTI_Q8_VF16,
   modelType: "ggml-vla",
   modelConfig: { backend: "cpu", embodiment: "libero_sim" },
   onProgress: (p) => {
+    const decile = Math.floor(p.percentage / 10);
+    if (decile === lastDecile) return;
+    lastDecile = decile;
     const mb = (n: number) => (n / 1e6).toFixed(1);
-    const line = `▸ Downloading ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)`;
-    process.stderr.write(process.stderr.isTTY ? `\r${line}` : `${line}\n`);
-    if (p.percentage >= 100) process.stderr.write("\n");
+    console.error(`▸ Downloading ${p.percentage.toFixed(0)}% (${mb(p.downloaded)}/${mb(p.total)} MB)`);
   },
 });
 console.log(`▸ Model loaded: ${modelId}`);
@@ -71,8 +73,8 @@ if (stats) {
   );
 }
 
-console.log("▸ Switching embodiment to real_droid...");
-const { hparams: refreshed } = await vlaSetEmbodiment({ modelId, embodiment: "real_droid" });
+console.log("▸ Switching embodiment to real_r1_pro_sharpa...");
+const { hparams: refreshed } = await vlaSetEmbodiment({ modelId, embodiment: "real_r1_pro_sharpa" });
 console.log(`▸ Embodiment: ${refreshed.selectedEmbodimentTag} (${refreshed.numCameras} cameras)`);
 
 await unloadModel({ modelId, clearStorage: false });

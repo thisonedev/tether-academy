@@ -18,52 +18,52 @@ tests:
 hints:
   - "loadModel({ modelSrc: GROOT_MULTI_Q8_VF16, modelType: 'ggml-vla', modelConfig: { backend: 'cpu', embodiment: 'libero_sim' } }) picks the starting embodiment at load time with modelConfig.embodiment."
   - "hparams.imageInputMode is 'patches' for GR00T, so each images[] entry is new Float32Array(hparams.imagePatchElems).fill(0.02) instead of a vlaPreprocessImage() pixel plane."
-  - "GR00T's flow-matching step doesn't sample its own prior, so noise: new Float32Array(hparams.chunkSize * hparams.maxActionDim) is required when calling vla(), not optional like the previous two lessons."
-  - "vlaSetEmbodiment({ modelId, embodiment: 'real_droid' }) returns { hparams }, the refreshed hyperparameters for the new embodiment."
+  - "GR00T's flow-matching step doesn't generate its own starting noise, so noise: new Float32Array(hparams.chunkSize * hparams.maxActionDim) is required when calling vla(), not optional like the previous two lessons."
+  - "vlaSetEmbodiment({ modelId, embodiment: 'real_r1_pro_sharpa' }) returns { hparams }, the refreshed hyperparameters for the new embodiment."
 expectedOutput:
   - "▸ Embodiment: libero_sim (2 cameras)"
   - "▸ Running VLA inference..."
-  - "▸ Switching embodiment to real_droid..."
-  - "▸ Embodiment: real_droid (4 cameras)"
+  - "▸ Switching embodiment to real_r1_pro_sharpa..."
+  - "▸ Embodiment: real_r1_pro_sharpa (6 cameras)"
 questions:
   - id: why-groot-skips-preprocess-image
     text: "Why doesn't `vlaPreprocessImage()` apply to GR00T's camera frames?"
     answers:
-      - text: "GR00T reports `imageInputMode: 'patches'`, so each `images[]` entry is already a pre-patchified buffer sized to `hparams.imagePatchElems`, not a raw pixel plane."
-        correct: true
       - text: "`vlaPreprocessImage()` only accepts square images, and GR00T's camera frames are rectangular."
         correct: false
         feedback: "Check what `hparams.imageInputMode` reports for GR00T, and what that field actually changes."
+      - text: "GR00T reports `imageInputMode: 'patches'`, so each camera frame is already a pre-patchified buffer instead of raw pixels."
+        correct: true
       - text: "GR00T runs on the GPU, and `vlaPreprocessImage()` only works for CPU inference."
         correct: false
         feedback: "Re-read what distinguishes GR00T's image input from SmolVLA and π₀.₅'s: the backend, or the buffer format."
   - id: why-groot-requires-noise
-    text: "Why is `noise` required on GR00T's `vla()` call, unlike the previous two lessons?"
+    text: "Why is `noise` required when running `vla()` on GR00T, but optional for SmolVLA and π₀.₅?"
     answers:
-      - text: "GR00T is a flow-matching model that doesn't sample its own noise prior, while SmolVLA and π₀.₅ sample one internally when `noise` is left out."
+      - text: "GR00T is a flow-matching model that can't generate its own starting noise, while SmolVLA and π₀.₅ generate one internally when `noise` is left out."
         correct: true
-      - text: "`noise` is required for every VLA model; SmolVLA and π₀.₅ only used a default value of zero instead of omitting it."
+      - text: "`noise` is required for every VLA model; SmolVLA and π₀.₅ default it to zero instead of omitting it."
         correct: false
-        feedback: "Check whether the SmolVLA and π₀.₅ lessons passed a `noise` buffer at all."
+        feedback: "Check whether SmolVLA and π₀.₅ pass a `noise` buffer at all."
       - text: "GR00T needs `noise` because it doesn't support a `state` buffer."
         correct: false
         feedback: "Re-read whether GR00T's state handling is any different from SmolVLA's continuous state."
-  - id: what-to-do-after-set-embodiment
-    text: "What has to happen before building new input buffers after `vlaSetEmbodiment()` resolves?"
+  - id: why-reread-hparams-after-set-embodiment
+    text: "Why do you need to re-read `hparams` after calling `vlaSetEmbodiment()`?"
     answers:
-      - text: "hparams has to be re-read, since fields like `numCameras` can differ under the newly active embodiment."
-        correct: true
       - text: "Every embodiment in a `GROOT_MULTI_*` GGUF shares identical `numCameras` and buffer sizes, so nothing has to change."
         correct: false
-        feedback: "Check what changes between `libero_sim` and `real_droid` in the expected output above."
+        feedback: "Check what changes between `libero_sim` and `real_r1_pro_sharpa` in the expected output above."
       - text: "The model has to be reloaded with `loadModel()` before the new embodiment takes effect."
         correct: false
         feedback: "Check what `vlaSetEmbodiment()` reads from the GGUF compared to a full reload."
+      - text: "Fields like `numCameras` can differ for the new embodiment, so buffers built from the old `hparams` may be the wrong size."
+        correct: true
 ---
 
-SmolVLA and π₀.₅ both take pixel images and stick to one robot configuration each. This lesson closes out the chapter with the third model, GR00T, which breaks both of those assumptions: its camera frames arrive pre-patchified, and one GGUF can hold several robot configurations at once.
+SmolVLA and π₀.₅ both take pixel images and stick to one robot configuration each. This lesson closes out the chapter with the third model, GR00T, which breaks both of those assumptions. Its camera frames arrive pre-patchified, and one GGUF can hold several robot configurations at once.
 
-`loadModel` still takes `modelType: "ggml-vla"`, but GR00T's GGUF can carry more than one **embodiment**, a specific robot configuration with its own camera count and action space. Pick the starting one with `modelConfig.embodiment`:
+`loadModel` still takes `modelType: "ggml-vla"`, but GR00T's GGUF can carry more than one embodiment, a specific robot configuration with its own camera count and action space. Pick the starting one with `modelConfig.embodiment`:
 
 ```ts
 const modelId = await loadModel({
@@ -73,7 +73,7 @@ const modelId = await loadModel({
 });
 ```
 
-Reading `hparams` works like the previous two lessons, plus two fields GR00T adds: `selectedEmbodimentTag` and the active `numCameras`.
+`vlaHparams` works the same way it did in the previous two lessons. GR00T also reports `selectedEmbodimentTag` and the active `numCameras`, two fields SmolVLA and π₀.₅ don't have.
 
 ```ts
 const { hparams, backendName } = await vlaHparams({ modelId });
@@ -81,7 +81,9 @@ console.log(`▸ Backend: ${backendName ?? "(unknown)"}`);
 console.log(`▸ Embodiment: ${hparams.selectedEmbodimentTag} (${hparams.numCameras} cameras)`);
 ```
 
-GR00T reports `hparams.imageInputMode` as `"patches"` instead of `"pixels"`: each `images[]` entry is a pre-patchified buffer of `hparams.imagePatchElems` floats, not a `3·w·h` plane, so `vlaPreprocessImage()` doesn't run here at all. The state is still continuous, padded like SmolVLA's state was. GR00T's flow-matching step also doesn't sample its own prior the way SmolVLA and π₀.₅ do when `noise` is left out, so a `noise` buffer is required rather than optional:
+GR00T reports `hparams.imageInputMode` as `"patches"` instead of `"pixels"`. Each `images[]` entry is a pre-patchified buffer of `hparams.imagePatchElems` floats instead of a `3·w·h` plane, so `vlaPreprocessImage()` doesn't apply here.
+
+The state is still continuous, padded like SmolVLA's state was. GR00T's flow-matching step also can't generate its own starting noise the way SmolVLA and π₀.₅ can when `noise` is left out, so a `noise` buffer is required rather than optional:
 
 ```ts
 const numCameras = hparams.numCameras ?? 2;
@@ -102,7 +104,7 @@ for (; w < tokens.length; w++) tokens[w] = TEXT_TOKEN_ID + w;
 const mask = new Uint8Array(promptLength).fill(1);
 ```
 
-The prompt reserves one run of `MERGED_TOKENS_PER_IMAGE` image-placeholder tokens per camera, the layout the Qwen3-VL tokenizer produces around each image; a real consumer gets this from the tokenizer, this exercise lays it out directly. With the buffers built, `vla()` runs exactly as it did in the previous two lessons:
+This matches the layout the Qwen3-VL tokenizer produces around each image. A real consumer gets that layout from the tokenizer; this exercise builds it directly instead. With the buffers built, `vla()` runs exactly as it did in the previous two lessons:
 
 ```ts
 const { actions, actionDim, chunkSize, stats } = await vla({
@@ -127,15 +129,15 @@ if (stats) {
 }
 ```
 
-`vlaSetEmbodiment` is the other feature unique to GR00T: it swaps the active robot configuration by reading roughly 20 MB of the new embodiment's rows out of the loaded GGUF, instead of reloading the whole ~4 GB file, and returns the refreshed hparams for whatever configuration you switched to:
+`vlaSetEmbodiment` is the other feature unique to GR00T. It swaps the active robot configuration by reading roughly 20 MB of the new embodiment's rows out of the loaded GGUF, instead of reloading the whole ~4 GB file, and returns the refreshed hparams for whatever configuration you switched to:
 
 ```ts
-const { hparams: refreshed } = await vlaSetEmbodiment({ modelId, embodiment: "real_droid" });
+const { hparams: refreshed } = await vlaSetEmbodiment({ modelId, embodiment: "real_r1_pro_sharpa" });
 console.log(`▸ Embodiment: ${refreshed.selectedEmbodimentTag} (${refreshed.numCameras} cameras)`);
 ```
 
-`real_droid` carries four camera views instead of `libero_sim`'s two, so `refreshed.numCameras` differs from the `hparams.numCameras` read right after load. Any inference run against the new embodiment needs buffers rebuilt from `refreshed`, not the original `hparams`.
+`real_r1_pro_sharpa` has six camera views versus `libero_sim`'s two, so `numCameras` changes after the switch. Any inference run against the new embodiment needs buffers rebuilt from `refreshed`, since it reflects the active embodiment now.
 
-> Note: despite the brand name, GR00T doesn't need NVIDIA hardware specifically. `@qvac/vla-ggml` accelerates on Vulkan (Linux, Windows, Android), Metal (Apple), and OpenCL (Qualcomm Adreno), falling back to CPU everywhere else. `backend: "cpu"` above only pins the example to a predictable baseline; a GPU on any of those backends, not only an NVIDIA one, speeds this up.
+> Note: despite the brand name, GR00T doesn't need NVIDIA hardware specifically. `@qvac/vla-ggml` accelerates on Vulkan (Linux, Windows, Android), Metal (Apple), and OpenCL (Qualcomm Adreno), falling back to CPU everywhere else. Setting `modelConfig.backend` to `"cpu"` pins this example to a predictable baseline; a GPU on any of those backends speeds this up too.
 
 > Note: `vlaSetEmbodiment` is rejected on a single-embodiment GGUF like `GROOT_Q8_VF16`, and while a previous `vla()` response is still pending. Only the `GROOT_MULTI_*` constants support switching at all.
