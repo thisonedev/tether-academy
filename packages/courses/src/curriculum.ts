@@ -86,6 +86,12 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'show-download-progress',
         href: lessonHref('getting-started', 'show-download-progress'),
       },
+      {
+        num: '06',
+        title: 'Check whether a model fits before downloading it',
+        slug: 'assess-model-fit',
+        href: lessonHref('getting-started', 'assess-model-fit'),
+      },
     ],
   },
   {

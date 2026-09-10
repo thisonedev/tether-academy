@@ -1,0 +1,90 @@
+---
+title: Check whether a model fits before downloading it
+sourceExample: "packages/sdk/examples/assess-model-fit.ts"
+platforms: ['node']
+tests:
+  - id: calls-assess-model-fit
+    description: Calls assessModelFit with a models array
+    pattern: "assessModelFit\\s*\\(\\s*\\{[^}]*models\\s*:"
+  - id: two-candidates
+    description: Includes both QWEN3_600M_INST_Q4 and QWEN3_8_27B_MULTIMODAL_UD_Q8_K_XL as candidates
+    pattern: "QWEN3_600M_INST_Q4[\\s\\S]*QWEN3_8_27B_MULTIMODAL_UD_Q8_K_XL"
+  - id: declares-execution-and-policy
+    description: "Sets execution to 'sequential' and policy to 'interactive-v1'"
+    pattern: "execution\\s*:\\s*[\"']sequential[\"'][\\s\\S]*policy\\s*:\\s*[\"']interactive-v1[\"']"
+  - id: logs-per-model-verdict
+    description: Iterates result.models and logs each verdict
+    pattern: "for\\s*\\(\\s*const\\s+model\\s+of\\s+result\\.models\\s*\\)"
+  - id: logs-combined-verdict
+    description: Logs the combined result.verdict
+    pattern: "console\\.log\\s*\\([^)]*result\\.verdict"
+hints:
+  - "assessModelFit takes one options object with a models array; each entry pairs a catalog constant under model with a workload, not the constant by itself."
+  - "budget is optional on the result. Guard with if (result.budget) before reading availableAfterReserveBytes, same as the real example does."
+  - "result.models lines up with the candidates array in order; result.verdict is the combined verdict across every candidate, not just the last one."
+expectedOutput:
+  - "▸ Budget: 8.00 GiB free"
+  - "▸ QWEN3_600M_INST_Q4: likely-fits"
+  - "▸ QWEN3_8_27B_MULTIMODAL_UD_Q8_K_XL: likely-too-large"
+  - "▸ Combined verdict: likely-too-large"
+questions:
+  - id: unknown-verdict
+    text: "What does `assessModelFit` return for a candidate when the catalog has no GGUF metadata to estimate it from?"
+    answers:
+      - text: "It throws an error, since the assessment can't proceed without metadata."
+        correct: false
+        feedback: "Check what the concept paragraph says `unknown` actually stands for."
+      - text: "`unknown`: the evidence doesn't support a verdict either way, not an error."
+        correct: true
+      - text: "It falls back to `likely-fits`, on the assumption that an unmeasured model is small."
+        correct: false
+        feedback: "Re-read what `unknown` stands for; it isn't a disguised `likely-fits`."
+  - id: combined-verdict-sequential
+    text: "Why does the combined `result.verdict` come out `likely-too-large` even though `QWEN3_600M_INST_Q4` alone was `likely-fits`?"
+    answers:
+      - text: "`execution: 'sequential'` still counts every candidate as loaded in memory, so the oversized candidate's memory footprint adds directly to the combined total."
+        correct: true
+      - text: "`execution: 'sequential'` only looks at the last candidate in the `models` array."
+        correct: false
+        feedback: "Check what `sequential` actually does with the earlier candidates, not just the last one."
+      - text: "The combined verdict always matches whichever verdict is listed first in the `models` array."
+        correct: false
+        feedback: "Think about what would change if the two candidates were listed in the opposite order."
+---
+
+Now that we can load a model and unload it when we're done, there's a step worth taking before either one: asking whether the model is likely to fit in memory at all.
+
+`assessModelFit` answers that question without downloading a single byte, loading a model, or running a native probe. It reads each candidate's generated catalog metadata against a fresh memory sample and returns one of three verdicts: `likely-fits`, `likely-too-large`, or `unknown`. Treat `unknown` as "can't say," not as a disguised no. It comes back when the catalog has no metadata for a model, the estimator hasn't been calibrated on this platform, or the evidence otherwise won't support a claim either way.
+
+`assessModelFit` takes two more inputs that affect the verdict:
+
+- `execution: 'sequential'` tells the SDK to treat every candidate as loaded in memory at once, matching what actually happens when models load one after another with none unloaded in between.
+- `policy: 'interactive-v1'` withholds a slice of whatever memory is free right now (20%, capped at 2 GiB on desktop) so the verdict leaves headroom for the rest of the system, not just the model.
+
+Pass both candidates in one call so their verdicts share a single memory budget:
+
+```ts
+const result = await assessModelFit({
+  models: [
+    { model: QWEN3_600M_INST_Q4, workload: { kind: "llm", contextTokens: 8192 } },
+    { model: QWEN3_8_27B_MULTIMODAL_UD_Q8_K_XL, workload: { kind: "llm", contextTokens: 8192 } },
+  ],
+  execution: "sequential",
+  policy: "interactive-v1",
+});
+
+const gib = (n: number) => (n / 1024 ** 3).toFixed(2);
+if (result.budget) {
+  console.log(`▸ Budget: ${gib(result.budget.availableAfterReserveBytes)} GiB free`);
+}
+
+for (const model of result.models) {
+  console.log(`▸ ${model.name}: ${model.verdict}`);
+}
+
+console.log("▸ Combined verdict:", result.verdict);
+```
+
+Notice how `QWEN3_600M_INST_Q4` comes back `likely-fits` on its own, but the combined verdict still comes out `likely-too-large`. Sequential execution keeps both candidates loaded in memory at once, so the oversized one drags the total down regardless of how small the other candidate is.
+
+> Note: `assessModelFit` is advisory only. It never blocks `loadModel`, reserves memory, or picks a model for us. We still decide what to do with a `likely-too-large` or `unknown` verdict.
