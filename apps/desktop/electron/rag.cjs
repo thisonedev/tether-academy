@@ -5,7 +5,8 @@
 // gets its own ephemeral workspace, closed and deleted after.
 
 const crypto = require('node:crypto');
-const { ensureModels } = require('../shared/model-fetch.cjs');
+const { ensureModels, checkDiskSpace } = require('../shared/model-fetch.cjs');
+const { checkMemoryFit } = require('../shared/model-memory-fit.cjs');
 
 const EMBED_PRESET_KEY = 'GTE_LARGE_FP16';
 const IDLE_UNLOAD_MS = 20 * 60 * 1000;
@@ -89,6 +90,11 @@ async function ensureEmbedModel() {
   if (!modelSrc) {
     throw new Error(`@qvac/sdk does not export ${EMBED_PRESET_KEY} in this build`);
   }
+  const spaceCheck = await checkDiskSpace([EMBED_PRESET_KEY]);
+  if (!spaceCheck.ok) throw new Error(spaceCheck.message);
+  // 512: the embedder's real context window, same figure MAX_CHUNK_CHARS is margined under.
+  const memoryCheck = await checkMemoryFit([{ model: modelSrc, workload: { kind: 'llm', contextTokens: 512 } }]);
+  if (!memoryCheck.ok) throw new Error(memoryCheck.message);
   await ensureModels([EMBED_PRESET_KEY], {}).catch(() => {});
   const modelId = await sdk.loadModel({ modelSrc });
   current = { modelId };

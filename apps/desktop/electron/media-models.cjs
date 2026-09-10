@@ -4,7 +4,7 @@
 // transcribe, diffusion, audiogen): same lifecycle as translate.cjs/chat.cjs,
 // factored out since six near-identical copies would just drift apart.
 
-const { ensureModels } = require('../shared/model-fetch.cjs');
+const { ensureModels, checkDiskSpace } = require('../shared/model-fetch.cjs');
 const { notify } = require('./model-status.cjs');
 const { claim, release, ownerOf } = require('./model-ownership.cjs');
 
@@ -86,6 +86,8 @@ function createLazyModel({ label, registryKeys, buildLoadArgs, modelName, modelK
       modelId = null;
     }
     if (registryKeys && registryKeys.length > 0) {
+      const spaceCheck = await checkDiskSpace(registryKeys);
+      if (!spaceCheck.ok) throw new Error(spaceCheck.message);
       await ensureModels(registryKeys, {
         onEvent: (e) => {
           if (modelName && e.phase === 'progress') {

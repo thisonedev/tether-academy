@@ -4,7 +4,7 @@
 // asking the general chat model. English -> target only; each language is
 // its own small model, loaded independently of chat.cjs's chat model.
 
-const { ensureModels } = require('../shared/model-fetch.cjs');
+const { ensureModels, checkDiskSpace } = require('../shared/model-fetch.cjs');
 const { notify } = require('./model-status.cjs');
 
 // Maps a language label to its @qvac/sdk registry constant and the lowercase
@@ -148,6 +148,8 @@ async function ensureLoaded(language) {
     throw new Error('@qvac/sdk does not export loadModel in this build');
   }
   const displayName = `English to ${language}`;
+  const spaceCheck = await checkDiskSpace([preset.key]);
+  if (!spaceCheck.ok) throw new Error(spaceCheck.message);
   await ensureModels([preset.key], {
     onEvent: (e) => {
       if (e.phase === 'progress') {

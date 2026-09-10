@@ -24,7 +24,8 @@ const { claim, release, ownerOf } = require('./model-ownership.cjs');
 // with MODEL_TYPE_REQUIRED.
 // Llama-3.2-1B-Instruct-Q4_0.gguf is excluded: that's a delegated-inference lesson download, not an AI-bot model.
 const { CHAT_PRESETS } = require('../shared/chat-presets.cjs');
-const { ensureModels } = require('../shared/model-fetch.cjs');
+const { ensureModels, checkDiskSpace } = require('../shared/model-fetch.cjs');
+const { checkMemoryFit } = require('../shared/model-memory-fit.cjs');
 
 // What loadModel asks the addon for, and what every prompt here is sized
 // against. See approxContextWindow for why the request is trusted.
@@ -230,6 +231,12 @@ async function ensureLoaded(filename) {
     throw new Error('@qvac/sdk does not export loadModel in this build');
   }
   const displayName = friendlyChatModelName(filename);
+  const spaceCheck = await checkDiskSpace([CHAT_PRESETS[filename]]);
+  if (!spaceCheck.ok) throw new Error(spaceCheck.message);
+  const memoryCheck = await checkMemoryFit([
+    { model: modelSrc, workload: { kind: 'llm', contextTokens: MODEL_CTX_SIZE } },
+  ]);
+  if (!memoryCheck.ok) throw new Error(memoryCheck.message);
   emitLoadProgress({ modelName: filename, loaded: 0, total: 0 });
   // See shared/model-fetch.cjs: takes the registry's named source when the
   // model is missing.
