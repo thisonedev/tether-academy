@@ -8,19 +8,35 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const REGISTRY_PATH = path.resolve(
-  __dirname,
-  '..',
-  'node_modules',
-  '@qvac',
-  'sdk',
-  'dist',
-  'models',
-  'registry',
-  'models.js',
-);
-
 const HOSTS = { hf: 'https://huggingface.co' };
+
+// @qvac/inference is a private dependency of @qvac/sdk under pnpm's strict
+// node_modules layout: it lives beside @qvac/sdk in the same pnpm store
+// entry, not inside @qvac/sdk's own package folder. Resolved lazily and
+// cached, so a resolution failure here can't take down a caller that only
+// ever needs this file's non-registry helpers (cacheFileName, modelsDir).
+let cachedRegistryPath;
+function resolveRegistryPath() {
+  if (cachedRegistryPath !== undefined) return cachedRegistryPath;
+  try {
+    const sdkEntry = require.resolve('@qvac/sdk');
+    const marker = `${path.sep}node_modules${path.sep}@qvac${path.sep}sdk${path.sep}`;
+    const pnpmDir = sdkEntry.slice(0, sdkEntry.indexOf(marker));
+    cachedRegistryPath = path.join(
+      pnpmDir,
+      'node_modules',
+      '@qvac',
+      'inference',
+      'dist',
+      'models',
+      'registry',
+      'models.js',
+    );
+  } catch {
+    cachedRegistryPath = null;
+  }
+  return cachedRegistryPath;
+}
 
 function modelsDir(home = os.homedir()) {
   return path.join(home, '.qvac', 'models');
@@ -43,8 +59,9 @@ function sourceUrl(entry) {
  * worker cannot require.
  * @returns {Map<string, { modelId: string, registryPath: string, registrySource: string, expectedSize: number, sha256: string | null }>}
  */
-function readRegistry(file = REGISTRY_PATH) {
+function readRegistry(file = resolveRegistryPath()) {
   const out = new Map();
+  if (!file) return out;
   let src;
   try {
     src = fs.readFileSync(file, 'utf8');
@@ -154,5 +171,5 @@ module.exports = {
   readRegistry,
   sideloadModel,
   sourceUrl,
-  REGISTRY_PATH,
+  resolveRegistryPath,
 };
