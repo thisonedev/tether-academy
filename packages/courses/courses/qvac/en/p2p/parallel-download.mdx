@@ -1,0 +1,79 @@
+---
+title: Download multiple models in parallel
+sourceExample: "packages/sdk/examples/parallel-download.ts"
+platforms: ['node']
+tests:
+  - id: maps-assets-to-downloads
+    description: Maps the asset list to downloadAsset requests
+    pattern: "assets\\.map\\s*\\(\\s*\\(\\s*asset\\s*\\)\\s*=>[\\s\\S]*downloadAsset\\s*\\(\\s*\\{[^}]*assetSrc"
+  - id: uses-promise-allsettled
+    description: Resolves the batch with Promise.allSettled
+    pattern: "Promise\\.allSettled\\s*\\(\\s*downloads\\s*\\)"
+  - id: logs-status-per-asset
+    description: Logs OK or FAILED per asset by index
+    pattern: "results\\[i\\]\\.status\\s*===\\s*[\"']fulfilled[\"']"
+hints:
+  - "downloadAsset() returns a promise the moment it's called. Map every asset to its own request inside .map, keeping the callback synchronous."
+  - "Promise.allSettled resolves once every promise finishes, whether it fulfills or rejects. Unlike Promise.all, one rejected download doesn't reject the whole batch."
+  - "results[i] lines up with assets[i] by index. Check status: 'fulfilled' or 'rejected' on each entry."
+expectedOutput:
+  - "▸ [Llama 3.2 1B] 100%"
+  - "▸ [Whisper Tiny] 100%"
+  - "▸ OK Llama 3.2 1B"
+  - "▸ OK Whisper Tiny"
+questions:
+  - id: allsettled-waits-for
+    text: "What does `Promise.allSettled` wait for before it resolves?"
+    answers:
+      - text: "Every promise to finish, whether it fulfills or rejects."
+        correct: true
+      - text: "Only the first promise to finish."
+        correct: false
+        feedback: "Re-read how many results `Promise.allSettled` needs before it resolves."
+      - text: "Only the promises that succeed."
+        correct: false
+        feedback: "Re-read what happens to a rejected promise under `Promise.allSettled`."
+  - id: results-status-field
+    text: "What does `results[i].status` tell you?"
+    answers:
+      - text: "Whether that download's promise fulfilled or rejected."
+        correct: true
+      - text: "How many percent of the file has downloaded."
+        correct: false
+        feedback: "Check which callback reports download percentage, and whether `status` is the same thing."
+      - text: "The name of the asset at that index."
+        correct: false
+        feedback: "Re-read what `status` reports versus what `assets[i].name` gives you."
+---
+
+Now that we've pre-downloaded one model, let's pre-download two at once instead of waiting for each one in turn.
+
+`downloadAsset()` returns its promise the moment it's called, before it downloads a single byte, the same as `completion()` did when we fired two completions in one tick. `.map()` makes every `downloadAsset()` request up front, so every download starts together instead of one after another.
+
+`Promise.allSettled` waits for all of them to finish. A rejected one doesn't stop it from reporting the ones that succeeded.
+
+Map each asset straight to its own `downloadAsset()` invocation like so:
+
+```ts
+const downloads = assets.map((asset) =>
+  downloadAsset({
+    assetSrc: asset.src,
+    onProgress: (p) => {
+      process.stderr.write(`▸ [${asset.name}] ${p.percentage.toFixed(0)}%\n`);
+    },
+  })
+);
+```
+
+Once it resolves, `results[i]` lines up with `assets[i]` by index:
+
+```ts
+const results = await Promise.allSettled(downloads);
+
+for (let i = 0; i < assets.length; i++) {
+  const status = results[i].status === "fulfilled" ? "OK" : "FAILED";
+  console.log(`▸ ${status} ${assets[i].name}`);
+}
+```
+
+> Note: swap `Promise.allSettled` for `Promise.all` here and one failed download rejects the entire batch, hiding the status of every asset that succeeded.

@@ -641,6 +641,13 @@ export const CURRICULUM: CurriculumChapter[] = [
         slug: 'blind-relays',
         href: lessonHref('p2p', 'blind-relays'),
       },
+      {
+        num: '03',
+        title: 'Download multiple models in parallel',
+        shortTitle: 'Download models in parallel',
+        slug: 'parallel-download',
+        href: lessonHref('p2p', 'parallel-download'),
+      },
     ],
   },
   {
