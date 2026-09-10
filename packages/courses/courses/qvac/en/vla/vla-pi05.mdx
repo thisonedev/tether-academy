@@ -22,7 +22,7 @@ hints:
 expectedOutput:
   - "▸ Loading π₀.₅ model..."
   - "▸ Model loaded: model-7f2a"
-  - "▸ Backend: ggml-vla"
+  - "▸ Backend: CPU"
   - "▸ Running VLA inference..."
   - "▸ Got 50 action steps of dim 32."
   - "▸ Timing: vision=180ms prefill=1240ms ode=410ms total=1860ms"
@@ -45,15 +45,15 @@ questions:
         correct: true
       - text: "Call `vla()` with just the model id; the SDK builds the inputs internally."
         correct: false
-        feedback: "Check what arguments the `vla()` call actually passes besides `modelId`."
+        feedback: "Check what arguments `vla()` actually receives besides `modelId`."
       - text: "Call `loadModel()` a second time with the input buffers attached."
         correct: false
         feedback: "Check which function takes the input buffers: `loadModel()`, or `vla()`."
 ---
 
-SmolVLA was the previous lesson's model. This lesson runs π₀.₅ from Physical Intelligence. The API surface is the same `vla()` call, but two hparams drive different input sizes.
+SmolVLA was the previous lesson's model. This lesson runs π₀.₅ from Physical Intelligence. The API surface is the same `vla()` function, but two hparams drive different input sizes.
 
-`loadModel` pulls π₀.₅ into memory, and `vlaHparams` reads the input dimensions (`visionImageSize`, `numCameras`, `tokenizerMaxLength`, `chunkSize`, `maxActionDim`) for the next step:
+`loadModel` pulls π₀.₅ into memory, and `vlaHparams` reads the input dimensions the next step needs:
 
 ```ts
 const modelId = await loadModel({
@@ -67,7 +67,14 @@ const size = hparams.visionImageSize;
 const numCameras = hparams.numCameras ?? 3;
 ```
 
-The four input buffers π₀.₅ expects: `numCameras` synthetic camera frames via `vlaPreprocessImage`, a BOS-only `tokens` and `mask` (the model starts decoding from a single BOS token), an empty state buffer (the state is tokenised into the prompt in this model, so the buffer is ignored), and a `chunkSize × maxActionDim` zero-filled noise buffer the diffusion step denoises:
+The four input buffers π₀.₅ expects:
+
+- `numCameras` synthetic camera frames via `vlaPreprocessImage`
+- a BOS-only `tokens` and `mask` pair (the model starts decoding from a single BOS token)
+- an empty state buffer, since this model tokenises state into the prompt and ignores the buffer
+- a `chunkSize × maxActionDim` zero-filled noise buffer the diffusion step denoises
+
+Built as synthetic values sized to `hparams`, the four buffers look like this:
 
 ```ts
 const dummyPixels = new Uint8Array(size * size * 3).fill(128);
@@ -112,4 +119,4 @@ if (stats) {
 
 The four `stats` fields are reported in processing order: vision encoder, language-model prefill, ODE solver, then wall-clock total. The optional chaining handles a stage that wasn't run. If a model short-circuits a phase, the field is `undefined` rather than missing from the object.
 
-> Note: π₀.₅ is a larger model (~3.9 GB) than SmolVLA (~1.9 GB) and the inference time reflects that. On a desktop CPU, expect several seconds per call. The `backend: "cpu"` flag is the default and the only supported target in this SDK release.
+> Note: π₀.₅ is a larger model (~3.9 GB) than SmolVLA (~1.9 GB), and the inference time reflects that; expect several seconds per run on a desktop CPU. `backend: "cpu"` above pins a predictable baseline: `@qvac/vla-ggml` actually defaults to `"auto"` and accelerates on a GPU (Vulkan, Metal, or OpenCL depending on platform) when one's available.
