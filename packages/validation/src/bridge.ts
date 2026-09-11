@@ -79,6 +79,10 @@ export interface AcademyModelCatalogueEntry {
   aiBot: boolean;
   /** Playground node labels that load this model, e.g. `['Generate image']`; null if none do. */
   playground: string[] | null;
+  /** True when `name` is a companion-set directory hash, not a model file. */
+  isCompanionSet?: boolean;
+  /** Set directory this file is bundled into, if the SDK ships it that way. */
+  companionSetKey?: string | null;
 }
 
 export interface AcademyModelRecommendation {
@@ -107,7 +111,9 @@ export interface AcademyModelsAPI {
   /** All catalogue entries tagged for a given chapter/lesson, in display order. */
   forLesson: (lessonKey: { chapter: string; lesson: string }) => Promise<AcademyModelCatalogueEntry[]>;
   /** Caches a model without loading it (a catalogue `name`, downloaded or not). No-ops if already cached. */
-  download: (name: string) => Promise<{ downloaded: boolean }>;
+  download: (name: string) => Promise<{ downloaded: boolean; cancelled?: boolean }>;
+  /** Aborts the in-flight `download()`. Safe when nothing is running. */
+  cancelDownload: () => Promise<{ cancelled: boolean }>;
   /** Fires while any `download()` call is in flight; unsubscribe with the returned function. */
   onDownloadProgress: (callback: (progress: { name: string; loaded: number; total: number }) => void) => () => void;
 }

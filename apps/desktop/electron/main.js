@@ -72,6 +72,7 @@ const {
   recommend,
   forLesson,
   downloadModel,
+  cancelDownload,
   onDownloadProgress,
 } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
@@ -624,6 +625,7 @@ handle('academy:models:recommend', async (lessonKey) => {
 handle('academy:models:for-lesson', async (lessonKey) => forLesson(lessonKey));
 
 handle('academy:models:download', async (name) => downloadModel(name));
+handle('academy:models:cancelDownload', async () => cancelDownload());
 
 // AI assistant chat. The renderer subscribes once on mount to academy:chat:chunk
 // and routes by requestId.

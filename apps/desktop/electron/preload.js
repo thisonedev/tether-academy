@@ -33,6 +33,7 @@ const academy = {
     recommend: (lessonKey) => ipcRenderer.invoke('academy:models:recommend', lessonKey),
     forLesson: (lessonKey) => ipcRenderer.invoke('academy:models:for-lesson', lessonKey),
     download: (name) => ipcRenderer.invoke('academy:models:download', name),
+    cancelDownload: () => ipcRenderer.invoke('academy:models:cancelDownload'),
     onDownloadProgress: (callback) => {
       const handler = (/** @type {unknown} */ _e, /** @type {any} */ progress) => callback(progress);
       ipcRenderer.on('academy:models:download-progress', handler);

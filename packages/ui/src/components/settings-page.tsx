@@ -9,9 +9,9 @@ import type {
   AcademyPeerInfo,
 } from '@academy/validation';
 import { useUserHydrated, useUserStore } from '@academy/core';
-import { Box, Bot, Circle, CircleCheck, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Box, Bot, Circle, CircleCheck, Cpu, Database, Download, Eraser, HardDrive, Loader2, MemoryStick, Square, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AI_BOT_MODEL_NAMES } from './ai-bot-models.js';
 import {
   DevicesPanel,
@@ -92,6 +92,8 @@ export function SettingsPage() {
   const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
   // A chapter slug, 'course', or null. Only one bulk download runs at a time.
   const [downloadingScope, setDownloadingScope] = useState<string | null>(null);
+  const [downloadingName, setDownloadingName] = useState<string | null>(null);
+  const [downloadQueue, setDownloadQueue] = useState<{ done: number; total: number } | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [configuredChatModel, setConfiguredChatModel] = useState<string | null>(null);
   const [configuringChatModel, setConfiguringChatModel] = useState<string | null>(null);
@@ -106,6 +108,7 @@ export function SettingsPage() {
   const [remove, setRemove] = useState<RemoveState>({ pending: null, busy: false, error: null });
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTabId>('models');
+  const downloadAbortRef = useRef(false);
 
   // Settings is desktop-only; on web, bounce back to the home page rather than show a dead page.
   useEffect(() => {
@@ -304,22 +307,48 @@ export function SettingsPage() {
   // that's already cached, so callers can pass a scope's full list as-is.
   const downloadModels = useCallback(
     async (scope: string, names: string[]) => {
-      if (!window.academy?.models) return;
+      if (!window.academy?.models || names.length === 0) return;
+      downloadAbortRef.current = false;
       setDownloadingScope(scope);
       setDownloadError(null);
+      setDownloadQueue({ done: 0, total: names.length });
       try {
-        for (const name of names) {
-          await window.academy.models.download(name);
+        for (let i = 0; i < names.length; i++) {
+          if (downloadAbortRef.current) break;
+          const name = names[i];
+          if (!name) continue;
+          setDownloadingName(name);
+          setModelProgress((prev) => ({ ...prev, [name]: { loaded: 0, total: 0 } }));
+          const result = await window.academy.models.download(name);
+          if (downloadAbortRef.current || result?.cancelled) break;
+          setDownloadQueue({ done: i + 1, total: names.length });
         }
         await refreshModels();
       } catch (err) {
-        setDownloadError(err instanceof Error ? err.message : 'Download failed');
+        if (!downloadAbortRef.current) {
+          setDownloadError(err instanceof Error ? err.message : 'Download failed');
+        }
       } finally {
         setDownloadingScope(null);
+        setDownloadingName(null);
+        setDownloadQueue(null);
       }
     },
     [refreshModels],
   );
+
+  const stopDownloads = useCallback(async () => {
+    downloadAbortRef.current = true;
+    await window.academy?.models?.cancelDownload?.();
+  }, []);
+
+  // Open the chapter that owns the file in flight so the row's bar is visible.
+  useEffect(() => {
+    if (!downloadingName) return;
+    const entry = (fullCatalogue ?? []).find((e) => e.name === downloadingName);
+    const chapter = entry?.usedIn?.[0]?.chapter;
+    if (chapter) setSelectedChapter(chapter);
+  }, [downloadingName, fullCatalogue]);
 
   // Arms the inline confirm for a row without deleting anything yet; the
   // actual delete only fires from the "Remove" button in that confirm state.
@@ -337,23 +366,35 @@ export function SettingsPage() {
     const map = new Map<string, string>();
     (models ?? []).forEach((m) => map.set(m.name, m.id));
     (chatCatalogue ?? []).forEach((entry) => {
-      // Only a file actually on disk has anything to delete.
+      // Prefer the chat cache file when that exact install is complete; leave
+      // an on-disk leftover (including a 0 B truncated download) mapped so
+      // the row can still delete it.
       if (entry.cacheFile && entry.installed) map.set(entry.name, entry.cacheFile);
-      else if (entry.installed === false) map.delete(entry.name);
+    });
+    // A companion file may only exist inside sets/<hash>/; deleting the set
+    // is what actually frees it.
+    (fullCatalogue ?? []).forEach((entry) => {
+      if (!entry.companionSetKey || map.has(entry.name)) return;
+      const set = (models ?? []).find((m) => m.name === entry.companionSetKey);
+      if (set) map.set(entry.name, set.id);
     });
     return map;
-  }, [models, chatCatalogue]);
+  }, [models, chatCatalogue, fullCatalogue]);
 
   // A download in progress already occupies its final filename, so the checkmark
   // needs completeness too, and for chat models only the host can resolve it.
   const modelCompleteByName = useMemo(() => {
     const map = new Map<string, boolean>();
     (models ?? []).forEach((m) => map.set(m.name, m.complete));
+    (fullCatalogue ?? []).forEach((entry) => {
+      if (map.has(entry.name)) return;
+      if (typeof entry.installed === 'boolean') map.set(entry.name, entry.installed);
+    });
     (chatCatalogue ?? []).forEach((entry) => {
       if (typeof entry.installed === 'boolean') map.set(entry.name, entry.installed);
     });
     return map;
-  }, [models, chatCatalogue]);
+  }, [models, chatCatalogue, fullCatalogue]);
 
   if (!hydrated || isDesktop === null) {
     return (
@@ -364,8 +405,13 @@ export function SettingsPage() {
   }
 
   if (!isDesktop) {
-    // Redirect already scheduled; render nothing so "Sign in" doesn't flash before it lands.
-    return null;
+    // Redirect already scheduled. Keep the loading frame so a production build
+    // doesn't paint Electron's #070707 window as a blank black screen.
+    return (
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
+        <p className="text-sm text-canvas-muted-foreground">Loading…</p>
+      </main>
+    );
   }
 
   if (!username) {
@@ -401,9 +447,11 @@ export function SettingsPage() {
   // chapter that need it (a model can need multiple lessons in one chapter).
   const chapterGroups = new Map<string, { entry: AcademyModelCatalogueEntry; lessons: string[] }[]>();
   for (const entry of fullCatalogue ?? []) {
+    if (entry.isCompanionSet) continue;
     for (const ref of entry.usedIn ?? []) {
+      if (!ref?.chapter) continue;
       const bucket = chapterGroups.get(ref.chapter) ?? [];
-      bucket.push({ entry, lessons: ref.lessons });
+      bucket.push({ entry, lessons: Array.isArray(ref.lessons) ? ref.lessons : [] });
       chapterGroups.set(ref.chapter, bucket);
     }
   }
@@ -411,13 +459,23 @@ export function SettingsPage() {
   const notInstalledBytes = (entries: { entry: AcademyModelCatalogueEntry }[]) =>
     entries
       .filter(({ entry }) => modelCompleteByName.get(entry.name) !== true)
-      .reduce((sum, { entry }) => sum + entry.sizeBytes, 0);
+      .reduce((sum, { entry }) => sum + (entry.sizeBytes || 0), 0);
   const missingNames = (entries: { entry: AcademyModelCatalogueEntry }[]) =>
     entries.filter(({ entry }) => modelCompleteByName.get(entry.name) !== true).map(({ entry }) => entry.name);
   // Deduped by name: a model shared across chapters must download once, not
-  // once per chapter it appears in.
+  // once per chapter it appears in. Companion set hashes resolve in
+  // models.download() to the owning SDK constant.
   const courseMissingNames = [
-    ...new Set((fullCatalogue ?? []).filter((e) => e.usedIn.length > 0 && modelCompleteByName.get(e.name) !== true).map((e) => e.name)),
+    ...new Set(
+      (fullCatalogue ?? [])
+        .filter(
+          (e) =>
+            !e.isCompanionSet &&
+            (e.usedIn ?? []).length > 0 &&
+            modelCompleteByName.get(e.name) !== true,
+        )
+        .map((e) => e.name),
+    ),
   ];
 
   return (
@@ -505,7 +563,7 @@ export function SettingsPage() {
               <div className="flex h-2.5 overflow-hidden rounded-full bg-canvas-border">
                 <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (downloadedBytesAll / device.storageBytes) * 100)}%` }} />
                 <div
-                  className="ml-auto h-full rounded-l-full border-1.5 border-dashed border-canvas-foreground/35"
+                  className="ml-auto h-full rounded-l-full border-[1.5px] border-dashed border-canvas-foreground/35"
                   style={{ width: `${Math.min(100, (device.storageFreeBytes / device.storageBytes) * 100)}%` }}
                 />
               </div>
@@ -515,7 +573,7 @@ export function SettingsPage() {
                   <b className="font-bold text-canvas-foreground">{formatGb(downloadedBytesAll)}</b> models
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="size-2 shrink-0 rounded-full border-1.5 border-dashed border-canvas-foreground/35" />
+                  <span className="size-2 shrink-0 rounded-full border-[1.5px] border-dashed border-canvas-foreground/35" />
                   <b className="font-bold text-canvas-foreground">{formatGb(device.storageFreeBytes)}</b> free
                 </span>
                 <span><b className="font-bold text-canvas-foreground">{formatGb(device.storageBytes)}</b> total disk</span>
@@ -558,9 +616,9 @@ export function SettingsPage() {
                           <p className="mt-0.5 text-xs text-canvas-muted-foreground">
                             {entry.description || 'Local text-generation model'}
                           </p>
-                          {entry.usedIn.length > 0 ? (
+                          {(entry.usedIn ?? []).length > 0 ? (
                             <p className="mt-0.5 text-[11px] text-canvas-muted-foreground">
-                              Also used by: {joinChapters(entry.usedIn.map((ref) => chapterLabel(ref.chapter)))}
+                              Also used by: {joinChapters((entry.usedIn ?? []).map((ref) => chapterLabel(ref.chapter)))}
                             </p>
                           ) : null}
                         </div>
@@ -695,17 +753,39 @@ export function SettingsPage() {
                     onConfirmRemove={onRemoveAll}
                     onCancel={cancelRemove}
                   />
-                  <button
-                    type="button"
-                    disabled={downloadingScope !== null || courseMissingNames.length === 0}
-                    onClick={() => void downloadModels('course', courseMissingNames)}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-40"
-                  >
-                    {downloadingScope === 'course' ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                    {courseMissingNames.length === 0 ? 'Ready' : 'Download all'}
-                  </button>
+                  {downloadingScope ? (
+                    <button
+                      type="button"
+                      onClick={() => void stopDownloads()}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20"
+                    >
+                      <Square className="size-3 fill-current" />
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={courseMissingNames.length === 0}
+                      onClick={() => void downloadModels('course', courseMissingNames)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-40"
+                    >
+                      {courseMissingNames.length === 0 ? 'Ready' : 'Download all'}
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {downloadingName && downloadQueue ? (
+                <div className="mb-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="truncate font-mono text-xs text-canvas-foreground">{downloadingName}</p>
+                    <p className="shrink-0 font-mono text-[10px] uppercase tracking-widest text-canvas-muted-foreground">
+                      {downloadQueue.done + (downloadQueue.done < downloadQueue.total ? 1 : 0)} of {downloadQueue.total}
+                    </p>
+                  </div>
+                  <DownloadMeter progress={modelProgress[downloadingName]} />
+                </div>
+              ) : null}
 
               <div className="flex flex-col gap-2">
                 {chapterSlugs.map((chapter) => {
@@ -715,7 +795,8 @@ export function SettingsPage() {
                   const bytes = entries.reduce((sum, { entry }) => sum + entry.sizeBytes, 0);
                   const tight = device != null && notInstalledBytes(entries) > device.storageFreeBytes;
                   const expanded = selectedChapter === chapter;
-                  const busy = downloadingScope === chapter;
+                  const chapterHasCurrent = downloadingName != null && entries.some(({ entry }) => entry.name === downloadingName);
+                  const busy = downloadingScope === chapter || chapterHasCurrent;
                   return (
                     <div
                       key={chapter}
@@ -744,8 +825,13 @@ export function SettingsPage() {
                               <span className="truncate">{chapterLabel(chapter)}</span>
                               {tight ? <span className="size-1.5 shrink-0 rounded-full bg-amber-400" title="Tight on disk" /> : null}
                             </div>
-                            <p className="mt-0.5 text-[11.5px] text-canvas-muted-foreground">
-                              {ready ? 'Ready' : `${installedCount} / ${entries.length} models`} · {formatBytes(bytes)}
+                            <p className="mt-0.5 truncate text-[11.5px] text-canvas-muted-foreground">
+                              {chapterHasCurrent && downloadingName
+                                ? `Downloading ${downloadingName}`
+                                : ready
+                                  ? 'Ready'
+                                  : `${installedCount} / ${entries.length} models`}{' '}
+                              · {formatBytes(bytes)}
                             </p>
                           </div>
                         </button>
@@ -759,7 +845,7 @@ export function SettingsPage() {
                         ) : (
                           <button
                             type="button"
-                            disabled={busy}
+                            disabled={downloadingScope !== null}
                             onClick={() => void downloadModels(chapter, missingNames(entries))}
                             title="Prep chapter"
                             aria-label="Prep chapter"
@@ -786,6 +872,10 @@ export function SettingsPage() {
                               state={remove}
                               modelIdByName={modelIdByName}
                               modelCompleteByName={modelCompleteByName}
+                              downloading={downloadingName === entry.name}
+                              progress={modelProgress[entry.name]}
+                              downloadDisabled={downloadingScope !== null}
+                              onDownload={() => void downloadModels(entry.name, [entry.name])}
                               onRequestRemove={requestRemove}
                               onConfirmRemove={onRemoveOne}
                               onCancel={cancelRemove}
@@ -876,12 +966,34 @@ export function SettingsPage() {
 
 // One row per catalogue entry, reused by Foundational models and the chapter
 // detail panel so a model looks the same wherever it's listed.
+function DownloadMeter({ progress }: { progress?: { loaded: number; total: number } }) {
+  const known = progress && progress.total > 0;
+  const pct = known ? Math.min(100, Math.round((progress.loaded / progress.total) * 100)) : null;
+  return (
+    <div className="mt-2">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-canvas-border">
+        <div
+          className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+          style={{ width: pct != null ? `${pct}%` : '15%' }}
+        />
+      </div>
+      <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-canvas-muted-foreground">
+        {known ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}` : 'Preparing model…'}
+      </p>
+    </div>
+  );
+}
+
 function ModelListRow({
   entry,
   usedLabel,
   state,
   modelIdByName,
   modelCompleteByName,
+  downloading,
+  progress,
+  downloadDisabled,
+  onDownload,
   onRequestRemove,
   onConfirmRemove,
   onCancel,
@@ -891,6 +1003,10 @@ function ModelListRow({
   state: RemoveState;
   modelIdByName: Map<string, string>;
   modelCompleteByName: Map<string, boolean>;
+  downloading?: boolean;
+  progress?: { loaded: number; total: number };
+  downloadDisabled?: boolean;
+  onDownload?: () => void;
   onRequestRemove: (id: string) => void;
   onConfirmRemove: (id: string) => void;
   onCancel: () => void;
@@ -898,25 +1014,45 @@ function ModelListRow({
   const installed = modelCompleteByName.get(entry.name) === true;
   const id = modelIdByName.get(entry.name);
   return (
-    <div className="flex items-center gap-3 border-b border-canvas-border/60 py-2.5 last:border-b-0">
-      <span
-        className={`size-2 shrink-0 rounded-full ${installed ? 'bg-emerald-400' : 'border border-canvas-muted-foreground bg-transparent'}`}
-      />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-canvas-foreground">{entry.name}</p>
-        <p className="mt-0.5 truncate text-[11px] text-canvas-muted-foreground">{usedLabel}</p>
-      </div>
-      <span className="shrink-0 font-mono text-xs text-canvas-muted-foreground">{formatBytes(entry.sizeBytes)}</span>
-      {installed && id ? (
-        <RemoveIconButton
-          id={id}
-          label={entry.name}
-          state={state}
-          onRequestRemove={() => onRequestRemove(id)}
-          onConfirmRemove={() => onConfirmRemove(id)}
-          onCancel={onCancel}
+    <div className="border-b border-canvas-border/60 py-2.5 last:border-b-0">
+      <div className="flex items-center gap-3">
+        <span
+          className={`size-2 shrink-0 rounded-full ${
+            installed ? 'bg-emerald-400' : downloading ? 'bg-emerald-400/50' : 'border border-canvas-muted-foreground bg-transparent'
+          }`}
         />
-      ) : null}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm text-canvas-foreground">{entry.name}</p>
+          <p className="mt-0.5 truncate text-[11px] text-canvas-muted-foreground">
+            {downloading ? 'Downloading…' : usedLabel}
+          </p>
+        </div>
+        <span className="shrink-0 font-mono text-xs text-canvas-muted-foreground">{formatBytes(entry.sizeBytes)}</span>
+        {downloading ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-emerald-400" />
+        ) : installed && id ? (
+          <RemoveIconButton
+            id={id}
+            label={entry.name}
+            state={state}
+            onRequestRemove={() => onRequestRemove(id)}
+            onConfirmRemove={() => onConfirmRemove(id)}
+            onCancel={onCancel}
+          />
+        ) : !installed && onDownload ? (
+          <button
+            type="button"
+            disabled={downloadDisabled}
+            onClick={onDownload}
+            title={`Download ${entry.name}`}
+            aria-label={`Download ${entry.name}`}
+            className="flex size-7 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+          >
+            <Download className="size-3.5" />
+          </button>
+        ) : null}
+      </div>
+      {downloading ? <DownloadMeter progress={progress} /> : null}
     </div>
   );
 }
@@ -1017,8 +1153,8 @@ function RemoveIconButton({
   );
 }
 
-function joinChapters(items: string[]): string {
-  if (items.length === 0) return '';
+function joinChapters(items: string[] | undefined): string {
+  if (!items || items.length === 0) return '';
   if (items.length === 1) return items[0];
   if (items.length === 2) return `${items[0]} and ${items[1]}`;
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
@@ -1047,6 +1183,7 @@ const CHAPTER_LABELS: Record<string, string> = {
   'abot-world': 'Abot world',
 };
 function chapterLabel(slug: string): string {
+  if (!slug) return '';
   return CHAPTER_LABELS[slug] ?? slug;
 }
 
@@ -1105,7 +1242,7 @@ function RemoveAllButton({
 }
 
 function DeviceTable({ info }: { info: AcademyDeviceInfo }) {
-  const rows: { icon: React.ReactNode; label: string; value: string; hint?: string }[] = [
+  const rows: { icon: ReactNode; label: string; value: string; hint?: string }[] = [
     { icon: <Box className="size-4" />, label: 'Operating system', value: info.osLabel, hint: info.arch },
     {
       icon: <Cpu className="size-4" />,

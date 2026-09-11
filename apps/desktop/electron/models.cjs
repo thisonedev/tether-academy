@@ -175,7 +175,8 @@ async function listModels() {
         if (!group.isDirectory()) continue;
         const groupAbs = path.join(abs, group.name);
         const { total, count } = await dirSize(groupAbs);
-        if (count === 0) continue;
+        // Empty companion dirs still have to show up: otherwise the catalogue
+        // row is 0 B with no id, and Settings can't delete the leftover.
         out.push({
           id: path.join(entry.name, group.name),
           name: group.name,
@@ -186,7 +187,7 @@ async function listModels() {
           usedIn: usage[group.name] ?? [],
           description: descriptions[group.name] ?? '',
           // No reliable per-shard ground truth here (see pruneIncompleteDownloads).
-          complete: true,
+          complete: count > 0,
         });
       }
     }
@@ -222,25 +223,77 @@ async function removeModel(id) {
   return { removed, freedBytes };
 }
 
+// Lazy so a missing @qvac/sdk/models can't take down list/remove on startup.
+let _sdkRegistryModels = null;
+function sdkRegistryModels() {
+  if (_sdkRegistryModels === null) {
+    try {
+      const { models } = require('@qvac/sdk/models');
+      _sdkRegistryModels = Array.isArray(models) ? models : [];
+    } catch (err) {
+      console.warn('[models] could not load @qvac/sdk registry', err && err.message);
+      _sdkRegistryModels = [];
+    }
+  }
+  return _sdkRegistryModels;
+}
+
 // Memoized filename -> set of valid download sizes, from @qvac/sdk's registry
 // (multiple entries when a file has more than one legitimate source).
 let _knownSizesByName = null;
 function knownGoodSizes(filename) {
   if (_knownSizesByName === null) {
     _knownSizesByName = new Map();
-    try {
-      const { models: registryModels } = require('@qvac/sdk/models');
-      for (const entry of registryModels) {
-        if (!entry.modelId || !entry.expectedSize) continue;
-        const sizes = _knownSizesByName.get(entry.modelId) ?? new Set();
-        sizes.add(entry.expectedSize);
-        _knownSizesByName.set(entry.modelId, sizes);
-      }
-    } catch (err) {
-      console.warn('[models] knownGoodSizes: could not load @qvac/sdk registry', err && err.message);
+    for (const entry of sdkRegistryModels()) {
+      if (!entry.modelId || !entry.expectedSize) continue;
+      const sizes = _knownSizesByName.get(entry.modelId) ?? new Set();
+      sizes.add(entry.expectedSize);
+      _knownSizesByName.set(entry.modelId, sizes);
     }
   }
   return _knownSizesByName.get(filename) ?? null;
+}
+
+// Catalogue fallback so an undownloaded row shows the registry size instead of 0 B.
+let _expectedSizeByName = null;
+function expectedSizeForName(name) {
+  if (_expectedSizeByName === null) {
+    _expectedSizeByName = new Map();
+    for (const entry of sdkRegistryModels()) {
+      if (entry.modelId && entry.expectedSize) {
+        const prev = _expectedSizeByName.get(entry.modelId) ?? 0;
+        _expectedSizeByName.set(entry.modelId, Math.max(prev, entry.expectedSize));
+      }
+      const set = entry.companionSet;
+      if (set && set.setKey) {
+        const sum = (set.files ?? []).reduce((s, f) => s + (f.expectedSize || 0), 0);
+        if (sum > 0) {
+          const prev = _expectedSizeByName.get(set.setKey) ?? 0;
+          _expectedSizeByName.set(set.setKey, Math.max(prev, sum));
+        }
+      }
+    }
+  }
+  return _expectedSizeByName.get(name) ?? 0;
+}
+
+// setKey <-> member filenames. BCI_WINDOWED is both sets/abc845…/ and
+// ggml-bci-windowed.bin in the catalogue; downloading one must count as both.
+let _companionIndex = null;
+function companionIndex() {
+  if (_companionIndex === null) {
+    const setKeyToMembers = new Map();
+    const memberToSetKey = new Map();
+    for (const entry of sdkRegistryModels()) {
+      const set = entry.companionSet;
+      if (!set || !set.setKey) continue;
+      const members = (set.files ?? []).map((f) => f.targetName).filter(Boolean);
+      setKeyToMembers.set(set.setKey, members);
+      for (const member of members) memberToSetKey.set(member, set.setKey);
+    }
+    _companionIndex = { setKeyToMembers, memberToSetKey };
+  }
+  return _companionIndex;
 }
 
 // A download in flight is short and growing, which reads exactly like the
@@ -296,20 +349,41 @@ async function removeAllModels(excludeNames) {
 // section downloads through chat.load() instead.
 const CHAT_PRESET_CONSTANTS = new Set(Object.values(CHAT_PRESETS));
 let _modelIdToConstant = null;
+function preferNonChatConstant(map, key, constant) {
+  const existing = map.get(key);
+  if (existing === undefined || (CHAT_PRESET_CONSTANTS.has(existing) && !CHAT_PRESET_CONSTANTS.has(constant))) {
+    map.set(key, constant);
+  }
+}
+
 function modelIdToConstant() {
   if (_modelIdToConstant === null) {
     _modelIdToConstant = new Map();
     for (const [constant, entry] of readRegistry()) {
-      const existing = _modelIdToConstant.get(entry.modelId);
-      if (existing === undefined || (CHAT_PRESET_CONSTANTS.has(existing) && !CHAT_PRESET_CONSTANTS.has(constant))) {
-        _modelIdToConstant.set(entry.modelId, constant);
-      }
+      preferNonChatConstant(_modelIdToConstant, entry.modelId, constant);
+    }
+    // Companion sets live on disk as sets/<setKey>/; Download all sends that
+    // hash, which is not a modelId. Map it to the owning registry constant so
+    // downloadAsset still runs (it pulls the whole set).
+    for (const entry of sdkRegistryModels()) {
+      const setKey = entry.companionSet && entry.companionSet.setKey;
+      if (!setKey || !entry.name) continue;
+      preferNonChatConstant(_modelIdToConstant, setKey, entry.name);
     }
   }
   return _modelIdToConstant;
 }
 
 const downloadEvents = new EventEmitter();
+
+let currentDownload = null;
+let downloadCancelled = false;
+
+function isCancelError(err) {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  return err.name === 'InferenceCancelledError' || /cancel/i.test(msg);
+}
 
 // Caches a model without loading it, so a chapter can be pulled ahead of
 // running any of its lessons. Distinct from model-fetch.cjs's ensureModels,
@@ -320,13 +394,37 @@ async function downloadModel(name, sdkOverride) {
   const sdk = sdkOverride ?? require('@qvac/sdk');
   const model = sdk[constant];
   if (!model) throw new Error(`@qvac/sdk does not export ${constant} in this build`);
-  await sdk.downloadAsset({
+  downloadCancelled = false;
+  const op = sdk.downloadAsset({
     assetSrc: model,
     onProgress: (update) => {
       downloadEvents.emit('progress', { name, loaded: update.downloaded, total: update.total });
     },
   });
-  return { downloaded: true };
+  currentDownload = { requestId: op && op.requestId, sdk };
+  try {
+    await op;
+    if (downloadCancelled) return { downloaded: false, cancelled: true };
+    return { downloaded: true };
+  } catch (err) {
+    if (downloadCancelled || isCancelError(err)) return { downloaded: false, cancelled: true };
+    throw err;
+  } finally {
+    currentDownload = null;
+  }
+}
+
+// Aborts the in-flight downloadAsset. Safe when nothing is running. The
+// renderer owns the rest of a Download-all queue and stops calling download()
+// after this returns.
+async function cancelDownload() {
+  downloadCancelled = true;
+  const cur = currentDownload;
+  if (!cur || !cur.requestId || typeof cur.sdk?.cancel !== 'function') {
+    return { cancelled: false };
+  }
+  await cur.sdk.cancel({ requestId: cur.requestId }).catch(() => {});
+  return { cancelled: true };
 }
 
 function onDownloadProgress(callback) {
@@ -353,19 +451,26 @@ function chatCacheFile(displayName) {
   }
 }
 
-function catalogueEntryFromName(name, installedSizes, installedFiles) {
+function catalogueEntryFromName(name, installedSizes, installedFiles, installedByName) {
   const usage = loadUsageMap();
   const descriptions = loadDescriptionMap();
   const hints = hintsForName(name);
   const cacheFile = chatCacheFile(name);
   const consumers = consumersForModelId(name);
+  const { setKeyToMembers, memberToSetKey } = companionIndex();
+  const companionSetKey = memberToSetKey.get(name) ?? null;
+  const installedViaSet = Boolean(companionSetKey && installedByName?.get(companionSetKey));
   return {
     name,
     id: name,
     cacheFile,
-    // Keyed on the file the loader opens, not the name two entries share.
-    installed: cacheFile ? Boolean(installedFiles?.get(cacheFile)) : false,
-    sizeBytes: installedSizes?.get(name) ?? hints.sizeBytes,
+    // Chat: the file the loader opens, not the name two entries share.
+    // Everything else: a complete cache entry under this display name, or a
+    // companion set that already contains this file.
+    installed: cacheFile
+      ? Boolean(installedFiles?.get(cacheFile))
+      : Boolean(installedByName?.get(name) || installedViaSet),
+    sizeBytes: installedSizes?.get(name) ?? (hints.sizeBytes || expectedSizeForName(name)),
     description: descriptions[name] ?? '',
     usedIn: usage[name] ?? [],
     family: familyForName(name),
@@ -373,22 +478,28 @@ function catalogueEntryFromName(name, installedSizes, installedFiles) {
     gpu: hints.gpu,
     aiBot: consumers.aiBot,
     playground: consumers.playground,
+    isCompanionSet: setKeyToMembers.has(name),
+    companionSetKey,
   };
 }
 
 async function catalogue() {
   const usage = loadUsageMap();
   const installed = await listModels();
-  const installedSizes = new Map(installed.map((item) => [item.name, item.sizeBytes]));
   // id is the on-disk filename, which is what tells the two same-named entries apart.
-  const installedFiles = new Map(installed.filter((i) => i.complete).map((i) => [i.id, i.sizeBytes]));
+  const complete = installed.filter((i) => i.complete);
+  // A partial download's current byte count isn't the model's size, so only
+  // complete entries can override the expected total below.
+  const installedSizes = new Map(complete.map((item) => [item.name, item.sizeBytes]));
+  const installedFiles = new Map(complete.map((i) => [i.id, i.sizeBytes]));
+  const installedByName = new Map(complete.map((i) => [i.name, i.sizeBytes]));
   const names = new Set();
   for (const name of Object.keys(usage)) names.add(name);
   for (const name of Object.keys(CHAT_MODEL_HINTS)) names.add(name);
   for (const name of allPlaygroundModelIds()) names.add(name);
   for (const item of installed) names.add(item.name);
   return Array.from(names)
-    .map((name) => catalogueEntryFromName(name, installedSizes, installedFiles))
+    .map((name) => catalogueEntryFromName(name, installedSizes, installedFiles, installedByName))
     .sort((a, b) => {
       // Chat models first, then everything else, alphabetical within each group.
       if (a.family !== b.family) return a.family === 'chat' ? -1 : 1;
@@ -512,5 +623,6 @@ module.exports = {
   forLesson,
   recommend,
   downloadModel,
+  cancelDownload,
   onDownloadProgress,
 };

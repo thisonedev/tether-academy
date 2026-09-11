@@ -27,6 +27,7 @@ const IPC_CHANNELS = Object.freeze({
   'academy:models:recommend': 'modelLessonKeySchema',
   'academy:models:for-lesson': 'modelLessonKeySchema',
   'academy:models:download': 'modelIdSchema',
+  'academy:models:cancelDownload': null,
   'academy:chat:ready': null,
   'academy:chat:current-model': null,
   'academy:chat:configured-model': null,
