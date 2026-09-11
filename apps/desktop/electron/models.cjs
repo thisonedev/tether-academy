@@ -418,23 +418,29 @@ async function downloadModel(name, sdkOverride) {
   const sdk = sdkOverride ?? require('@qvac/sdk');
   const model = sdk[constant];
   if (!model) throw new Error(`@qvac/sdk does not export ${constant} in this build`);
-  downloadCancelled = false;
-  const op = sdk.downloadAsset({
-    assetSrc: model,
-    onProgress: (update) => {
-      downloadEvents.emit('progress', { name, loaded: update.downloaded, total: update.total });
-    },
-  });
-  currentDownload = { requestId: op && op.requestId, sdk };
-  try {
-    await op;
-    if (downloadCancelled) return { downloaded: false, cancelled: true };
-    return { downloaded: true };
-  } catch (err) {
-    if (downloadCancelled || isCancelError(err)) return { downloaded: false, cancelled: true };
-    throw err;
-  } finally {
-    currentDownload = null;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    downloadCancelled = false;
+    const op = sdk.downloadAsset({
+      assetSrc: model,
+      onProgress: (update) => {
+        downloadEvents.emit('progress', { name, loaded: update.downloaded, total: update.total });
+      },
+    });
+    currentDownload = { requestId: op && op.requestId, sdk };
+    try {
+      await op;
+      if (downloadCancelled) return { downloaded: false, cancelled: true };
+      return { downloaded: true };
+    } catch (err) {
+      if (downloadCancelled || isCancelError(err)) return { downloaded: false, cancelled: true };
+      // The P2P registry path can fail its first attempt on a cold corestore
+      // (see clearRegistryCorestore); one retry absorbs that transient case.
+      if (attempt === 2) throw err;
+      console.warn('[models] downloadModel: retrying after failure', name, err && err.message);
+    } finally {
+      currentDownload = null;
+    }
   }
 }
 
