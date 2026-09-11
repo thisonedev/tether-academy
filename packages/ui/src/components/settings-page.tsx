@@ -325,8 +325,9 @@ export function SettingsPage() {
           const result = await window.academy.models.download(name);
           if (downloadAbortRef.current || result?.cancelled) break;
           setDownloadQueue({ done: i + 1, total: names.length });
+          // Otherwise the storage header stays frozen until the whole queue finishes.
+          await refreshModels();
         }
-        await refreshModels();
       } catch (err) {
         if (!downloadAbortRef.current) {
           setDownloadError(err instanceof Error ? err.message : 'Download failed');
@@ -445,6 +446,12 @@ export function SettingsPage() {
 
   // Device-wide total: every downloaded model, not just lesson-tracked ones.
   const downloadedBytesAll = (models ?? []).reduce((sum, m) => sum + m.sizeBytes, 0);
+  const aiBotBytes = (models ?? [])
+    .filter((m) => (AI_BOT_MODEL_NAMES as readonly string[]).includes(m.name))
+    .reduce((sum, m) => sum + m.sizeBytes, 0);
+  const qvacModelsBytes = downloadedBytesAll - aiBotBytes;
+  // Everything on disk that isn't a tracked model: the OS, other apps, user files.
+  const osBytes = device ? Math.max(0, device.storageBytes - device.storageFreeBytes - downloadedBytesAll) : 0;
 
   // Chapter -> its catalogue entries, each paired with the lessons in that
   // chapter that need it (a model can need multiple lessons in one chapter).
@@ -562,25 +569,52 @@ export function SettingsPage() {
 
           {isDesktop && fullCatalogue !== null && device ? (
             <div className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
-              <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-canvas-muted-foreground">Storage</p>
-              <div className="flex h-2.5 overflow-hidden rounded-full bg-canvas-border">
-                <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (downloadedBytesAll / device.storageBytes) * 100)}%` }} />
+              <div className="mb-2.5 flex items-baseline justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-canvas-muted-foreground">Storage</p>
+                <p className="text-xs text-canvas-muted-foreground">
+                  <b className="font-bold text-canvas-foreground">{formatGb(device.storageBytes - device.storageFreeBytes)}</b> of{' '}
+                  {formatGb(device.storageBytes)} used
+                </p>
+              </div>
+              <div className="flex h-8 gap-[2px] overflow-hidden rounded-md bg-canvas-border">
                 <div
-                  className="ml-auto h-full rounded-l-full border-[1.5px] border-dashed border-canvas-foreground/35"
-                  style={{ width: `${Math.min(100, (device.storageFreeBytes / device.storageBytes) * 100)}%` }}
+                  className="h-full bg-emerald-600"
+                  title={`QVAC/Playground models — ${formatGb(qvacModelsBytes)}`}
+                  style={{ width: `${Math.min(100, (qvacModelsBytes / device.storageBytes) * 100)}%` }}
                 />
+                <div
+                  className="h-full bg-violet-500"
+                  title={`AI bot models — ${formatGb(aiBotBytes)}`}
+                  style={{ width: `${Math.min(100, (aiBotBytes / device.storageBytes) * 100)}%` }}
+                />
+                <div
+                  className="h-full bg-canvas-muted-foreground/40"
+                  title={`${device.osLabel} — ${formatGb(osBytes)}`}
+                  style={{ width: `${Math.min(100, (osBytes / device.storageBytes) * 100)}%` }}
+                />
+                <div
+                  className="ml-auto flex h-full min-w-fit items-center justify-center border-[1.5px] border-dashed border-canvas-foreground/35 bg-canvas-muted-foreground/10 px-2"
+                  title={`Free — ${formatGb(device.storageFreeBytes)}`}
+                  style={{ width: `${Math.min(100, (device.storageFreeBytes / device.storageBytes) * 100)}%` }}
+                >
+                  <span className="whitespace-nowrap text-[11px] font-semibold text-canvas-foreground/80">
+                    {formatGb(device.storageFreeBytes)}
+                  </span>
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-canvas-muted-foreground">
                 <span className="flex items-center gap-1.5">
-                  <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
-                  <b className="font-bold text-canvas-foreground">{formatGb(downloadedBytesAll)}</b> models
+                  <span className="size-2 shrink-0 rounded-full bg-emerald-600" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(qvacModelsBytes)}</b> QVAC/Playground models
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="size-2 shrink-0 rounded-full border-[1.5px] border-dashed border-canvas-foreground/35" />
-                  <b className="font-bold text-canvas-foreground">{formatGb(device.storageFreeBytes)}</b> free
+                  <span className="size-2 shrink-0 rounded-full bg-violet-500" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(aiBotBytes)}</b> AI bot models
                 </span>
-                <span><b className="font-bold text-canvas-foreground">{formatGb(device.storageBytes)}</b> total disk</span>
-                <span className="ml-auto"><b className="font-bold text-canvas-foreground">{formatGb(device.memoryBytes)}</b> RAM</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2 shrink-0 rounded-full bg-canvas-muted-foreground/40" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(osBytes)}</b> {device.osLabel}
+                </span>
               </div>
             </div>
           ) : null}
