@@ -71,6 +71,8 @@ const {
   catalogue,
   recommend,
   forLesson,
+  downloadModel,
+  onDownloadProgress,
 } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
 const chat = require('./chat.cjs');
@@ -621,6 +623,8 @@ handle('academy:models:recommend', async (lessonKey) => {
 
 handle('academy:models:for-lesson', async (lessonKey) => forLesson(lessonKey));
 
+handle('academy:models:download', async (name) => downloadModel(name));
+
 // AI assistant chat. The renderer subscribes once on mount to academy:chat:chunk
 // and routes by requestId.
 handle('academy:chat:ready', async () => chat.isReady());
@@ -730,6 +734,7 @@ chat.onChunk((chunk) => sendToAll('academy:chat:chunk', chunk));
 chat.onVerifyResult((result) => sendToAll('academy:chat:verify-result', result));
 chat.onSecurityResult((result) => sendToAll('academy:chat:security-result', result));
 chat.onLoadProgress((progress) => sendToAll('academy:chat:load-progress', progress));
+onDownloadProgress((progress) => sendToAll('academy:models:download-progress', progress));
 
 handle('academy:peer:identity', async () => {
   const idm = pearEnd.identity();

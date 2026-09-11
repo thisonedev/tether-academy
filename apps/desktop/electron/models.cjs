@@ -5,8 +5,10 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { EventEmitter } = require('node:events');
 const { CHAT_PRESETS } = require('../shared/chat-presets.cjs');
-const { cacheFileName } = require('../shared/model-sideload.cjs');
+const { consumersForModelId, allPlaygroundModelIds } = require('./model-consumers.cjs');
+const { cacheFileName, readRegistry } = require('../shared/model-sideload.cjs');
 
 const SINGLE_HASH_RE = /^([0-9a-f]{16})_(.+)$/;
 
@@ -289,6 +291,49 @@ async function removeAllModels(excludeNames) {
   return { removed: totalRemoved, freedBytes: totalFreed };
 }
 
+// modelId -> registry constant, for downloadModel. A few modelIds name two
+// constants with different sources; skip CHAT_PRESETS's, since the AI bot
+// section downloads through chat.load() instead.
+const CHAT_PRESET_CONSTANTS = new Set(Object.values(CHAT_PRESETS));
+let _modelIdToConstant = null;
+function modelIdToConstant() {
+  if (_modelIdToConstant === null) {
+    _modelIdToConstant = new Map();
+    for (const [constant, entry] of readRegistry()) {
+      const existing = _modelIdToConstant.get(entry.modelId);
+      if (existing === undefined || (CHAT_PRESET_CONSTANTS.has(existing) && !CHAT_PRESET_CONSTANTS.has(constant))) {
+        _modelIdToConstant.set(entry.modelId, constant);
+      }
+    }
+  }
+  return _modelIdToConstant;
+}
+
+const downloadEvents = new EventEmitter();
+
+// Caches a model without loading it, so a chapter can be pulled ahead of
+// running any of its lessons. Distinct from model-fetch.cjs's ensureModels,
+// an HF-direct-only pre-fetch shortcut used before loadModel.
+async function downloadModel(name, sdkOverride) {
+  const constant = modelIdToConstant().get(name);
+  if (!constant) throw new Error(`unknown model "${name}"`);
+  const sdk = sdkOverride ?? require('@qvac/sdk');
+  const model = sdk[constant];
+  if (!model) throw new Error(`@qvac/sdk does not export ${constant} in this build`);
+  await sdk.downloadAsset({
+    assetSrc: model,
+    onProgress: (update) => {
+      downloadEvents.emit('progress', { name, loaded: update.downloaded, total: update.total });
+    },
+  });
+  return { downloaded: true };
+}
+
+function onDownloadProgress(callback) {
+  downloadEvents.on('progress', callback);
+  return () => downloadEvents.off('progress', callback);
+}
+
 // installedSizes overrides the static hint once the real size is known,
 // rather than showing an estimate for a file already sitting on disk.
 // Two registry entries can share a filename (Qwen3-4B-Q4_K_M.gguf is both a
@@ -313,6 +358,7 @@ function catalogueEntryFromName(name, installedSizes, installedFiles) {
   const descriptions = loadDescriptionMap();
   const hints = hintsForName(name);
   const cacheFile = chatCacheFile(name);
+  const consumers = consumersForModelId(name);
   return {
     name,
     id: name,
@@ -325,6 +371,8 @@ function catalogueEntryFromName(name, installedSizes, installedFiles) {
     family: familyForName(name),
     minRamBytes: hints.minRamBytes,
     gpu: hints.gpu,
+    aiBot: consumers.aiBot,
+    playground: consumers.playground,
   };
 }
 
@@ -337,6 +385,7 @@ async function catalogue() {
   const names = new Set();
   for (const name of Object.keys(usage)) names.add(name);
   for (const name of Object.keys(CHAT_MODEL_HINTS)) names.add(name);
+  for (const name of allPlaygroundModelIds()) names.add(name);
   for (const item of installed) names.add(item.name);
   return Array.from(names)
     .map((name) => catalogueEntryFromName(name, installedSizes, installedFiles))
@@ -462,4 +511,6 @@ module.exports = {
   catalogue,
   forLesson,
   recommend,
+  downloadModel,
+  onDownloadProgress,
 };

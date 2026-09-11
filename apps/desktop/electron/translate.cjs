@@ -193,5 +193,6 @@ module.exports = {
   translateText,
   isNmtLanguage,
   listNmtLanguages: () => Object.keys(NMT_PRESETS),
+  listNmtRegistryKeys: () => Object.values(NMT_PRESETS).map((preset) => preset.key),
   unload,
 };

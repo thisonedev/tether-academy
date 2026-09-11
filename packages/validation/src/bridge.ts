@@ -75,6 +75,10 @@ export interface AcademyModelCatalogueEntry {
   cacheFile?: string | null;
   /** Whether that exact file is on disk and complete. */
   installed?: boolean;
+  /** Backs the AI bot's model picker (independent of any lesson usage). */
+  aiBot: boolean;
+  /** Playground node labels that load this model, e.g. `['Generate image']`; null if none do. */
+  playground: string[] | null;
 }
 
 export interface AcademyModelRecommendation {
@@ -102,6 +106,10 @@ export interface AcademyModelsAPI {
   recommend: (lessonKey: { chapter: string; lesson: string } | null) => Promise<AcademyModelRecommendation>;
   /** All catalogue entries tagged for a given chapter/lesson, in display order. */
   forLesson: (lessonKey: { chapter: string; lesson: string }) => Promise<AcademyModelCatalogueEntry[]>;
+  /** Caches a model without loading it (a catalogue `name`, downloaded or not). No-ops if already cached. */
+  download: (name: string) => Promise<{ downloaded: boolean }>;
+  /** Fires while any `download()` call is in flight; unsubscribe with the returned function. */
+  onDownloadProgress: (callback: (progress: { name: string; loaded: number; total: number }) => void) => () => void;
 }
 
 /** One message in a chat conversation. */

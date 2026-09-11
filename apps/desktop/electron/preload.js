@@ -32,6 +32,12 @@ const academy = {
     catalogue: () => ipcRenderer.invoke('academy:models:catalogue'),
     recommend: (lessonKey) => ipcRenderer.invoke('academy:models:recommend', lessonKey),
     forLesson: (lessonKey) => ipcRenderer.invoke('academy:models:for-lesson', lessonKey),
+    download: (name) => ipcRenderer.invoke('academy:models:download', name),
+    onDownloadProgress: (callback) => {
+      const handler = (/** @type {unknown} */ _e, /** @type {any} */ progress) => callback(progress);
+      ipcRenderer.on('academy:models:download-progress', handler);
+      return () => ipcRenderer.removeListener('academy:models:download-progress', handler);
+    },
   },
   device: {
     info: () => ipcRenderer.invoke('academy:device:info'),
