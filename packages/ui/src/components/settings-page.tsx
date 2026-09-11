@@ -50,12 +50,6 @@ function formatGb(bytes: number): string {
   return `${gb.toFixed(2)} GB`;
 }
 
-const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
-  single: 'Single file',
-  sharded: 'Sharded model',
-  set: 'Companion set',
-};
-
 const RAG_INDEX_BACKEND_OPTIONS: { value: 'turbovec' | 'hyperdb'; label: string; description: string }[] = [
   {
     value: 'turbovec',
@@ -94,6 +88,11 @@ export function SettingsPage() {
 
   const [models, setModels] = useState<AcademyModelEntry[] | null>(null);
   const [chatCatalogue, setChatCatalogue] = useState<AcademyModelCatalogueEntry[] | null>(null);
+  const [fullCatalogue, setFullCatalogue] = useState<AcademyModelCatalogueEntry[] | null>(null);
+  const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
+  // A chapter slug, 'course', or null. Only one bulk download runs at a time.
+  const [downloadingScope, setDownloadingScope] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [configuredChatModel, setConfiguredChatModel] = useState<string | null>(null);
   const [configuringChatModel, setConfiguringChatModel] = useState<string | null>(null);
   const [modelProgress, setModelProgress] = useState<Record<string, { loaded: number; total: number }>>({});
@@ -135,6 +134,7 @@ export function SettingsPage() {
           (entry): entry is AcademyModelCatalogueEntry => entry != null,
         ),
       );
+      setFullCatalogue(cat);
     }
   }, []);
 
@@ -151,6 +151,14 @@ export function SettingsPage() {
       setModelProgress((prev) => ({
         ...prev,
         [event.modelName]: { loaded: event.loaded, total: event.total },
+      }));
+    });
+    // Same shape, different source: a models.download() call in flight.
+    const offDownloadProgress = window.academy?.models?.onDownloadProgress?.((event) => {
+      if (!event || !event.name) return;
+      setModelProgress((prev) => ({
+        ...prev,
+        [event.name]: { loaded: event.loaded, total: event.total },
       }));
     });
     let cancelled = false;
@@ -173,6 +181,7 @@ export function SettingsPage() {
             (entry): entry is AcademyModelCatalogueEntry => entry != null,
           ),
         );
+        setFullCatalogue(catalogue ?? []);
         setConfiguredChatModel(configured);
         setDevice(dev);
         if (typeof useFullDocsRaw === 'string') setUseFullDocs(useFullDocsRaw !== 'false');
@@ -186,6 +195,7 @@ export function SettingsPage() {
     return () => {
       cancelled = true;
       offProgress?.();
+      offDownloadProgress?.();
     };
   }, [hydrated, username, openSignInPrompt]);
 
@@ -289,6 +299,28 @@ export function SettingsPage() {
     }
   }, [refreshModels]);
 
+  // Sequential, not parallel: keeps one progress bar meaningful per model and
+  // avoids competing for the same bandwidth. downloadAsset no-ops on a model
+  // that's already cached, so callers can pass a scope's full list as-is.
+  const downloadModels = useCallback(
+    async (scope: string, names: string[]) => {
+      if (!window.academy?.models) return;
+      setDownloadingScope(scope);
+      setDownloadError(null);
+      try {
+        for (const name of names) {
+          await window.academy.models.download(name);
+        }
+        await refreshModels();
+      } catch (err) {
+        setDownloadError(err instanceof Error ? err.message : 'Download failed');
+      } finally {
+        setDownloadingScope(null);
+      }
+    },
+    [refreshModels],
+  );
+
   // Arms the inline confirm for a row without deleting anything yet; the
   // actual delete only fires from the "Remove" button in that confirm state.
   const requestRemove = useCallback((id: string) => {
@@ -362,11 +394,31 @@ export function SettingsPage() {
     );
   }
 
-  // The AI bot's active model has its own section above; listing it again
-  // here just makes it easy to remove by accident.
-  const downloadedModels = (models ?? []).filter((m) => m.name !== configuredChatModel);
-  const totalBytes = downloadedModels.reduce((sum, m) => sum + m.sizeBytes, 0);
-  const removingAll = remove.pending === 'all';
+  // Device-wide total: every downloaded model, not just lesson-tracked ones.
+  const downloadedBytesAll = (models ?? []).reduce((sum, m) => sum + m.sizeBytes, 0);
+
+  // Chapter -> its catalogue entries, each paired with the lessons in that
+  // chapter that need it (a model can need multiple lessons in one chapter).
+  const chapterGroups = new Map<string, { entry: AcademyModelCatalogueEntry; lessons: string[] }[]>();
+  for (const entry of fullCatalogue ?? []) {
+    for (const ref of entry.usedIn ?? []) {
+      const bucket = chapterGroups.get(ref.chapter) ?? [];
+      bucket.push({ entry, lessons: ref.lessons });
+      chapterGroups.set(ref.chapter, bucket);
+    }
+  }
+  const chapterSlugs = [...chapterGroups.keys()].sort((a, b) => chapterLabel(a).localeCompare(chapterLabel(b)));
+  const notInstalledBytes = (entries: { entry: AcademyModelCatalogueEntry }[]) =>
+    entries
+      .filter(({ entry }) => modelCompleteByName.get(entry.name) !== true)
+      .reduce((sum, { entry }) => sum + entry.sizeBytes, 0);
+  const missingNames = (entries: { entry: AcademyModelCatalogueEntry }[]) =>
+    entries.filter(({ entry }) => modelCompleteByName.get(entry.name) !== true).map(({ entry }) => entry.name);
+  // Deduped by name: a model shared across chapters must download once, not
+  // once per chapter it appears in.
+  const courseMissingNames = [
+    ...new Set((fullCatalogue ?? []).filter((e) => e.usedIn.length > 0 && modelCompleteByName.get(e.name) !== true).map((e) => e.name)),
+  ];
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
@@ -441,6 +493,36 @@ export function SettingsPage() {
               {remove.error}
             </p>
           ) : null}
+          {downloadError ? (
+            <p role="alert" className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+              {downloadError}
+            </p>
+          ) : null}
+
+          {isDesktop && fullCatalogue !== null && device ? (
+            <div className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
+              <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-canvas-muted-foreground">Storage</p>
+              <div className="flex h-2.5 overflow-hidden rounded-full bg-canvas-border">
+                <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (downloadedBytesAll / device.storageBytes) * 100)}%` }} />
+                <div
+                  className="ml-auto h-full rounded-l-full border-1.5 border-dashed border-canvas-foreground/35"
+                  style={{ width: `${Math.min(100, (device.storageFreeBytes / device.storageBytes) * 100)}%` }}
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-canvas-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(downloadedBytesAll)}</b> models
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2 shrink-0 rounded-full border-1.5 border-dashed border-canvas-foreground/35" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(device.storageFreeBytes)}</b> free
+                </span>
+                <span><b className="font-bold text-canvas-foreground">{formatGb(device.storageBytes)}</b> total disk</span>
+                <span className="ml-auto"><b className="font-bold text-canvas-foreground">{formatGb(device.memoryBytes)}</b> RAM</span>
+              </div>
+            </div>
+          ) : null}
 
           <section className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
             <div className="flex items-start gap-3">
@@ -476,6 +558,11 @@ export function SettingsPage() {
                           <p className="mt-0.5 text-xs text-canvas-muted-foreground">
                             {entry.description || 'Local text-generation model'}
                           </p>
+                          {entry.usedIn.length > 0 ? (
+                            <p className="mt-0.5 text-[11px] text-canvas-muted-foreground">
+                              Also used by: {joinChapters(entry.usedIn.map((ref) => chapterLabel(ref.chapter)))}
+                            </p>
+                          ) : null}
                         </div>
                         <span className="shrink-0 font-mono text-sm text-canvas-foreground">
                           {entry.sizeBytes ? formatBytes(entry.sizeBytes) : '—'}
@@ -591,67 +678,127 @@ export function SettingsPage() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">
-                <HardDrive className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-canvas-foreground">QVAC models</h2>
-                    <p className="mt-1 text-sm text-canvas-muted-foreground">
-                      {models === null
-                        ? 'Scanning…'
-                        : downloadedModels.length === 0
-                          ? 'Nothing downloaded yet. Run a lesson to pull a model.'
-                          : `${downloadedModels.length} ${downloadedModels.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
-                    </p>
-                  </div>
-                  {downloadedModels.length > 0 ? (
-                    <RemoveAllButton
-                      state={remove}
-                      onRequestRemove={() => requestRemove('all')}
-                      onConfirmRemove={onRemoveAll}
-                      onCancel={cancelRemove}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {!isDesktop ? (
-                <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
-                  Open the desktop app to see and manage downloaded models.
-                </p>
-              ) : models === null ? (
-                <p className="text-sm text-canvas-muted-foreground">Loading…</p>
-              ) : downloadedModels.length === 0 ? (
-                <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
-                  No models yet. Pick a lesson and hit run; QVAC downloads what it needs into your
-                  home directory.
-                </p>
-              ) : (
-                downloadedModels.map((m) => (
-                  <ModelRow
-                    key={m.id}
-                    model={m}
+          {!isDesktop ? (
+            <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
+              Open the desktop app to see and manage downloaded models.
+            </p>
+          ) : fullCatalogue === null ? (
+            <p className="text-sm text-canvas-muted-foreground">Loading…</p>
+          ) : (
+            <section className="rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-canvas-foreground">QVAC Course Models</h2>
+                <div className="flex items-center gap-2">
+                  <RemoveAllButton
                     state={remove}
-                    onRequestRemove={() => requestRemove(m.id)}
-                    onConfirmRemove={() => onRemoveOne(m.id)}
+                    onRequestRemove={() => requestRemove('all')}
+                    onConfirmRemove={onRemoveAll}
                     onCancel={cancelRemove}
                   />
-                ))
-              )}
+                  <button
+                    type="button"
+                    disabled={downloadingScope !== null || courseMissingNames.length === 0}
+                    onClick={() => void downloadModels('course', courseMissingNames)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-40"
+                  >
+                    {downloadingScope === 'course' ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    {courseMissingNames.length === 0 ? 'Ready' : 'Download all'}
+                  </button>
+                </div>
+              </div>
 
-              {downloadedModels.length > 0 ? (
-                <p className="text-[11px] text-canvas-muted-foreground/70">
-                  {downloadedModels.length} {downloadedModels.length === 1 ? 'model' : 'models'} downloaded
-                </p>
-              ) : null}
-            </div>
-          </section>
+              <div className="flex flex-col gap-2">
+                {chapterSlugs.map((chapter) => {
+                  const entries = chapterGroups.get(chapter) ?? [];
+                  const installedCount = entries.filter(({ entry }) => modelCompleteByName.get(entry.name) === true).length;
+                  const ready = installedCount === entries.length;
+                  const bytes = entries.reduce((sum, { entry }) => sum + entry.sizeBytes, 0);
+                  const tight = device != null && notInstalledBytes(entries) > device.storageFreeBytes;
+                  const expanded = selectedChapter === chapter;
+                  const busy = downloadingScope === chapter;
+                  return (
+                    <div
+                      key={chapter}
+                      className={`rounded-xl border overflow-hidden ${expanded ? 'border-emerald-500' : 'border-canvas-border'} bg-canvas-muted`}
+                    >
+                      <div className="flex items-center gap-3 p-3.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedChapter(expanded ? null : chapter)}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        >
+                          <svg
+                            className={`size-3.5 shrink-0 text-canvas-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`}
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M9 6l6 6-6 6" />
+                          </svg>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 text-[15px] font-bold text-canvas-foreground">
+                              <span className="truncate">{chapterLabel(chapter)}</span>
+                              {tight ? <span className="size-1.5 shrink-0 rounded-full bg-amber-400" title="Tight on disk" /> : null}
+                            </div>
+                            <p className="mt-0.5 text-[11.5px] text-canvas-muted-foreground">
+                              {ready ? 'Ready' : `${installedCount} / ${entries.length} models`} · {formatBytes(bytes)}
+                            </p>
+                          </div>
+                        </button>
+                        {ready ? (
+                          <span className="flex size-[30px] shrink-0 items-center justify-center text-emerald-400" title="Ready">
+                            <svg className="size-[17px]" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="9" />
+                              <path d="M8 12l3 3 5-6" />
+                            </svg>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void downloadModels(chapter, missingNames(entries))}
+                            title="Prep chapter"
+                            aria-label="Prep chapter"
+                            className="flex size-[30px] shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+                          >
+                            {busy ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <svg className="size-[15px]" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5" />
+                                <path d="M5 20h14" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      {expanded ? (
+                        <div className="border-t border-canvas-border px-4 pb-2 pt-1">
+                          {entries.map(({ entry, lessons }) => (
+                            <ModelListRow
+                              key={entry.name}
+                              entry={entry}
+                              usedLabel={joinChapters(lessons)}
+                              state={remove}
+                              modelIdByName={modelIdByName}
+                              modelCompleteByName={modelCompleteByName}
+                              onRequestRemove={requestRemove}
+                              onConfirmRemove={onRemoveOne}
+                              onCancel={cancelRemove}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </section>
       ) : null}
 
@@ -727,43 +874,49 @@ export function SettingsPage() {
   );
 }
 
-function ModelRow({
-  model,
+// One row per catalogue entry, reused by Foundational models and the chapter
+// detail panel so a model looks the same wherever it's listed.
+function ModelListRow({
+  entry,
+  usedLabel,
   state,
+  modelIdByName,
+  modelCompleteByName,
   onRequestRemove,
   onConfirmRemove,
   onCancel,
 }: {
-  model: AcademyModelEntry;
+  entry: AcademyModelCatalogueEntry;
+  usedLabel: string;
   state: RemoveState;
-  onRequestRemove: () => void;
-  onConfirmRemove: () => void;
+  modelIdByName: Map<string, string>;
+  modelCompleteByName: Map<string, boolean>;
+  onRequestRemove: (id: string) => void;
+  onConfirmRemove: (id: string) => void;
   onCancel: () => void;
 }) {
+  const installed = modelCompleteByName.get(entry.name) === true;
+  const id = modelIdByName.get(entry.name);
   return (
-    <div className="rounded-md border border-canvas-border bg-canvas-muted px-3 py-2.5">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-sm text-canvas-foreground" title={model.name}>
-            {model.name}
-          </p>
-          <p className="mt-0.5 text-xs text-canvas-muted-foreground">
-            {KIND_LABEL[model.kind]}
-            {model.fileCount > 1 ? ` · ${model.fileCount} files` : ''}
-            {model.sourceHash ? ` · ${model.sourceHash}` : ''}
-          </p>
-          <UsageHint description={model.description} usedIn={model.usedIn} />
-        </div>
-        <span className="shrink-0 font-mono text-sm text-canvas-foreground">{formatBytes(model.sizeBytes)}</span>
+    <div className="flex items-center gap-3 border-b border-canvas-border/60 py-2.5 last:border-b-0">
+      <span
+        className={`size-2 shrink-0 rounded-full ${installed ? 'bg-emerald-400' : 'border border-canvas-muted-foreground bg-transparent'}`}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm text-canvas-foreground">{entry.name}</p>
+        <p className="mt-0.5 truncate text-[11px] text-canvas-muted-foreground">{usedLabel}</p>
+      </div>
+      <span className="shrink-0 font-mono text-xs text-canvas-muted-foreground">{formatBytes(entry.sizeBytes)}</span>
+      {installed && id ? (
         <RemoveIconButton
-          id={model.id}
-          label={model.name}
+          id={id}
+          label={entry.name}
           state={state}
-          onRequestRemove={onRequestRemove}
-          onConfirmRemove={onConfirmRemove}
+          onRequestRemove={() => onRequestRemove(id)}
+          onConfirmRemove={() => onConfirmRemove(id)}
           onCancel={onCancel}
         />
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -861,38 +1014,6 @@ function RemoveIconButton({
     >
       <Trash2 className="size-4" />
     </button>
-  );
-}
-
-function UsageHint({
-  description,
-  usedIn,
-}: {
-  description: string;
-  usedIn: AcademyModelEntry['usedIn'];
-}) {
-  if (!usedIn || usedIn.length === 0) {
-    return (
-      <div className="mt-1 space-y-0.5">
-        {description ? (
-          <p className="text-[11px] text-canvas-muted-foreground">{description}</p>
-        ) : null}
-        <p className="text-[11px] text-canvas-muted-foreground/70">
-          Not used in any lesson. Safe to remove
-        </p>
-      </div>
-    );
-  }
-  const labels = usedIn.map((ref) => chapterLabel(ref.chapter));
-  return (
-    <div className="mt-1 space-y-0.5">
-      {description ? (
-        <p className="text-[11px] text-canvas-muted-foreground">{description}</p>
-      ) : null}
-      <p className="text-[11px] text-canvas-muted-foreground">
-        Used in: {joinChapters(labels)}
-      </p>
-    </div>
   );
 }
 
