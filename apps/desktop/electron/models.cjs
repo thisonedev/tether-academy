@@ -327,6 +327,30 @@ async function pruneIncompleteDownloads({ now = Date.now() } = {}) {
   return { removed, freedBytes };
 }
 
+// P2P assets never touch modelsRoot() until complete; partial blocks sit in
+// a live, fd-locked Corestore only sdk.close() can safely release (it
+// respawns lazily). Skipped while chat has a model loaded, same worker.
+async function clearRegistryCorestore() {
+  const chat = require('./chat.cjs');
+  if (chat.isReady()) {
+    console.warn('[models] clearRegistryCorestore: skipped, AI bot session active');
+    return;
+  }
+  const registryDir = path.join(os.homedir(), '.qvac', 'registry-corestore');
+  try {
+    const sdk = require('@qvac/sdk');
+    if (typeof sdk.close === 'function') await sdk.close();
+  } catch (err) {
+    console.warn('[models] clearRegistryCorestore: sdk.close failed', err && err.message);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  try {
+    await fsp.rm(registryDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[models] clearRegistryCorestore: rm failed', err && err.message);
+  }
+}
+
 async function removeAllModels(excludeNames) {
   const items = await listModels();
   let totalFreed = 0;
@@ -417,13 +441,19 @@ async function downloadModel(name, sdkOverride) {
 // Aborts the in-flight downloadAsset. Safe when nothing is running. The
 // renderer owns the rest of a Download-all queue and stops calling download()
 // after this returns.
-async function cancelDownload() {
+// Plain cancel is a pause: the SDK keeps the partial in its own cache to
+// resume later. Pass clearCache for a real delete (e.g. before removeAll).
+async function cancelDownload(clearCache) {
   downloadCancelled = true;
   const cur = currentDownload;
   if (!cur || !cur.requestId || typeof cur.sdk?.cancel !== 'function') {
     return { cancelled: false };
   }
-  await cur.sdk.cancel({ requestId: cur.requestId }).catch(() => {});
+  try {
+    await cur.sdk.cancel({ requestId: cur.requestId, ...(clearCache ? { clearCache: true } : {}) });
+  } catch (err) {
+    console.warn('[models] cancelDownload: sdk.cancel failed', err && err.message);
+  }
   return { cancelled: true };
 }
 
@@ -615,6 +645,7 @@ module.exports = {
   listModels,
   removeModel,
   removeAllModels,
+  clearRegistryCorestore,
   pruneIncompleteDownloads,
   ACTIVE_WRITE_MS,
   knownGoodSizes,

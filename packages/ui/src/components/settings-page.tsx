@@ -290,6 +290,9 @@ export function SettingsPage() {
     if (!window.academy?.models) return;
     setRemove({ pending: 'all', busy: true, error: null });
     try {
+      // removeAll cancels the in-flight download itself; a cancelDownload
+      // call here would race it for the same one-shot request.
+      downloadAbortRef.current = true;
       await window.academy.models.removeAll();
       await refreshModels();
       setRemove({ pending: null, busy: false, error: null });

@@ -67,6 +67,7 @@ const {
   listModels,
   removeModel,
   removeAllModels,
+  clearRegistryCorestore,
   pruneIncompleteDownloads,
   catalogue,
   recommend,
@@ -606,6 +607,12 @@ handle('academy:models:removeAll', async () => {
   // (it checks chat.currentModel() first), so keeping it here means removeAll
   // never actually deletes a loaded model, and never needs to unload one.
   const keepName = await configuredChatModelName();
+  // clearCache: true, or the SDK keeps the partial around to resume later
+  // and it reappears the next time this model downloads.
+  await cancelDownload(true);
+  // P2P-sourced partials live outside modelsRoot() entirely; see
+  // clearRegistryCorestore's own comment for why this can't run mid-session.
+  await clearRegistryCorestore();
   return removeAllModels(keepName ? new Set([keepName]) : undefined);
 });
 
