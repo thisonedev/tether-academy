@@ -1,5 +1,5 @@
-// Manual one-off reset for `next dev.
-// Wipes .next/.source/.turbo and kills any stale next-server, then returns.
+// Manual one-off reset for `next dev`.
+// Wipes .next/.next-dev/.source/.turbo and kills any stale next-server, then returns.
 
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -16,7 +16,7 @@ function killStaleDevServers() {
   return new Promise((resolve) => setTimeout(resolve, 400));
 }
 
-const CACHE_PATHS = ['.next', '.source', '.turbo'];
+const CACHE_PATHS = ['.next', '.next-dev', '.source', '.turbo'];
 
 await killStaleDevServers();
 for (const p of CACHE_PATHS) {

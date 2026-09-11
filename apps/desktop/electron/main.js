@@ -1041,21 +1041,14 @@ async function createWindow() {
   const staticDir = path.resolve(__dirname, '..', '..', 'web', 'out');
   const staticExists = fsSync().existsSync(outIndex);
   const academyOrigin = 'academy://app/';
-  // A static build left in web/out used to win unconditionally, silently
-  // serving stale code. Only runs unpackaged, so it can't affect what ships.
-  const autoDevUrl = 'http://localhost:3000';
-  const localDevServerUp = !app.isPackaged && !process.env.PEAR_DEV_URL
-    ? await net.fetch(autoDevUrl, { signal: AbortSignal.timeout(300) }).then(() => true).catch(() => false)
-    : false;
+  // Auto-detecting whatever answered on :3000 used to let a stale, forgotten
+  // `next dev` silently outrank a fresh `pnpm build`. PEAR_DEV_URL is now the
+  // only way to opt into a dev server.
   if (process.env.PEAR_DEV_URL) {
     const devUrl = process.env.PEAR_DEV_URL;
     console.log('[tether-academy-desktop] loading', devUrl);
     installNavigationHardening(win, [devUrl]);
     await win.loadURL(devUrl);
-  } else if (localDevServerUp) {
-    console.log('[tether-academy-desktop] dev server detected, loading', autoDevUrl, '(delete web/out or set PEAR_DEV_URL to override)');
-    installNavigationHardening(win, [autoDevUrl]);
-    await win.loadURL(autoDevUrl);
   } else if (staticExists) {
     console.log('[tether-academy-desktop] serving', staticDir, 'on', academyOrigin);
     installNavigationHardening(win, [academyOrigin]);

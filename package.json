@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build:packages": "pnpm -r --filter \"./packages/*\" build",
-    "dev": "pnpm --filter @tether-academy/web dev",
+    "dev": "pnpm --parallel --filter @academy/ui --filter @tether-academy/web dev",
     "dev:webpack": "pnpm --filter @tether-academy/web dev:webpack",
     "dev:clean": "pnpm --filter @tether-academy/web dev:clean",
     "build": "pnpm build:packages && pnpm --filter @tether-academy/web build",
