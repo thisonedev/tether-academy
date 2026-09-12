@@ -644,6 +644,7 @@ handle('academy:models:cancelDownload', async () => cancelDownload());
 handle('academy:models:downloadQueue', async (payload) => downloadModels(payload.scope, payload.names));
 handle('academy:models:cancelDownloadQueue', async () => cancelDownloadQueue());
 handle('academy:models:downloadQueueState', async () => downloadQueueState());
+handle('academy:model:status:current', async () => modelStatus.currentStatus());
 
 // AI assistant chat. The renderer subscribes once on mount to academy:chat:chunk
 // and routes by requestId.

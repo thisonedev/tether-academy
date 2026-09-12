@@ -154,6 +154,9 @@ async function update() {
       console.log('→ Installing dependencies...');
       await runQuiet('pnpm', ['install'], { cwd: finalDir });
       console.log('  ✓ Dependencies installed');
+      console.log('→ Generating model catalogue...');
+      await runQuiet('pnpm', ['--filter', '@academy/courses', 'report:models'], { cwd: finalDir });
+      console.log('  ✓ Model catalogue generated');
       console.log('→ Building (this can take a minute or two)...');
       await runQuiet('pnpm', ['build'], { cwd: finalDir });
       console.log('  ✓ Build complete');

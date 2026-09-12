@@ -289,6 +289,9 @@ async function ensureLoaded(filename) {
   }).catch(() => null);
   if (loadCancelled) {
     currentLoad = null;
+    // Otherwise the header badge and Settings row keep reading "downloading"
+    // forever: nothing else tells them the load stopped.
+    notify({ name: displayName, kind: 'ai', phase: 'ready' });
     return { cancelled: true };
   }
   // loadModel()'s onProgress fires for an on-disk file too, reading it into
@@ -329,7 +332,10 @@ async function ensureLoaded(filename) {
       modelId = await attemptLoad();
     }
   } catch (err) {
-    if (loadCancelled || isLoadCancelError(err)) return { cancelled: true };
+    if (loadCancelled || isLoadCancelError(err)) {
+      notify({ name: displayName, kind: 'ai', phase: 'ready' });
+      return { cancelled: true };
+    }
     // The SDK refuses to register a file twice; recover the existing modelId from the error text and adopt it.
     const existingId = parseAlreadyRegisteredModelId(err);
     // Adopting or unloading an id another capability owns would corrupt

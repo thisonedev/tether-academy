@@ -637,6 +637,8 @@ export interface AcademyAPI {
   /** Fires whenever any capability's model starts downloading or loading, so
    *  the playground can show what's happening instead of a bare spinner. */
   onModelStatus?: (callback: (status: AcademyModelStatus) => void) => () => void;
+  /** Whatever `onModelStatus` last reported active, for a page that mounts mid-load to catch up on. */
+  currentModelStatus?: () => Promise<AcademyModelStatus | null>;
   /** Returns a data: URL for a PNG. */
   generateImage?: (prompt: string, model?: string) => Promise<string>;
   /** Returns a data: URL for the generated clip (typically AVI); can take minutes.

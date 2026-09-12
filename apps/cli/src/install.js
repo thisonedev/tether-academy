@@ -59,6 +59,8 @@ async function install() {
 
   console.log('-> Installing dependencies...');
   await runQuiet('pnpm', ['install'], { cwd: finalDir });
+  console.log('-> Generating model catalogue...');
+  await runQuiet('pnpm', ['--filter', '@academy/courses', 'report:models'], { cwd: finalDir });
   console.log('-> Building (this can take a minute or two)...');
   await runQuiet('pnpm', ['build'], { cwd: finalDir });
 
