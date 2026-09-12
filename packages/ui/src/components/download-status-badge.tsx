@@ -12,23 +12,37 @@ declare global {
 }
 
 /**
- * Header icon for a download in progress, either a Settings > Models batch
- * or an AI bot model load, so it's visible while browsing away from Settings.
- * A small icon avoids reflowing the header, unlike a bar that changes its height.
+ * Header icon for a download in progress: a Settings > Models batch, or any
+ * capability's own model load (chat, playground media, translate), so it's
+ * visible while browsing away from wherever it started. A small icon avoids
+ * reflowing the header, unlike a bar that changes its height.
  */
 export function DownloadStatusBadge() {
   const [queue, setQueue] = useState<AcademyModelDownloadQueueState | null>(null);
   const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null);
-  const [aiStatus, setAiStatus] = useState<AcademyModelStatus | null>(null);
+  const [modelStatus, setModelStatus] = useState<AcademyModelStatus | null>(null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    return window.academy?.onModelStatus?.((status) => {
-      if (status.kind !== 'ai') return;
-      setAiStatus(status.phase === 'ready' ? null : status);
+    let cancelled = false;
+    // Without this, the badge only learns about an in-flight load from the
+    // next progress tick, so it blinks off on every page navigation (this
+    // component remounts) until one arrives.
+    void window.academy
+      ?.currentModelStatus?.()
+      .then((status) => {
+        if (!cancelled) setModelStatus(status ?? null);
+      })
+      .catch(() => {});
+    const off = window.academy?.onModelStatus?.((status) => {
+      setModelStatus(status.phase === 'ready' ? null : status);
     });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -93,33 +107,37 @@ export function DownloadStatusBadge() {
     };
   }, [open]);
 
-  // Same badge for either source; an active queue takes priority since it can
-  // hold several models where an AI bot load is always exactly one.
+  // Same badge for any source; an active queue takes priority since it can
+  // hold several models where a single capability's load is always one.
   const activeQueue = queue?.active ? queue : null;
-  const activeAi = !activeQueue ? aiStatus : null;
-  if (!activeQueue && !activeAi) return null;
+  const activeStatus = !activeQueue ? modelStatus : null;
+  if (!activeQueue && !activeStatus) return null;
 
-  const name = activeQueue?.name ?? activeAi?.name ?? '';
+  const name = activeQueue?.name ?? activeStatus?.name ?? '';
   const remaining = activeQueue ? activeQueue.total - activeQueue.done : 0;
   const pct = activeQueue
     ? progress && progress.total > 0
       ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
       : null
-    : activeAi?.total
-      ? Math.min(100, Math.round(((activeAi.downloaded ?? 0) / activeAi.total) * 100))
+    : activeStatus?.total
+      ? Math.min(100, Math.round(((activeStatus.downloaded ?? 0) / activeStatus.total) * 100))
       : null;
   const byteLabel = activeQueue
     ? progress && progress.total > 0
       ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}`
       : 'Preparing…'
-    : activeAi?.total
-      ? `${formatBytes(activeAi.downloaded ?? 0)} / ${formatBytes(activeAi.total)}`
-      : activeAi?.phase === 'loading'
+    : activeStatus?.total
+      ? `${formatBytes(activeStatus.downloaded ?? 0)} / ${formatBytes(activeStatus.total)}`
+      : activeStatus?.phase === 'loading'
         ? 'Loading…'
         : 'Preparing…';
+  // Only chat and the batch queue can actually be cancelled today; the
+  // playground media/translate loaders have no cancel path to call into.
   const onCancel = activeQueue
     ? () => void window.academy?.models?.cancelDownloadQueue?.()
-    : () => void window.academy?.chat?.cancelLoad?.();
+    : activeStatus?.kind === 'ai'
+      ? () => void window.academy?.chat?.cancelLoad?.()
+      : null;
 
   return (
     <div ref={containerRef} className="relative">
@@ -151,14 +169,16 @@ export function DownloadStatusBadge() {
           <div className="px-4 py-3">
             <div className="flex items-center justify-between gap-2">
               <p className="truncate font-mono text-xs text-canvas-foreground">{name}</p>
-              <button
-                type="button"
-                onClick={onCancel}
-                title="Stop"
-                className="flex size-5 shrink-0 items-center justify-center rounded text-canvas-muted-foreground transition-colors hover:bg-red-500/15 hover:text-red-400"
-              >
-                <Square className="size-2.5 fill-current" />
-              </button>
+              {onCancel ? (
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  title="Stop"
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-canvas-muted-foreground transition-colors hover:bg-red-500/15 hover:text-red-400"
+                >
+                  <Square className="size-2.5 fill-current" />
+                </button>
+              ) : null}
             </div>
             <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-canvas">
               <div

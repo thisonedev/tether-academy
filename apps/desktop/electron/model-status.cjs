@@ -9,8 +9,13 @@ const { EventEmitter } = require('node:events');
 const events = new EventEmitter();
 events.setMaxListeners(50);
 
-/** @param {{ name: string, kind: string, phase: 'downloading'|'loading', downloaded?: number, total?: number }} status */
+// Last non-'ready' status, so a page that (re)mounts mid-load (the header
+// badge on every navigation) can catch up instead of waiting for the next tick.
+let current = null;
+
+/** @param {{ name: string, kind: string, phase: 'downloading'|'loading'|'ready', downloaded?: number, total?: number }} status */
 function notify(status) {
+  current = status.phase === 'ready' ? null : status;
   events.emit('status', status);
 }
 
@@ -19,4 +24,8 @@ function onStatus(callback) {
   return () => events.off('status', callback);
 }
 
-module.exports = { notify, onStatus };
+function currentStatus() {
+  return current;
+}
+
+module.exports = { notify, onStatus, currentStatus };
