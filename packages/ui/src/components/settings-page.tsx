@@ -4,6 +4,7 @@ import type {
   AcademyAPI,
   AcademyDeviceInfo,
   AcademyModelCatalogueEntry,
+  AcademyModelDownloadQueueState,
   AcademyModelEntry,
   AcademyPeerAuditEntry,
   AcademyPeerInfo,
@@ -11,8 +12,9 @@ import type {
 import { useUserHydrated, useUserStore } from '@academy/core';
 import { Box, Bot, Circle, CircleCheck, Cpu, Database, Download, Eraser, HardDrive, Loader2, MemoryStick, Square, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AI_BOT_MODEL_NAMES } from './ai-bot-models.js';
+import { formatBytes } from './format-bytes.js';
 import {
   DevicesPanel,
   ExecRunList,
@@ -27,19 +29,6 @@ declare global {
   interface Window {
     academy?: AcademyAPI;
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const fixed = value < 10 && unit > 0 ? value.toFixed(2) : value < 100 ? value.toFixed(1) : value.toFixed(0);
-  return `${fixed} ${units[unit]}`;
 }
 
 function formatGb(bytes: number): string {
@@ -108,7 +97,6 @@ export function SettingsPage() {
   const [remove, setRemove] = useState<RemoveState>({ pending: null, busy: false, error: null });
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTabId>('models');
-  const downloadAbortRef = useRef(false);
 
   // Settings is desktop-only; on web, bounce back to the home page rather than show a dead page.
   useEffect(() => {
@@ -147,28 +135,65 @@ export function SettingsPage() {
       openSignInPrompt();
       return;
     }
+    // The P2P registry path can re-fetch a block it already reported,
+    // walking `loaded` backward mid-download; clamp to keep the bar from
+    // visibly restarting on every re-fetch instead of just filling in.
+    const applyProgress = (name: string, loaded: number, total: number) => {
+      setModelProgress((prev) => {
+        const prevEntry = prev[name];
+        const merged =
+          prevEntry && prevEntry.total === total ? Math.max(prevEntry.loaded, loaded) : loaded;
+        return { ...prev, [name]: { loaded: merged, total } };
+      });
+    };
     // Subscribe to model load progress once; the host emits events while a
     // chat:load call is downloading a model file.
     const offProgress = window.academy?.chat?.onLoadProgress?.((event) => {
       if (!event || !event.modelName) return;
-      setModelProgress((prev) => ({
-        ...prev,
-        [event.modelName]: { loaded: event.loaded, total: event.total },
-      }));
+      applyProgress(event.modelName, event.loaded, event.total);
     });
     // Same shape, different source: a models.download() call in flight.
     const offDownloadProgress = window.academy?.models?.onDownloadProgress?.((event) => {
       if (!event || !event.name) return;
-      setModelProgress((prev) => ({
-        ...prev,
-        [event.name]: { loaded: event.loaded, total: event.total },
-      }));
+      applyProgress(event.name, event.loaded, event.total);
+    });
+    // The batch runs host-side (models.cjs's downloadModels) and keeps its
+    // own state across this page unmounting; this mirrors it into the UI.
+    // lastQueueName tells a live new-item transition (reset its bar to 0)
+    // apart from an initial catch-up read of a batch already in progress.
+    let lastQueueName: string | null = null;
+    const applyQueueSnapshot = (snapshot: AcademyModelDownloadQueueState | null) => {
+      if (!snapshot?.active) {
+        lastQueueName = null;
+        setDownloadingScope(null);
+        setDownloadingName(null);
+        setDownloadQueue(null);
+        if (snapshot?.error) setDownloadError(snapshot.error);
+        return;
+      }
+      // A new item started, or a reload is catching up mid-download: seed
+      // its bar from the host's own progress, not a prior item's reading.
+      if (snapshot.name && snapshot.name !== lastQueueName) {
+        setModelProgress((prev) => ({
+          ...prev,
+          [snapshot.name as string]: snapshot.progress ?? { loaded: 0, total: 0 },
+        }));
+      }
+      lastQueueName = snapshot.name;
+      setDownloadingScope(snapshot.scope);
+      setDownloadingName(snapshot.name);
+      setDownloadQueue({ done: snapshot.done, total: snapshot.total });
+    };
+    const offQueueProgress = window.academy?.models?.onDownloadQueueProgress?.((snapshot) => {
+      applyQueueSnapshot(snapshot);
+      // A model finished or the whole batch wrapped up: pick up the new file.
+      void refreshModels();
     });
     let cancelled = false;
     (async () => {
       setLoadError(null);
       try {
-        const [list, dev, catalogue, configured, useFullDocsRaw, status, ragBackend] = await Promise.all([
+        const [list, dev, catalogue, configured, useFullDocsRaw, status, ragBackend, queueState] = await Promise.all([
           window.academy?.models?.list().catch(() => null) ?? Promise.resolve(null),
           window.academy?.device?.info().catch(() => null) ?? Promise.resolve(null),
           window.academy?.models?.catalogue().catch(() => []) ?? Promise.resolve([]),
@@ -176,6 +201,7 @@ export function SettingsPage() {
           window.academy?.state?.get?.('ai.chat.useFullDocs').catch(() => null) ?? Promise.resolve(null),
           window.academy?.chat?.docsStatus?.().catch(() => null) ?? Promise.resolve(null),
           window.academy?.ragIndexBackend?.().catch(() => null) ?? Promise.resolve(null),
+          window.academy?.models?.downloadQueueState?.().catch(() => null) ?? Promise.resolve(null),
         ]);
         if (cancelled) return;
         setModels(list ?? []);
@@ -190,6 +216,8 @@ export function SettingsPage() {
         if (typeof useFullDocsRaw === 'string') setUseFullDocs(useFullDocsRaw !== 'false');
         if (status && typeof status === 'object') setDocsStatus(status);
         if (ragBackend === 'hyperdb' || ragBackend === 'turbovec') setRagIndexBackendState(ragBackend);
+        // Catches up a remount on a batch that started before this page loaded.
+        if (queueState?.active) applyQueueSnapshot(queueState);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : 'Failed to load settings');
@@ -199,6 +227,7 @@ export function SettingsPage() {
       cancelled = true;
       offProgress?.();
       offDownloadProgress?.();
+      offQueueProgress?.();
     };
   }, [hydrated, username, openSignInPrompt]);
 
@@ -209,6 +238,7 @@ export function SettingsPage() {
     setModelProgress((prev) => ({ ...prev, [modelName]: { loaded: 0, total: 0 } }));
     try {
       const result = await window.academy.chat.load(modelName);
+      if ('cancelled' in result) return;
       setConfiguredChatModel(result.modelName);
       await refreshModels();
     } catch (err) {
@@ -222,6 +252,10 @@ export function SettingsPage() {
       });
     }
   }, [refreshModels]);
+
+  const stopChatLoad = useCallback(async () => {
+    await window.academy?.chat?.cancelLoad?.();
+  }, []);
 
   const toggleUseFullDocs = useCallback(async () => {
     const next = !useFullDocs;
@@ -290,9 +324,8 @@ export function SettingsPage() {
     if (!window.academy?.models) return;
     setRemove({ pending: 'all', busy: true, error: null });
     try {
-      // removeAll cancels the in-flight download itself; a cancelDownload
-      // call here would race it for the same one-shot request.
-      downloadAbortRef.current = true;
+      // The removeAll handler itself stops the queue and cancels the
+      // in-flight download before deleting anything.
       await window.academy.models.removeAll();
       await refreshModels();
       setRemove({ pending: null, busy: false, error: null });
@@ -305,45 +338,21 @@ export function SettingsPage() {
     }
   }, [refreshModels]);
 
-  // Sequential, not parallel: keeps one progress bar meaningful per model and
-  // avoids competing for the same bandwidth. downloadAsset no-ops on a model
-  // that's already cached, so callers can pass a scope's full list as-is.
-  const downloadModels = useCallback(
-    async (scope: string, names: string[]) => {
-      if (!window.academy?.models || names.length === 0) return;
-      downloadAbortRef.current = false;
-      setDownloadingScope(scope);
-      setDownloadError(null);
-      setDownloadQueue({ done: 0, total: names.length });
-      try {
-        for (let i = 0; i < names.length; i++) {
-          if (downloadAbortRef.current) break;
-          const name = names[i];
-          if (!name) continue;
-          setDownloadingName(name);
-          setModelProgress((prev) => ({ ...prev, [name]: { loaded: 0, total: 0 } }));
-          const result = await window.academy.models.download(name);
-          if (downloadAbortRef.current || result?.cancelled) break;
-          setDownloadQueue({ done: i + 1, total: names.length });
-          // Otherwise the storage header stays frozen until the whole queue finishes.
-          await refreshModels();
-        }
-      } catch (err) {
-        if (!downloadAbortRef.current) {
-          setDownloadError(err instanceof Error ? err.message : 'Download failed');
-        }
-      } finally {
-        setDownloadingScope(null);
-        setDownloadingName(null);
-        setDownloadQueue(null);
-      }
-    },
-    [refreshModels],
-  );
+  // Runs host-side (models.cjs's downloadModels), not as a loop in this
+  // component, so it keeps going if the user opens a lesson mid-batch; the
+  // onDownloadQueueProgress subscription above mirrors its state back in.
+  const downloadModels = useCallback(async (scope: string, names: string[]) => {
+    if (!window.academy?.models || names.length === 0) return;
+    setDownloadError(null);
+    try {
+      await window.academy.models.downloadQueue(scope, names);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Download failed');
+    }
+  }, []);
 
   const stopDownloads = useCallback(async () => {
-    downloadAbortRef.current = true;
-    await window.academy?.models?.cancelDownload?.();
+    await window.academy?.models?.cancelDownloadQueue?.();
   }, []);
 
   // Open the chapter that owns the file in flight so the row's bar is visible.
@@ -446,12 +455,18 @@ export function SettingsPage() {
 
   // Device-wide total: every downloaded model, not just lesson-tracked ones.
   const downloadedBytesAll = (models ?? []).reduce((sum, m) => sum + m.sizeBytes, 0);
+  // Only the model actually backing the assistant counts as AI bot storage.
+  // A chat-family model downloaded only for a lesson (e.g. fine-tuning's
+  // small preset) counts as QVAC/Playground, even though it could be picked
+  // as the assistant too.
   const aiBotBytes = (models ?? [])
-    .filter((m) => (AI_BOT_MODEL_NAMES as readonly string[]).includes(m.name))
+    .filter((m) => m.name === configuredChatModel)
     .reduce((sum, m) => sum + m.sizeBytes, 0);
   const qvacModelsBytes = downloadedBytesAll - aiBotBytes;
   // Everything on disk that isn't a tracked model: the OS, other apps, user files.
   const osBytes = device ? Math.max(0, device.storageBytes - device.storageFreeBytes - downloadedBytesAll) : 0;
+  // Storage summary shows only the OS name; the full version lives on the Device tab.
+  const osName = device ? device.osLabel.replace(/\s+[\d.]+$/, '') : '';
 
   // Chapter -> its catalogue entries, each paired with the lessons in that
   // chapter that need it (a model can need multiple lessons in one chapter).
@@ -589,7 +604,7 @@ export function SettingsPage() {
                 />
                 <div
                   className="h-full bg-canvas-muted-foreground/40"
-                  title={`${device.osLabel} — ${formatGb(osBytes)}`}
+                  title={`${osName} — ${formatGb(osBytes)}`}
                   style={{ width: `${Math.min(100, (osBytes / device.storageBytes) * 100)}%` }}
                 />
                 <div
@@ -613,7 +628,7 @@ export function SettingsPage() {
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="size-2 shrink-0 rounded-full bg-canvas-muted-foreground/40" />
-                  <b className="font-bold text-canvas-foreground">{formatGb(osBytes)}</b> {device.osLabel}
+                  <b className="font-bold text-canvas-foreground">{formatGb(osBytes)}</b> {osName}
                 </span>
               </div>
             </div>
@@ -682,16 +697,26 @@ export function SettingsPage() {
                       </div>
                       {busy ? (
                         <div className="mt-2">
-                          <div className="h-1 w-full overflow-hidden rounded-full bg-canvas-muted">
-                            <div
-                              className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
-                              style={{
-                                width:
-                                  progress && progress.total > 0
-                                    ? `${Math.min(100, Math.round((progress.loaded / progress.total) * 100))}%`
-                                    : '15%',
-                              }}
-                            />
+                          <div className="flex items-center gap-2">
+                            <div className="h-1 w-full overflow-hidden rounded-full bg-canvas-muted">
+                              <div
+                                className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                                style={{
+                                  width:
+                                    progress && progress.total > 0
+                                      ? `${Math.min(100, Math.round((progress.loaded / progress.total) * 100))}%`
+                                      : '15%',
+                                }}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void stopChatLoad()}
+                              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-400 transition-colors hover:bg-red-500/20"
+                            >
+                              <Square className="size-2.5 fill-current" />
+                              Stop
+                            </button>
                           </div>
                           <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-canvas-muted-foreground">
                             {progress && progress.total > 0
@@ -782,7 +807,7 @@ export function SettingsPage() {
           ) : (
             <section className="rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-canvas-foreground">QVAC Course Models</h2>
+                <h2 className="text-lg font-semibold text-canvas-foreground">QVAC Models</h2>
                 <div className="flex items-center gap-2">
                   <RemoveAllButton
                     state={remove}
@@ -884,8 +909,8 @@ export function SettingsPage() {
                             type="button"
                             disabled={downloadingScope !== null}
                             onClick={() => void downloadModels(chapter, missingNames(entries))}
-                            title="Prep chapter"
-                            aria-label="Prep chapter"
+                            title="Download models"
+                            aria-label="Download models"
                             className="flex size-[30px] shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
                           >
                             {busy ? (
