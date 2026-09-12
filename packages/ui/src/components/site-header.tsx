@@ -3,6 +3,7 @@
 import { Box } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { DownloadStatusBadge } from './download-status-badge.js';
 import { UserMenu } from './user-menu.js';
 import { WindowControls } from './window-controls.js';
 import { useUserStore } from '@academy/core';
@@ -30,6 +31,7 @@ export function SiteHeader() {
       </Link>
 
       <nav className="ml-auto flex items-center gap-1 sm:gap-3 text-sm">
+        <DownloadStatusBadge />
         {mounted ? (
           signedIn ? (
             <UserMenu />

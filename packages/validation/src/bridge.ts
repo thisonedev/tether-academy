@@ -75,6 +75,14 @@ export interface AcademyModelCatalogueEntry {
   cacheFile?: string | null;
   /** Whether that exact file is on disk and complete. */
   installed?: boolean;
+  /** Backs the AI bot's model picker (independent of any lesson usage). */
+  aiBot: boolean;
+  /** Playground node labels that load this model, e.g. `['Generate image']`; null if none do. */
+  playground: string[] | null;
+  /** True when `name` is a companion-set directory hash, not a model file. */
+  isCompanionSet?: boolean;
+  /** Set directory this file is bundled into, if the SDK ships it that way. */
+  companionSetKey?: string | null;
 }
 
 export interface AcademyModelRecommendation {
@@ -102,6 +110,37 @@ export interface AcademyModelsAPI {
   recommend: (lessonKey: { chapter: string; lesson: string } | null) => Promise<AcademyModelRecommendation>;
   /** All catalogue entries tagged for a given chapter/lesson, in display order. */
   forLesson: (lessonKey: { chapter: string; lesson: string }) => Promise<AcademyModelCatalogueEntry[]>;
+  /** Caches a model without loading it (a catalogue `name`, downloaded or not). No-ops if already cached. */
+  download: (name: string) => Promise<{ downloaded: boolean; cancelled?: boolean }>;
+  /** Aborts the in-flight `download()`. Safe when nothing is running. */
+  cancelDownload: () => Promise<{ cancelled: boolean }>;
+  /** Fires while any `download()` call is in flight; unsubscribe with the returned function. */
+  onDownloadProgress: (callback: (progress: { name: string; loaded: number; total: number }) => void) => () => void;
+  /**
+   * Starts a sequential batch download, tracked host-side so it keeps running
+   * (and keeps its own state) across a Settings page unmount/remount. Only
+   * one batch runs at a time; a second call while one is active no-ops.
+   */
+  downloadQueue: (scope: string, names: string[]) => Promise<{ started: boolean }>;
+  /** Stops the current batch (if any) and cancels its in-flight download. */
+  cancelDownloadQueue: () => Promise<{ cancelled: boolean }>;
+  /** Current batch state, for a page that just (re)mounted to catch up on. */
+  downloadQueueState: () => Promise<AcademyModelDownloadQueueState>;
+  /** Fires on every batch state change: start, each model advance, cancel, and finish. */
+  onDownloadQueueProgress: (callback: (snapshot: AcademyModelDownloadQueueState) => void) => () => void;
+}
+
+export interface AcademyModelDownloadQueueState {
+  active: boolean;
+  scope: string | null;
+  /** The modelId currently downloading, or null between items / when inactive. */
+  name: string | null;
+  done: number;
+  total: number;
+  error: string | null;
+  /** The current item's own byte progress, so a freshly (re)loaded page can
+   *  paint the right percentage immediately instead of waiting for the next tick. */
+  progress: { loaded: number; total: number } | null;
 }
 
 /** One message in a chat conversation. */
@@ -200,7 +239,9 @@ export interface AcademyChatAPI {
    * the user picks a model, so the chat phase opens clean and the first
    * real message is the one the user types.
    */
-  load: (modelHint: string) => Promise<{ modelName: string }>;
+  load: (modelHint: string) => Promise<{ modelName: string } | { cancelled: true }>;
+  /** Cancels an in-flight load() call. Returns true if anything was actually cancelled. */
+  cancelLoad: () => Promise<{ cancelled: boolean }>;
   /** Loads whatever `send()` itself would resolve to (current, then configured,
    *  then the smallest installed model) without sending a message. */
   preload: () => Promise<void>;

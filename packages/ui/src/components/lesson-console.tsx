@@ -420,7 +420,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly, onB
       }
       try {
         const loaded = await window.academy!.chat!.load(wanted);
-        if (!cancelled) setModelName(loaded.modelName);
+        if (!cancelled && 'modelName' in loaded) setModelName(loaded.modelName);
       } catch (err) {
         if (!cancelled) {
           setChatError(err instanceof Error ? err.message : 'Could not load the configured model.');
@@ -474,7 +474,7 @@ export function ChatInputBar({ entries, setEntries, lessonContext, readOnly, onB
       setChatError(null);
       try {
         const result = await window.academy!.chat!.load(name);
-        setModelName(result.modelName);
+        if ('modelName' in result) setModelName(result.modelName);
       } catch (err) {
         setChatError(err instanceof Error ? err.message : 'Could not switch models.');
       } finally {

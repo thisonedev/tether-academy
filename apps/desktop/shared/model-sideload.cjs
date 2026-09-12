@@ -88,18 +88,18 @@ function readRegistry(file = resolveRegistryPath()) {
   return out;
 }
 
-function get(url, redirectsLeft = 5) {
+function get(url, redirectsLeft = 5, signal) {
   // Required here, not at module load: the Bare worker has no https, and it
   // imports this file for the cache-name helpers alone.
   const https = require('https');
   return new Promise((resolve, reject) => {
     https
-      .get(url, { headers: { 'user-agent': 'tether-academy' } }, (res) => {
+      .get(url, { headers: { 'user-agent': 'tether-academy' }, signal }, (res) => {
         const status = res.statusCode ?? 0;
         if (status >= 300 && status < 400 && res.headers.location) {
           res.resume();
           if (redirectsLeft === 0) return reject(new Error('too many redirects'));
-          return resolve(get(new URL(res.headers.location, url).href, redirectsLeft - 1));
+          return resolve(get(new URL(res.headers.location, url).href, redirectsLeft - 1, signal));
         }
         if (status !== 200) {
           res.resume();
@@ -113,7 +113,7 @@ function get(url, redirectsLeft = 5) {
 
 /**
  * @param {string} name registry constant, e.g. 'QWEN3_4B_Q4_K_M'
- * @param {{ home?: string, onProgress?: (downloaded: number, total: number) => void, registry?: Map<string, object> }} [opts]
+ * @param {{ home?: string, onProgress?: (downloaded: number, total: number) => void, registry?: Map<string, object>, signal?: AbortSignal }} [opts]
  * @returns {Promise<{ path: string, bytes: number, alreadyCached: boolean }>}
  */
 async function sideloadModel(name, opts = {}) {
@@ -130,7 +130,7 @@ async function sideloadModel(name, opts = {}) {
   fs.mkdirSync(dir, { recursive: true });
   // Written beside the target so the rename below stays on one filesystem.
   const partial = `${target}.sideload`;
-  const res = await get(sourceUrl(entry));
+  const res = await get(sourceUrl(entry), 5, opts.signal);
   const hash = crypto.createHash('sha256');
   let downloaded = 0;
   await new Promise((resolve, reject) => {

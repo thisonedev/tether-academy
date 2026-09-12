@@ -22,7 +22,7 @@ pnpm install
 ```bash
 pnpm dev          # Turbopack dev with HMR (recommended)
 pnpm dev:webpack  # webpack dev, fallback if Turbopack misbehaves
-pnpm dev:clean    # wipe .next/.source/.turbo then start Turbopack
+pnpm dev:clean    # wipe .next/.next-dev/.source/.turbo then start Turbopack
 ```
 
 The dev server runs on http://localhost:3000 by default.

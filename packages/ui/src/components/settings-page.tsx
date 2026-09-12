@@ -4,15 +4,17 @@ import type {
   AcademyAPI,
   AcademyDeviceInfo,
   AcademyModelCatalogueEntry,
+  AcademyModelDownloadQueueState,
   AcademyModelEntry,
   AcademyPeerAuditEntry,
   AcademyPeerInfo,
 } from '@academy/validation';
 import { useUserHydrated, useUserStore } from '@academy/core';
-import { Box, Bot, Circle, CircleCheck, Cpu, Database, Eraser, HardDrive, Loader2, MemoryStick, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Box, Bot, Circle, CircleCheck, Cpu, Database, Download, Eraser, HardDrive, Loader2, MemoryStick, Square, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AI_BOT_MODEL_NAMES } from './ai-bot-models.js';
+import { formatBytes } from './format-bytes.js';
 import {
   DevicesPanel,
   ExecRunList,
@@ -29,19 +31,6 @@ declare global {
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const fixed = value < 10 && unit > 0 ? value.toFixed(2) : value < 100 ? value.toFixed(1) : value.toFixed(0);
-  return `${fixed} ${units[unit]}`;
-}
-
 function formatGb(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 GB';
   const gb = bytes / 1024 ** 3;
@@ -49,12 +38,6 @@ function formatGb(bytes: number): string {
   if (gb >= 10) return `${gb.toFixed(1)} GB`;
   return `${gb.toFixed(2)} GB`;
 }
-
-const KIND_LABEL: Record<AcademyModelEntry['kind'], string> = {
-  single: 'Single file',
-  sharded: 'Sharded model',
-  set: 'Companion set',
-};
 
 const RAG_INDEX_BACKEND_OPTIONS: { value: 'turbovec' | 'hyperdb'; label: string; description: string }[] = [
   {
@@ -94,6 +77,13 @@ export function SettingsPage() {
 
   const [models, setModels] = useState<AcademyModelEntry[] | null>(null);
   const [chatCatalogue, setChatCatalogue] = useState<AcademyModelCatalogueEntry[] | null>(null);
+  const [fullCatalogue, setFullCatalogue] = useState<AcademyModelCatalogueEntry[] | null>(null);
+  const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
+  // A chapter slug, 'course', or null. Only one bulk download runs at a time.
+  const [downloadingScope, setDownloadingScope] = useState<string | null>(null);
+  const [downloadingName, setDownloadingName] = useState<string | null>(null);
+  const [downloadQueue, setDownloadQueue] = useState<{ done: number; total: number } | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [configuredChatModel, setConfiguredChatModel] = useState<string | null>(null);
   const [configuringChatModel, setConfiguringChatModel] = useState<string | null>(null);
   const [modelProgress, setModelProgress] = useState<Record<string, { loaded: number; total: number }>>({});
@@ -135,6 +125,7 @@ export function SettingsPage() {
           (entry): entry is AcademyModelCatalogueEntry => entry != null,
         ),
       );
+      setFullCatalogue(cat);
     }
   }, []);
 
@@ -144,20 +135,65 @@ export function SettingsPage() {
       openSignInPrompt();
       return;
     }
+    // The P2P registry path can re-fetch a block it already reported,
+    // walking `loaded` backward mid-download; clamp to keep the bar from
+    // visibly restarting on every re-fetch instead of just filling in.
+    const applyProgress = (name: string, loaded: number, total: number) => {
+      setModelProgress((prev) => {
+        const prevEntry = prev[name];
+        const merged =
+          prevEntry && prevEntry.total === total ? Math.max(prevEntry.loaded, loaded) : loaded;
+        return { ...prev, [name]: { loaded: merged, total } };
+      });
+    };
     // Subscribe to model load progress once; the host emits events while a
     // chat:load call is downloading a model file.
     const offProgress = window.academy?.chat?.onLoadProgress?.((event) => {
       if (!event || !event.modelName) return;
-      setModelProgress((prev) => ({
-        ...prev,
-        [event.modelName]: { loaded: event.loaded, total: event.total },
-      }));
+      applyProgress(event.modelName, event.loaded, event.total);
+    });
+    // Same shape, different source: a models.download() call in flight.
+    const offDownloadProgress = window.academy?.models?.onDownloadProgress?.((event) => {
+      if (!event || !event.name) return;
+      applyProgress(event.name, event.loaded, event.total);
+    });
+    // The batch runs host-side (models.cjs's downloadModels) and keeps its
+    // own state across this page unmounting; this mirrors it into the UI.
+    // lastQueueName tells a live new-item transition (reset its bar to 0)
+    // apart from an initial catch-up read of a batch already in progress.
+    let lastQueueName: string | null = null;
+    const applyQueueSnapshot = (snapshot: AcademyModelDownloadQueueState | null) => {
+      if (!snapshot?.active) {
+        lastQueueName = null;
+        setDownloadingScope(null);
+        setDownloadingName(null);
+        setDownloadQueue(null);
+        if (snapshot?.error) setDownloadError(snapshot.error);
+        return;
+      }
+      // A new item started, or a reload is catching up mid-download: seed
+      // its bar from the host's own progress, not a prior item's reading.
+      if (snapshot.name && snapshot.name !== lastQueueName) {
+        setModelProgress((prev) => ({
+          ...prev,
+          [snapshot.name as string]: snapshot.progress ?? { loaded: 0, total: 0 },
+        }));
+      }
+      lastQueueName = snapshot.name;
+      setDownloadingScope(snapshot.scope);
+      setDownloadingName(snapshot.name);
+      setDownloadQueue({ done: snapshot.done, total: snapshot.total });
+    };
+    const offQueueProgress = window.academy?.models?.onDownloadQueueProgress?.((snapshot) => {
+      applyQueueSnapshot(snapshot);
+      // A model finished or the whole batch wrapped up: pick up the new file.
+      void refreshModels();
     });
     let cancelled = false;
     (async () => {
       setLoadError(null);
       try {
-        const [list, dev, catalogue, configured, useFullDocsRaw, status, ragBackend] = await Promise.all([
+        const [list, dev, catalogue, configured, useFullDocsRaw, status, ragBackend, queueState] = await Promise.all([
           window.academy?.models?.list().catch(() => null) ?? Promise.resolve(null),
           window.academy?.device?.info().catch(() => null) ?? Promise.resolve(null),
           window.academy?.models?.catalogue().catch(() => []) ?? Promise.resolve([]),
@@ -165,6 +201,7 @@ export function SettingsPage() {
           window.academy?.state?.get?.('ai.chat.useFullDocs').catch(() => null) ?? Promise.resolve(null),
           window.academy?.chat?.docsStatus?.().catch(() => null) ?? Promise.resolve(null),
           window.academy?.ragIndexBackend?.().catch(() => null) ?? Promise.resolve(null),
+          window.academy?.models?.downloadQueueState?.().catch(() => null) ?? Promise.resolve(null),
         ]);
         if (cancelled) return;
         setModels(list ?? []);
@@ -173,11 +210,14 @@ export function SettingsPage() {
             (entry): entry is AcademyModelCatalogueEntry => entry != null,
           ),
         );
+        setFullCatalogue(catalogue ?? []);
         setConfiguredChatModel(configured);
         setDevice(dev);
         if (typeof useFullDocsRaw === 'string') setUseFullDocs(useFullDocsRaw !== 'false');
         if (status && typeof status === 'object') setDocsStatus(status);
         if (ragBackend === 'hyperdb' || ragBackend === 'turbovec') setRagIndexBackendState(ragBackend);
+        // Catches up a remount on a batch that started before this page loaded.
+        if (queueState?.active) applyQueueSnapshot(queueState);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : 'Failed to load settings');
@@ -186,6 +226,8 @@ export function SettingsPage() {
     return () => {
       cancelled = true;
       offProgress?.();
+      offDownloadProgress?.();
+      offQueueProgress?.();
     };
   }, [hydrated, username, openSignInPrompt]);
 
@@ -196,6 +238,7 @@ export function SettingsPage() {
     setModelProgress((prev) => ({ ...prev, [modelName]: { loaded: 0, total: 0 } }));
     try {
       const result = await window.academy.chat.load(modelName);
+      if ('cancelled' in result) return;
       setConfiguredChatModel(result.modelName);
       await refreshModels();
     } catch (err) {
@@ -209,6 +252,10 @@ export function SettingsPage() {
       });
     }
   }, [refreshModels]);
+
+  const stopChatLoad = useCallback(async () => {
+    await window.academy?.chat?.cancelLoad?.();
+  }, []);
 
   const toggleUseFullDocs = useCallback(async () => {
     const next = !useFullDocs;
@@ -277,6 +324,8 @@ export function SettingsPage() {
     if (!window.academy?.models) return;
     setRemove({ pending: 'all', busy: true, error: null });
     try {
+      // The removeAll handler itself stops the queue and cancels the
+      // in-flight download before deleting anything.
       await window.academy.models.removeAll();
       await refreshModels();
       setRemove({ pending: null, busy: false, error: null });
@@ -288,6 +337,31 @@ export function SettingsPage() {
       });
     }
   }, [refreshModels]);
+
+  // Runs host-side (models.cjs's downloadModels), not as a loop in this
+  // component, so it keeps going if the user opens a lesson mid-batch; the
+  // onDownloadQueueProgress subscription above mirrors its state back in.
+  const downloadModels = useCallback(async (scope: string, names: string[]) => {
+    if (!window.academy?.models || names.length === 0) return;
+    setDownloadError(null);
+    try {
+      await window.academy.models.downloadQueue(scope, names);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Download failed');
+    }
+  }, []);
+
+  const stopDownloads = useCallback(async () => {
+    await window.academy?.models?.cancelDownloadQueue?.();
+  }, []);
+
+  // Open the chapter that owns the file in flight so the row's bar is visible.
+  useEffect(() => {
+    if (!downloadingName) return;
+    const entry = (fullCatalogue ?? []).find((e) => e.name === downloadingName);
+    const chapter = entry?.usedIn?.[0]?.chapter;
+    if (chapter) setSelectedChapter(chapter);
+  }, [downloadingName, fullCatalogue]);
 
   // Arms the inline confirm for a row without deleting anything yet; the
   // actual delete only fires from the "Remove" button in that confirm state.
@@ -305,23 +379,35 @@ export function SettingsPage() {
     const map = new Map<string, string>();
     (models ?? []).forEach((m) => map.set(m.name, m.id));
     (chatCatalogue ?? []).forEach((entry) => {
-      // Only a file actually on disk has anything to delete.
+      // Prefer the chat cache file when that exact install is complete; leave
+      // an on-disk leftover (including a 0 B truncated download) mapped so
+      // the row can still delete it.
       if (entry.cacheFile && entry.installed) map.set(entry.name, entry.cacheFile);
-      else if (entry.installed === false) map.delete(entry.name);
+    });
+    // A companion file may only exist inside sets/<hash>/; deleting the set
+    // is what actually frees it.
+    (fullCatalogue ?? []).forEach((entry) => {
+      if (!entry.companionSetKey || map.has(entry.name)) return;
+      const set = (models ?? []).find((m) => m.name === entry.companionSetKey);
+      if (set) map.set(entry.name, set.id);
     });
     return map;
-  }, [models, chatCatalogue]);
+  }, [models, chatCatalogue, fullCatalogue]);
 
   // A download in progress already occupies its final filename, so the checkmark
   // needs completeness too, and for chat models only the host can resolve it.
   const modelCompleteByName = useMemo(() => {
     const map = new Map<string, boolean>();
     (models ?? []).forEach((m) => map.set(m.name, m.complete));
+    (fullCatalogue ?? []).forEach((entry) => {
+      if (map.has(entry.name)) return;
+      if (typeof entry.installed === 'boolean') map.set(entry.name, entry.installed);
+    });
     (chatCatalogue ?? []).forEach((entry) => {
       if (typeof entry.installed === 'boolean') map.set(entry.name, entry.installed);
     });
     return map;
-  }, [models, chatCatalogue]);
+  }, [models, chatCatalogue, fullCatalogue]);
 
   if (!hydrated || isDesktop === null) {
     return (
@@ -332,8 +418,13 @@ export function SettingsPage() {
   }
 
   if (!isDesktop) {
-    // Redirect already scheduled; render nothing so "Sign in" doesn't flash before it lands.
-    return null;
+    // Redirect already scheduled. Keep the loading frame so a production build
+    // doesn't paint Electron's #070707 window as a blank black screen.
+    return (
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
+        <p className="text-sm text-canvas-muted-foreground">Loading…</p>
+      </main>
+    );
   }
 
   if (!username) {
@@ -362,11 +453,55 @@ export function SettingsPage() {
     );
   }
 
-  // The AI bot's active model has its own section above; listing it again
-  // here just makes it easy to remove by accident.
-  const downloadedModels = (models ?? []).filter((m) => m.name !== configuredChatModel);
-  const totalBytes = downloadedModels.reduce((sum, m) => sum + m.sizeBytes, 0);
-  const removingAll = remove.pending === 'all';
+  // Device-wide total: every downloaded model, not just lesson-tracked ones.
+  const downloadedBytesAll = (models ?? []).reduce((sum, m) => sum + m.sizeBytes, 0);
+  // Only the model actually backing the assistant counts as AI bot storage.
+  // A chat-family model downloaded only for a lesson (e.g. fine-tuning's
+  // small preset) counts as QVAC/Playground, even though it could be picked
+  // as the assistant too.
+  const aiBotBytes = (models ?? [])
+    .filter((m) => m.name === configuredChatModel)
+    .reduce((sum, m) => sum + m.sizeBytes, 0);
+  const qvacModelsBytes = downloadedBytesAll - aiBotBytes;
+  // Everything on disk that isn't a tracked model: the OS, other apps, user files.
+  const osBytes = device ? Math.max(0, device.storageBytes - device.storageFreeBytes - downloadedBytesAll) : 0;
+  // Storage summary shows only the OS name; the full version lives on the Device tab.
+  const osName = device ? device.osLabel.replace(/\s+[\d.]+$/, '') : '';
+
+  // Chapter -> its catalogue entries, each paired with the lessons in that
+  // chapter that need it (a model can need multiple lessons in one chapter).
+  const chapterGroups = new Map<string, { entry: AcademyModelCatalogueEntry; lessons: string[] }[]>();
+  for (const entry of fullCatalogue ?? []) {
+    if (entry.isCompanionSet) continue;
+    for (const ref of entry.usedIn ?? []) {
+      if (!ref?.chapter) continue;
+      const bucket = chapterGroups.get(ref.chapter) ?? [];
+      bucket.push({ entry, lessons: Array.isArray(ref.lessons) ? ref.lessons : [] });
+      chapterGroups.set(ref.chapter, bucket);
+    }
+  }
+  const chapterSlugs = [...chapterGroups.keys()].sort((a, b) => chapterLabel(a).localeCompare(chapterLabel(b)));
+  const notInstalledBytes = (entries: { entry: AcademyModelCatalogueEntry }[]) =>
+    entries
+      .filter(({ entry }) => modelCompleteByName.get(entry.name) !== true)
+      .reduce((sum, { entry }) => sum + (entry.sizeBytes || 0), 0);
+  const missingNames = (entries: { entry: AcademyModelCatalogueEntry }[]) =>
+    entries.filter(({ entry }) => modelCompleteByName.get(entry.name) !== true).map(({ entry }) => entry.name);
+  // Deduped by name: a model shared across chapters must download once, not
+  // once per chapter it appears in. Companion set hashes resolve in
+  // models.download() to the owning SDK constant.
+  const courseMissingNames = [
+    ...new Set(
+      (fullCatalogue ?? [])
+        .filter(
+          (e) =>
+            !e.isCompanionSet &&
+            (e.usedIn ?? []).length > 0 &&
+            modelCompleteByName.get(e.name) !== true,
+        )
+        .map((e) => e.name),
+    ),
+  ];
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
@@ -441,6 +576,63 @@ export function SettingsPage() {
               {remove.error}
             </p>
           ) : null}
+          {downloadError ? (
+            <p role="alert" className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+              {downloadError}
+            </p>
+          ) : null}
+
+          {isDesktop && fullCatalogue !== null && device ? (
+            <div className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
+              <div className="mb-2.5 flex items-baseline justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-canvas-muted-foreground">Storage</p>
+                <p className="text-xs text-canvas-muted-foreground">
+                  <b className="font-bold text-canvas-foreground">{formatGb(device.storageBytes - device.storageFreeBytes)}</b> of{' '}
+                  {formatGb(device.storageBytes)} used
+                </p>
+              </div>
+              <div className="flex h-8 gap-[2px] overflow-hidden rounded-md bg-canvas-border">
+                <div
+                  className="h-full bg-emerald-600"
+                  title={`QVAC/Playground models — ${formatGb(qvacModelsBytes)}`}
+                  style={{ width: `${Math.min(100, (qvacModelsBytes / device.storageBytes) * 100)}%` }}
+                />
+                <div
+                  className="h-full bg-violet-500"
+                  title={`AI bot models — ${formatGb(aiBotBytes)}`}
+                  style={{ width: `${Math.min(100, (aiBotBytes / device.storageBytes) * 100)}%` }}
+                />
+                <div
+                  className="h-full bg-canvas-muted-foreground/40"
+                  title={`${osName} — ${formatGb(osBytes)}`}
+                  style={{ width: `${Math.min(100, (osBytes / device.storageBytes) * 100)}%` }}
+                />
+                <div
+                  className="ml-auto flex h-full min-w-fit items-center justify-center border-[1.5px] border-dashed border-canvas-foreground/35 bg-canvas-muted-foreground/10 px-2"
+                  title={`Free — ${formatGb(device.storageFreeBytes)}`}
+                  style={{ width: `${Math.min(100, (device.storageFreeBytes / device.storageBytes) * 100)}%` }}
+                >
+                  <span className="whitespace-nowrap text-[11px] font-semibold text-canvas-foreground/80">
+                    {formatGb(device.storageFreeBytes)}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-canvas-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2 shrink-0 rounded-full bg-emerald-600" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(qvacModelsBytes)}</b> QVAC/Playground models
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2 shrink-0 rounded-full bg-violet-500" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(aiBotBytes)}</b> AI bot models
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2 shrink-0 rounded-full bg-canvas-muted-foreground/40" />
+                  <b className="font-bold text-canvas-foreground">{formatGb(osBytes)}</b> {osName}
+                </span>
+              </div>
+            </div>
+          ) : null}
 
           <section className="mb-6 rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
             <div className="flex items-start gap-3">
@@ -476,6 +668,11 @@ export function SettingsPage() {
                           <p className="mt-0.5 text-xs text-canvas-muted-foreground">
                             {entry.description || 'Local text-generation model'}
                           </p>
+                          {(entry.usedIn ?? []).length > 0 ? (
+                            <p className="mt-0.5 text-[11px] text-canvas-muted-foreground">
+                              Also used by: {joinChapters((entry.usedIn ?? []).map((ref) => chapterLabel(ref.chapter)))}
+                            </p>
+                          ) : null}
                         </div>
                         <span className="shrink-0 font-mono text-sm text-canvas-foreground">
                           {entry.sizeBytes ? formatBytes(entry.sizeBytes) : '—'}
@@ -500,16 +697,26 @@ export function SettingsPage() {
                       </div>
                       {busy ? (
                         <div className="mt-2">
-                          <div className="h-1 w-full overflow-hidden rounded-full bg-canvas-muted">
-                            <div
-                              className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
-                              style={{
-                                width:
-                                  progress && progress.total > 0
-                                    ? `${Math.min(100, Math.round((progress.loaded / progress.total) * 100))}%`
-                                    : '15%',
-                              }}
-                            />
+                          <div className="flex items-center gap-2">
+                            <div className="h-1 w-full overflow-hidden rounded-full bg-canvas-muted">
+                              <div
+                                className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                                style={{
+                                  width:
+                                    progress && progress.total > 0
+                                      ? `${Math.min(100, Math.round((progress.loaded / progress.total) * 100))}%`
+                                      : '15%',
+                                }}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void stopChatLoad()}
+                              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-400 transition-colors hover:bg-red-500/20"
+                            >
+                              <Square className="size-2.5 fill-current" />
+                              Stop
+                            </button>
                           </div>
                           <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-canvas-muted-foreground">
                             {progress && progress.total > 0
@@ -591,67 +798,159 @@ export function SettingsPage() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">
-                <HardDrive className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-canvas-foreground">QVAC models</h2>
-                    <p className="mt-1 text-sm text-canvas-muted-foreground">
-                      {models === null
-                        ? 'Scanning…'
-                        : downloadedModels.length === 0
-                          ? 'Nothing downloaded yet. Run a lesson to pull a model.'
-                          : `${downloadedModels.length} ${downloadedModels.length === 1 ? 'model' : 'models'} · ${formatBytes(totalBytes)} on disk`}
-                    </p>
-                  </div>
-                  {downloadedModels.length > 0 ? (
-                    <RemoveAllButton
-                      state={remove}
-                      onRequestRemove={() => requestRemove('all')}
-                      onConfirmRemove={onRemoveAll}
-                      onCancel={cancelRemove}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {!isDesktop ? (
-                <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
-                  Open the desktop app to see and manage downloaded models.
-                </p>
-              ) : models === null ? (
-                <p className="text-sm text-canvas-muted-foreground">Loading…</p>
-              ) : downloadedModels.length === 0 ? (
-                <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
-                  No models yet. Pick a lesson and hit run; QVAC downloads what it needs into your
-                  home directory.
-                </p>
-              ) : (
-                downloadedModels.map((m) => (
-                  <ModelRow
-                    key={m.id}
-                    model={m}
+          {!isDesktop ? (
+            <p className="rounded-md border border-canvas-border bg-canvas-muted p-4 text-sm text-canvas-muted-foreground">
+              Open the desktop app to see and manage downloaded models.
+            </p>
+          ) : fullCatalogue === null ? (
+            <p className="text-sm text-canvas-muted-foreground">Loading…</p>
+          ) : (
+            <section className="rounded-lg border border-canvas-border bg-canvas p-4 sm:p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-canvas-foreground">QVAC Models</h2>
+                <div className="flex items-center gap-2">
+                  <RemoveAllButton
                     state={remove}
-                    onRequestRemove={() => requestRemove(m.id)}
-                    onConfirmRemove={() => onRemoveOne(m.id)}
+                    onRequestRemove={() => requestRemove('all')}
+                    onConfirmRemove={onRemoveAll}
                     onCancel={cancelRemove}
                   />
-                ))
-              )}
+                  {downloadingScope ? (
+                    <button
+                      type="button"
+                      onClick={() => void stopDownloads()}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20"
+                    >
+                      <Square className="size-3 fill-current" />
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={courseMissingNames.length === 0}
+                      onClick={() => void downloadModels('course', courseMissingNames)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-40"
+                    >
+                      {courseMissingNames.length === 0 ? 'Ready' : 'Download all'}
+                    </button>
+                  )}
+                </div>
+              </div>
 
-              {downloadedModels.length > 0 ? (
-                <p className="text-[11px] text-canvas-muted-foreground/70">
-                  {downloadedModels.length} {downloadedModels.length === 1 ? 'model' : 'models'} downloaded
-                </p>
+              {downloadingName && downloadQueue ? (
+                <div className="mb-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="truncate font-mono text-xs text-canvas-foreground">{downloadingName}</p>
+                    <p className="shrink-0 font-mono text-[10px] uppercase tracking-widest text-canvas-muted-foreground">
+                      {downloadQueue.done + (downloadQueue.done < downloadQueue.total ? 1 : 0)} of {downloadQueue.total}
+                    </p>
+                  </div>
+                  <DownloadMeter progress={modelProgress[downloadingName]} />
+                </div>
               ) : null}
-            </div>
-          </section>
+
+              <div className="flex flex-col gap-2">
+                {chapterSlugs.map((chapter) => {
+                  const entries = chapterGroups.get(chapter) ?? [];
+                  const installedCount = entries.filter(({ entry }) => modelCompleteByName.get(entry.name) === true).length;
+                  const ready = installedCount === entries.length;
+                  const bytes = entries.reduce((sum, { entry }) => sum + entry.sizeBytes, 0);
+                  const tight = device != null && notInstalledBytes(entries) > device.storageFreeBytes;
+                  const expanded = selectedChapter === chapter;
+                  const chapterHasCurrent = downloadingName != null && entries.some(({ entry }) => entry.name === downloadingName);
+                  const busy = downloadingScope === chapter || chapterHasCurrent;
+                  return (
+                    <div
+                      key={chapter}
+                      className={`rounded-xl border overflow-hidden ${expanded ? 'border-emerald-500' : 'border-canvas-border'} bg-canvas-muted`}
+                    >
+                      <div className="flex items-center gap-3 p-3.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedChapter(expanded ? null : chapter)}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        >
+                          <svg
+                            className={`size-3.5 shrink-0 text-canvas-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`}
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M9 6l6 6-6 6" />
+                          </svg>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 text-[15px] font-bold text-canvas-foreground">
+                              <span className="truncate">{chapterLabel(chapter)}</span>
+                              {tight ? <span className="size-1.5 shrink-0 rounded-full bg-amber-400" title="Tight on disk" /> : null}
+                            </div>
+                            <p className="mt-0.5 truncate text-[11.5px] text-canvas-muted-foreground">
+                              {chapterHasCurrent && downloadingName
+                                ? `Downloading ${downloadingName}`
+                                : ready
+                                  ? 'Ready'
+                                  : `${installedCount} / ${entries.length} models`}{' '}
+                              · {formatBytes(bytes)}
+                            </p>
+                          </div>
+                        </button>
+                        {ready ? (
+                          <span className="flex size-[30px] shrink-0 items-center justify-center text-emerald-400" title="Ready">
+                            <svg className="size-[17px]" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="9" />
+                              <path d="M8 12l3 3 5-6" />
+                            </svg>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={downloadingScope !== null}
+                            onClick={() => void downloadModels(chapter, missingNames(entries))}
+                            title="Download models"
+                            aria-label="Download models"
+                            className="flex size-[30px] shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+                          >
+                            {busy ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <svg className="size-[15px]" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5" />
+                                <path d="M5 20h14" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      {expanded ? (
+                        <div className="border-t border-canvas-border px-4 pb-2 pt-1">
+                          {entries.map(({ entry, lessons }) => (
+                            <ModelListRow
+                              key={entry.name}
+                              entry={entry}
+                              usedLabel={joinChapters(lessons)}
+                              state={remove}
+                              modelIdByName={modelIdByName}
+                              modelCompleteByName={modelCompleteByName}
+                              downloading={downloadingName === entry.name}
+                              progress={modelProgress[entry.name]}
+                              downloadDisabled={downloadingScope !== null}
+                              onDownload={() => void downloadModels(entry.name, [entry.name])}
+                              onRequestRemove={requestRemove}
+                              onConfirmRemove={onRemoveOne}
+                              onCancel={cancelRemove}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </section>
       ) : null}
 
@@ -727,43 +1026,95 @@ export function SettingsPage() {
   );
 }
 
-function ModelRow({
-  model,
+// One row per catalogue entry, reused by Foundational models and the chapter
+// detail panel so a model looks the same wherever it's listed.
+function DownloadMeter({ progress }: { progress?: { loaded: number; total: number } }) {
+  const known = progress && progress.total > 0;
+  const pct = known ? Math.min(100, Math.round((progress.loaded / progress.total) * 100)) : null;
+  return (
+    <div className="mt-2">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-canvas-border">
+        <div
+          className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+          style={{ width: pct != null ? `${pct}%` : '15%' }}
+        />
+      </div>
+      <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-canvas-muted-foreground">
+        {known ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}` : 'Preparing model…'}
+      </p>
+    </div>
+  );
+}
+
+function ModelListRow({
+  entry,
+  usedLabel,
   state,
+  modelIdByName,
+  modelCompleteByName,
+  downloading,
+  progress,
+  downloadDisabled,
+  onDownload,
   onRequestRemove,
   onConfirmRemove,
   onCancel,
 }: {
-  model: AcademyModelEntry;
+  entry: AcademyModelCatalogueEntry;
+  usedLabel: string;
   state: RemoveState;
-  onRequestRemove: () => void;
-  onConfirmRemove: () => void;
+  modelIdByName: Map<string, string>;
+  modelCompleteByName: Map<string, boolean>;
+  downloading?: boolean;
+  progress?: { loaded: number; total: number };
+  downloadDisabled?: boolean;
+  onDownload?: () => void;
+  onRequestRemove: (id: string) => void;
+  onConfirmRemove: (id: string) => void;
   onCancel: () => void;
 }) {
+  const installed = modelCompleteByName.get(entry.name) === true;
+  const id = modelIdByName.get(entry.name);
   return (
-    <div className="rounded-md border border-canvas-border bg-canvas-muted px-3 py-2.5">
+    <div className="border-b border-canvas-border/60 py-2.5 last:border-b-0">
       <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-sm text-canvas-foreground" title={model.name}>
-            {model.name}
-          </p>
-          <p className="mt-0.5 text-xs text-canvas-muted-foreground">
-            {KIND_LABEL[model.kind]}
-            {model.fileCount > 1 ? ` · ${model.fileCount} files` : ''}
-            {model.sourceHash ? ` · ${model.sourceHash}` : ''}
-          </p>
-          <UsageHint description={model.description} usedIn={model.usedIn} />
-        </div>
-        <span className="shrink-0 font-mono text-sm text-canvas-foreground">{formatBytes(model.sizeBytes)}</span>
-        <RemoveIconButton
-          id={model.id}
-          label={model.name}
-          state={state}
-          onRequestRemove={onRequestRemove}
-          onConfirmRemove={onConfirmRemove}
-          onCancel={onCancel}
+        <span
+          className={`size-2 shrink-0 rounded-full ${
+            installed ? 'bg-emerald-400' : downloading ? 'bg-emerald-400/50' : 'border border-canvas-muted-foreground bg-transparent'
+          }`}
         />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm text-canvas-foreground">{entry.name}</p>
+          <p className="mt-0.5 truncate text-[11px] text-canvas-muted-foreground">
+            {downloading ? 'Downloading…' : usedLabel}
+          </p>
+        </div>
+        <span className="shrink-0 font-mono text-xs text-canvas-muted-foreground">{formatBytes(entry.sizeBytes)}</span>
+        {downloading ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-emerald-400" />
+        ) : installed && id ? (
+          <RemoveIconButton
+            id={id}
+            label={entry.name}
+            state={state}
+            onRequestRemove={() => onRequestRemove(id)}
+            onConfirmRemove={() => onConfirmRemove(id)}
+            onCancel={onCancel}
+          />
+        ) : !installed && onDownload ? (
+          <button
+            type="button"
+            disabled={downloadDisabled}
+            onClick={onDownload}
+            title={`Download ${entry.name}`}
+            aria-label={`Download ${entry.name}`}
+            className="flex size-7 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+          >
+            <Download className="size-3.5" />
+          </button>
+        ) : null}
       </div>
+      {downloading ? <DownloadMeter progress={progress} /> : null}
     </div>
   );
 }
@@ -864,40 +1215,8 @@ function RemoveIconButton({
   );
 }
 
-function UsageHint({
-  description,
-  usedIn,
-}: {
-  description: string;
-  usedIn: AcademyModelEntry['usedIn'];
-}) {
-  if (!usedIn || usedIn.length === 0) {
-    return (
-      <div className="mt-1 space-y-0.5">
-        {description ? (
-          <p className="text-[11px] text-canvas-muted-foreground">{description}</p>
-        ) : null}
-        <p className="text-[11px] text-canvas-muted-foreground/70">
-          Not used in any lesson. Safe to remove
-        </p>
-      </div>
-    );
-  }
-  const labels = usedIn.map((ref) => chapterLabel(ref.chapter));
-  return (
-    <div className="mt-1 space-y-0.5">
-      {description ? (
-        <p className="text-[11px] text-canvas-muted-foreground">{description}</p>
-      ) : null}
-      <p className="text-[11px] text-canvas-muted-foreground">
-        Used in: {joinChapters(labels)}
-      </p>
-    </div>
-  );
-}
-
-function joinChapters(items: string[]): string {
-  if (items.length === 0) return '';
+function joinChapters(items: string[] | undefined): string {
+  if (!items || items.length === 0) return '';
   if (items.length === 1) return items[0];
   if (items.length === 2) return `${items[0]} and ${items[1]}`;
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
@@ -926,6 +1245,7 @@ const CHAPTER_LABELS: Record<string, string> = {
   'abot-world': 'Abot world',
 };
 function chapterLabel(slug: string): string {
+  if (!slug) return '';
   return CHAPTER_LABELS[slug] ?? slug;
 }
 
@@ -984,7 +1304,7 @@ function RemoveAllButton({
 }
 
 function DeviceTable({ info }: { info: AcademyDeviceInfo }) {
-  const rows: { icon: React.ReactNode; label: string; value: string; hint?: string }[] = [
+  const rows: { icon: ReactNode; label: string; value: string; hint?: string }[] = [
     { icon: <Box className="size-4" />, label: 'Operating system', value: info.osLabel, hint: info.arch },
     {
       icon: <Cpu className="size-4" />,

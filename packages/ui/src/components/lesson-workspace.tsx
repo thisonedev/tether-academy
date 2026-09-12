@@ -19,7 +19,7 @@ import {
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CurriculumStrip } from './curriculum-strip.js';
 import { HelpPanel } from './help-panel.js';
 import { LessonCompleteModal } from './lesson-complete-modal.js';
@@ -268,6 +268,14 @@ function HeavyRunBadge({ requirements }: { requirements: string[] }) {
 }
 
 export function LessonWorkspace({ data, children }: { data: LessonData; children: ReactNode }) {
+  // Next's own scroll-to-top-on-navigate runs after this page's content has
+  // already painted at the previous page's scroll offset, which reads as a
+  // jump once anything (e.g. a sticky bar) stays put through it. Resetting
+  // here, before paint, lands on the new lesson's top with nothing to see.
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [data.currentLesson?.slug]);
+
   const [userCode, setUserCode] = useState(data.startingCode);
   const [questionsCorrect, setQuestionsCorrect] = useState(false);
   const [platform, setPlatform] = useState<LessonData['platforms'][number]>('node');

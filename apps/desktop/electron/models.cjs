@@ -5,8 +5,10 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { EventEmitter } = require('node:events');
 const { CHAT_PRESETS } = require('../shared/chat-presets.cjs');
-const { cacheFileName } = require('../shared/model-sideload.cjs');
+const { consumersForModelId, allPlaygroundModelIds } = require('./model-consumers.cjs');
+const { cacheFileName, readRegistry } = require('../shared/model-sideload.cjs');
 
 const SINGLE_HASH_RE = /^([0-9a-f]{16})_(.+)$/;
 
@@ -45,6 +47,10 @@ const FILENAME_FAMILY_HINTS = [
   { match: /-?(wan|t2v|i2v|svd)/i, family: 'video' },
   { match: /-?(vla|pi0|smolvla|libero)/i, family: 'other' },
   { match: /-?(ocr|vision|sdvlm|smolvlm|clip)/i, family: 'image' },
+  // Any other Qwen3 instruct GGUF: someone may point the AI bot at it even
+  // though it's not one of the small CHAT_MODEL_HINTS presets. VL is
+  // multimodal, not a plain chat model; embedding is matched above already.
+  { match: /^Qwen3(?!VL)/i, family: 'chat' },
 ];
 
 function familyForName(name) {
@@ -173,7 +179,8 @@ async function listModels() {
         if (!group.isDirectory()) continue;
         const groupAbs = path.join(abs, group.name);
         const { total, count } = await dirSize(groupAbs);
-        if (count === 0) continue;
+        // Empty companion dirs still have to show up: otherwise the catalogue
+        // row is 0 B with no id, and Settings can't delete the leftover.
         out.push({
           id: path.join(entry.name, group.name),
           name: group.name,
@@ -184,7 +191,7 @@ async function listModels() {
           usedIn: usage[group.name] ?? [],
           description: descriptions[group.name] ?? '',
           // No reliable per-shard ground truth here (see pruneIncompleteDownloads).
-          complete: true,
+          complete: count > 0,
         });
       }
     }
@@ -220,25 +227,89 @@ async function removeModel(id) {
   return { removed, freedBytes };
 }
 
+// Lazy so a missing @qvac/sdk/models can't take down list/remove on startup.
+let _sdkRegistryModels = null;
+function sdkRegistryModels() {
+  if (_sdkRegistryModels === null) {
+    try {
+      const { models } = require('@qvac/sdk/models');
+      _sdkRegistryModels = Array.isArray(models) ? models : [];
+    } catch (err) {
+      console.warn('[models] could not load @qvac/sdk registry', err && err.message);
+      _sdkRegistryModels = [];
+    }
+  }
+  return _sdkRegistryModels;
+}
+
+// Real HF download URL for a registry entry, for loadModel's fallbackSrc when
+// the P2P registry is unreachable. Only 'hf'-sourced, single-file entries
+// have one; the SDK rejects fallbackSrc for sharded/companion-set models, and
+// 's3'-sourced entries have no public mirror to construct one from.
+// Takes the resolved registry constant itself (e.g. sdk.QWEN3_8B_INST_Q4_K_M),
+// not a modelId: several constants can share one modelId, and only the exact
+// entry a caller is actually loading tells us which source it uses.
+function hfFallbackSrc(entry) {
+  if (!entry || entry.registrySource !== 'hf' || entry.shardMetadata || entry.companionSet) return undefined;
+  return `https://huggingface.co/${entry.registryPath.replace('/blob/', '/resolve/')}`;
+}
+
 // Memoized filename -> set of valid download sizes, from @qvac/sdk's registry
 // (multiple entries when a file has more than one legitimate source).
 let _knownSizesByName = null;
 function knownGoodSizes(filename) {
   if (_knownSizesByName === null) {
     _knownSizesByName = new Map();
-    try {
-      const { models: registryModels } = require('@qvac/sdk/models');
-      for (const entry of registryModels) {
-        if (!entry.modelId || !entry.expectedSize) continue;
-        const sizes = _knownSizesByName.get(entry.modelId) ?? new Set();
-        sizes.add(entry.expectedSize);
-        _knownSizesByName.set(entry.modelId, sizes);
-      }
-    } catch (err) {
-      console.warn('[models] knownGoodSizes: could not load @qvac/sdk registry', err && err.message);
+    for (const entry of sdkRegistryModels()) {
+      if (!entry.modelId || !entry.expectedSize) continue;
+      const sizes = _knownSizesByName.get(entry.modelId) ?? new Set();
+      sizes.add(entry.expectedSize);
+      _knownSizesByName.set(entry.modelId, sizes);
     }
   }
   return _knownSizesByName.get(filename) ?? null;
+}
+
+// Catalogue fallback so an undownloaded row shows the registry size instead of 0 B.
+let _expectedSizeByName = null;
+function expectedSizeForName(name) {
+  if (_expectedSizeByName === null) {
+    _expectedSizeByName = new Map();
+    for (const entry of sdkRegistryModels()) {
+      if (entry.modelId && entry.expectedSize) {
+        const prev = _expectedSizeByName.get(entry.modelId) ?? 0;
+        _expectedSizeByName.set(entry.modelId, Math.max(prev, entry.expectedSize));
+      }
+      const set = entry.companionSet;
+      if (set && set.setKey) {
+        const sum = (set.files ?? []).reduce((s, f) => s + (f.expectedSize || 0), 0);
+        if (sum > 0) {
+          const prev = _expectedSizeByName.get(set.setKey) ?? 0;
+          _expectedSizeByName.set(set.setKey, Math.max(prev, sum));
+        }
+      }
+    }
+  }
+  return _expectedSizeByName.get(name) ?? 0;
+}
+
+// setKey <-> member filenames. BCI_WINDOWED is both sets/abc845…/ and
+// ggml-bci-windowed.bin in the catalogue; downloading one must count as both.
+let _companionIndex = null;
+function companionIndex() {
+  if (_companionIndex === null) {
+    const setKeyToMembers = new Map();
+    const memberToSetKey = new Map();
+    for (const entry of sdkRegistryModels()) {
+      const set = entry.companionSet;
+      if (!set || !set.setKey) continue;
+      const members = (set.files ?? []).map((f) => f.targetName).filter(Boolean);
+      setKeyToMembers.set(set.setKey, members);
+      for (const member of members) memberToSetKey.set(member, set.setKey);
+    }
+    _companionIndex = { setKeyToMembers, memberToSetKey };
+  }
+  return _companionIndex;
 }
 
 // A download in flight is short and growing, which reads exactly like the
@@ -272,6 +343,30 @@ async function pruneIncompleteDownloads({ now = Date.now() } = {}) {
   return { removed, freedBytes };
 }
 
+// P2P assets never touch modelsRoot() until complete; partial blocks sit in
+// a live, fd-locked Corestore only sdk.close() can safely release (it
+// respawns lazily). Skipped while chat has a model loaded, same worker.
+async function clearRegistryCorestore() {
+  const chat = require('./chat.cjs');
+  if (chat.isReady()) {
+    console.warn('[models] clearRegistryCorestore: skipped, AI bot session active');
+    return;
+  }
+  const registryDir = path.join(os.homedir(), '.qvac', 'registry-corestore');
+  try {
+    const sdk = require('@qvac/sdk');
+    if (typeof sdk.close === 'function') await sdk.close();
+  } catch (err) {
+    console.warn('[models] clearRegistryCorestore: sdk.close failed', err && err.message);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  try {
+    await fsp.rm(registryDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[models] clearRegistryCorestore: rm failed', err && err.message);
+  }
+}
+
 async function removeAllModels(excludeNames) {
   const items = await listModels();
   let totalFreed = 0;
@@ -287,6 +382,179 @@ async function removeAllModels(excludeNames) {
     }
   }
   return { removed: totalRemoved, freedBytes: totalFreed };
+}
+
+// modelId -> registry constant, for downloadModel. A few modelIds name two
+// constants with different sources; skip CHAT_PRESETS's, since the AI bot
+// section downloads through chat.load() instead.
+const CHAT_PRESET_CONSTANTS = new Set(Object.values(CHAT_PRESETS));
+let _modelIdToConstant = null;
+function preferNonChatConstant(map, key, constant) {
+  const existing = map.get(key);
+  if (existing === undefined || (CHAT_PRESET_CONSTANTS.has(existing) && !CHAT_PRESET_CONSTANTS.has(constant))) {
+    map.set(key, constant);
+  }
+}
+
+function modelIdToConstant() {
+  if (_modelIdToConstant === null) {
+    _modelIdToConstant = new Map();
+    for (const [constant, entry] of readRegistry()) {
+      preferNonChatConstant(_modelIdToConstant, entry.modelId, constant);
+    }
+    // Companion sets live on disk as sets/<setKey>/; Download all sends that
+    // hash, which is not a modelId. Map it to the owning registry constant so
+    // downloadAsset still runs (it pulls the whole set).
+    for (const entry of sdkRegistryModels()) {
+      const setKey = entry.companionSet && entry.companionSet.setKey;
+      if (!setKey || !entry.name) continue;
+      preferNonChatConstant(_modelIdToConstant, setKey, entry.name);
+    }
+  }
+  return _modelIdToConstant;
+}
+
+const downloadEvents = new EventEmitter();
+
+let currentDownload = null;
+let downloadCancelled = false;
+// Last progress tick for whichever file downloadModel() is currently on;
+// queueSnapshot() only surfaces it while the name still matches the queue's
+// current item, so a finished item's numbers can't leak into the next one.
+let lastProgress = null;
+
+function isCancelError(err) {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  // WorkerShutdownError fires when the whole app is quitting mid-download;
+  // retrying it is pointless (the process is on its way out) and just turns
+  // one clean shutdown into a scary "unhandled" log.
+  return err.name === 'InferenceCancelledError' || err.name === 'WorkerShutdownError' || /cancel/i.test(msg);
+}
+
+// Caches a model without loading it, so a chapter can be pulled ahead of
+// running any of its lessons. Distinct from model-fetch.cjs's ensureModels,
+// an HF-direct-only pre-fetch shortcut used before loadModel.
+async function downloadModel(name, sdkOverride) {
+  const constant = modelIdToConstant().get(name);
+  if (!constant) throw new Error(`unknown model "${name}"`);
+  const sdk = sdkOverride ?? require('@qvac/sdk');
+  const model = sdk[constant];
+  if (!model) throw new Error(`@qvac/sdk does not export ${constant} in this build`);
+
+  downloadCancelled = false;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    // Resetting this per-attempt would drop a Stop click that lands in the
+    // gap between attempt 1's cleanup and attempt 2's setup.
+    if (downloadCancelled) return { downloaded: false, cancelled: true };
+    const op = sdk.downloadAsset({
+      assetSrc: model,
+      onProgress: (update) => {
+        // A renderer that (re)loads mid-download (a full page navigation,
+        // not an SPA transition, in this app) has no other way to recover
+        // how far along the current file already is.
+        lastProgress = { name, loaded: update.downloaded, total: update.total };
+        downloadEvents.emit('progress', { name, loaded: update.downloaded, total: update.total });
+      },
+    });
+    currentDownload = { requestId: op && op.requestId, sdk };
+    try {
+      await op;
+      if (downloadCancelled) return { downloaded: false, cancelled: true };
+      return { downloaded: true };
+    } catch (err) {
+      if (downloadCancelled || isCancelError(err)) return { downloaded: false, cancelled: true };
+      // The P2P registry path can fail its first attempt on a cold corestore
+      // (see clearRegistryCorestore); one retry absorbs that transient case.
+      if (attempt === 2) throw err;
+      console.warn('[models] downloadModel: retrying after failure', name, err && err.message);
+    } finally {
+      currentDownload = null;
+    }
+  }
+}
+
+// Aborts the in-flight downloadAsset. Safe when nothing is running.
+// Plain cancel is a pause: the SDK keeps the partial in its own cache to
+// resume later. Pass clearCache for a real delete (e.g. before removeAll).
+async function cancelDownload(clearCache) {
+  downloadCancelled = true;
+  const cur = currentDownload;
+  if (!cur || !cur.requestId || typeof cur.sdk?.cancel !== 'function') {
+    return { cancelled: false };
+  }
+  try {
+    await cur.sdk.cancel({ requestId: cur.requestId, ...(clearCache ? { clearCache: true } : {}) });
+  } catch (err) {
+    console.warn('[models] cancelDownload: sdk.cancel failed', err && err.message);
+  }
+  return { cancelled: true };
+}
+
+function onDownloadProgress(callback) {
+  downloadEvents.on('progress', callback);
+  return () => downloadEvents.off('progress', callback);
+}
+
+// One batch runs at a time, tracked here (not in the renderer) so it keeps
+// going, and keeps its own state, across a Settings page unmount/remount.
+let queueState = null;
+
+function queueSnapshot() {
+  if (!queueState) return { active: false, scope: null, name: null, done: 0, total: 0, error: null, progress: null };
+  const { scope, name, done, total, error } = queueState;
+  const progress = lastProgress && lastProgress.name === name ? { loaded: lastProgress.loaded, total: lastProgress.total } : null;
+  return { active: true, scope, name, done, total, error, progress };
+}
+
+// Sequential, not parallel: keeps one progress bar meaningful per model and
+// avoids competing for the same bandwidth. downloadAsset no-ops on a model
+// that's already cached, so callers can pass a scope's full list as-is.
+async function downloadModels(scope, names) {
+  if (queueState) return { started: false };
+  queueState = { scope, name: null, done: 0, total: names.length, cancelled: false, error: null };
+  downloadEvents.emit('queue', queueSnapshot());
+  for (let i = 0; i < names.length; i++) {
+    if (queueState.cancelled) break;
+    const name = names[i];
+    if (!name) continue;
+    queueState.name = name;
+    downloadEvents.emit('queue', queueSnapshot());
+    let result;
+    try {
+      result = await downloadModel(name);
+    } catch (err) {
+      queueState.error = err instanceof Error ? err.message : String(err);
+      break;
+    }
+    if (queueState.cancelled || result?.cancelled) break;
+    queueState.done = i + 1;
+  }
+  queueState.name = null;
+  const final = { ...queueSnapshot(), active: false };
+  queueState = null;
+  downloadEvents.emit('queue', final);
+  return { started: true };
+}
+
+// Marks the queue cancelled without touching the current downloadAsset call,
+// for removeAll (which needs its own clearCache: true cancelDownload).
+function stopDownloadQueue() {
+  if (queueState) queueState.cancelled = true;
+}
+
+async function cancelDownloadQueue() {
+  stopDownloadQueue();
+  return cancelDownload();
+}
+
+function downloadQueueState() {
+  return queueSnapshot();
+}
+
+function onDownloadQueueProgress(callback) {
+  downloadEvents.on('queue', callback);
+  return () => downloadEvents.off('queue', callback);
 }
 
 // installedSizes overrides the static hint once the real size is known,
@@ -308,38 +576,55 @@ function chatCacheFile(displayName) {
   }
 }
 
-function catalogueEntryFromName(name, installedSizes, installedFiles) {
+function catalogueEntryFromName(name, installedSizes, installedFiles, installedByName) {
   const usage = loadUsageMap();
   const descriptions = loadDescriptionMap();
   const hints = hintsForName(name);
   const cacheFile = chatCacheFile(name);
+  const consumers = consumersForModelId(name);
+  const { setKeyToMembers, memberToSetKey } = companionIndex();
+  const companionSetKey = memberToSetKey.get(name) ?? null;
+  const installedViaSet = Boolean(companionSetKey && installedByName?.get(companionSetKey));
   return {
     name,
     id: name,
     cacheFile,
-    // Keyed on the file the loader opens, not the name two entries share.
-    installed: cacheFile ? Boolean(installedFiles?.get(cacheFile)) : false,
-    sizeBytes: installedSizes?.get(name) ?? hints.sizeBytes,
+    // Chat: the file the loader opens, not the name two entries share.
+    // Everything else: a complete cache entry under this display name, or a
+    // companion set that already contains this file.
+    installed: cacheFile
+      ? Boolean(installedFiles?.get(cacheFile))
+      : Boolean(installedByName?.get(name) || installedViaSet),
+    sizeBytes: installedSizes?.get(name) ?? (hints.sizeBytes || expectedSizeForName(name)),
     description: descriptions[name] ?? '',
     usedIn: usage[name] ?? [],
     family: familyForName(name),
     minRamBytes: hints.minRamBytes,
     gpu: hints.gpu,
+    aiBot: consumers.aiBot,
+    playground: consumers.playground,
+    isCompanionSet: setKeyToMembers.has(name),
+    companionSetKey,
   };
 }
 
 async function catalogue() {
   const usage = loadUsageMap();
   const installed = await listModels();
-  const installedSizes = new Map(installed.map((item) => [item.name, item.sizeBytes]));
   // id is the on-disk filename, which is what tells the two same-named entries apart.
-  const installedFiles = new Map(installed.filter((i) => i.complete).map((i) => [i.id, i.sizeBytes]));
+  const complete = installed.filter((i) => i.complete);
+  // A partial download's current byte count isn't the model's size, so only
+  // complete entries can override the expected total below.
+  const installedSizes = new Map(complete.map((item) => [item.name, item.sizeBytes]));
+  const installedFiles = new Map(complete.map((i) => [i.id, i.sizeBytes]));
+  const installedByName = new Map(complete.map((i) => [i.name, i.sizeBytes]));
   const names = new Set();
   for (const name of Object.keys(usage)) names.add(name);
   for (const name of Object.keys(CHAT_MODEL_HINTS)) names.add(name);
+  for (const name of allPlaygroundModelIds()) names.add(name);
   for (const item of installed) names.add(item.name);
   return Array.from(names)
-    .map((name) => catalogueEntryFromName(name, installedSizes, installedFiles))
+    .map((name) => catalogueEntryFromName(name, installedSizes, installedFiles, installedByName))
     .sort((a, b) => {
       // Chat models first, then everything else, alphabetical within each group.
       if (a.family !== b.family) return a.family === 'chat' ? -1 : 1;
@@ -455,6 +740,7 @@ module.exports = {
   listModels,
   removeModel,
   removeAllModels,
+  clearRegistryCorestore,
   pruneIncompleteDownloads,
   ACTIVE_WRITE_MS,
   knownGoodSizes,
@@ -462,4 +748,13 @@ module.exports = {
   catalogue,
   forLesson,
   recommend,
+  downloadModel,
+  cancelDownload,
+  onDownloadProgress,
+  downloadModels,
+  stopDownloadQueue,
+  cancelDownloadQueue,
+  downloadQueueState,
+  onDownloadQueueProgress,
+  hfFallbackSrc,
 };
