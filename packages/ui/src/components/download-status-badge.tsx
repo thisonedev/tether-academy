@@ -1,6 +1,6 @@
 'use client';
 
-import type { AcademyAPI, AcademyModelDownloadQueueState } from '@academy/validation';
+import type { AcademyAPI, AcademyModelDownloadQueueState, AcademyModelStatus } from '@academy/validation';
 import { Download, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { formatBytes } from './format-bytes.js';
@@ -12,17 +12,24 @@ declare global {
 }
 
 /**
- * Header icon for a Settings > Models download in progress, with a dropdown
- * for the detail. Lives inside the header rather than as its own bar: a
- * small icon showing/hiding in a fixed-height header doesn't reflow the
- * page, unlike a bar that changes the document's height when it appears.
+ * Header icon for a download in progress, either a Settings > Models batch
+ * or an AI bot model load, so it's visible while browsing away from Settings.
+ * A small icon avoids reflowing the header, unlike a bar that changes its height.
  */
 export function DownloadStatusBadge() {
   const [queue, setQueue] = useState<AcademyModelDownloadQueueState | null>(null);
   const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [aiStatus, setAiStatus] = useState<AcademyModelStatus | null>(null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    return window.academy?.onModelStatus?.((status) => {
+      if (status.kind !== 'ai') return;
+      setAiStatus(status.phase === 'ready' ? null : status);
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.academy?.models) return;
@@ -86,11 +93,33 @@ export function DownloadStatusBadge() {
     };
   }, [open]);
 
-  if (!queue?.active) return null;
+  // Same badge for either source; an active queue takes priority since it can
+  // hold several models where an AI bot load is always exactly one.
+  const activeQueue = queue?.active ? queue : null;
+  const activeAi = !activeQueue ? aiStatus : null;
+  if (!activeQueue && !activeAi) return null;
 
-  const pct =
-    progress && progress.total > 0 ? Math.min(100, Math.round((progress.loaded / progress.total) * 100)) : null;
-  const remaining = queue.total - queue.done;
+  const name = activeQueue?.name ?? activeAi?.name ?? '';
+  const remaining = activeQueue ? activeQueue.total - activeQueue.done : 0;
+  const pct = activeQueue
+    ? progress && progress.total > 0
+      ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+      : null
+    : activeAi?.total
+      ? Math.min(100, Math.round(((activeAi.downloaded ?? 0) / activeAi.total) * 100))
+      : null;
+  const byteLabel = activeQueue
+    ? progress && progress.total > 0
+      ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}`
+      : 'Preparing…'
+    : activeAi?.total
+      ? `${formatBytes(activeAi.downloaded ?? 0)} / ${formatBytes(activeAi.total)}`
+      : activeAi?.phase === 'loading'
+        ? 'Loading…'
+        : 'Preparing…';
+  const onCancel = activeQueue
+    ? () => void window.academy?.models?.cancelDownloadQueue?.()
+    : () => void window.academy?.chat?.cancelLoad?.();
 
   return (
     <div ref={containerRef} className="relative">
@@ -100,8 +129,8 @@ export function DownloadStatusBadge() {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Downloading ${queue.name}`}
-        title={`Downloading ${queue.name}`}
+        aria-label={`Downloading ${name}`}
+        title={`Downloading ${name}`}
         className="relative inline-flex size-8 items-center justify-center rounded-full border border-canvas-border bg-canvas-muted text-emerald-400 transition-colors hover:border-emerald-500/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
       >
         <span className="pointer-events-none absolute inset-[-3px] animate-spin rounded-full border-2 border-emerald-500/30 border-t-emerald-400" />
@@ -121,10 +150,10 @@ export function DownloadStatusBadge() {
         >
           <div className="px-4 py-3">
             <div className="flex items-center justify-between gap-2">
-              <p className="truncate font-mono text-xs text-canvas-foreground">{queue.name}</p>
+              <p className="truncate font-mono text-xs text-canvas-foreground">{name}</p>
               <button
                 type="button"
-                onClick={() => void window.academy?.models?.cancelDownloadQueue?.()}
+                onClick={onCancel}
                 title="Stop"
                 className="flex size-5 shrink-0 items-center justify-center rounded text-canvas-muted-foreground transition-colors hover:bg-red-500/15 hover:text-red-400"
               >
@@ -138,14 +167,10 @@ export function DownloadStatusBadge() {
               />
             </div>
             <p className="mt-1.5 flex items-center justify-between font-mono text-[11px] text-canvas-muted-foreground">
-              <span>
-                {progress && progress.total > 0
-                  ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}`
-                  : 'Preparing…'}
-              </span>
-              {queue.total > 1 ? (
+              <span>{byteLabel}</span>
+              {activeQueue && activeQueue.total > 1 ? (
                 <span>
-                  {queue.done + 1} of {queue.total}
+                  {activeQueue.done + 1} of {activeQueue.total}
                 </span>
               ) : null}
             </p>
