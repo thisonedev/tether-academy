@@ -70,6 +70,38 @@ let current = {
   preset: null,
 };
 
+// Tracks the in-flight sdk.loadModel op so cancelLoad() (the AI-bot Stop
+// button) can find and cancel it, same pattern as models.cjs's downloads.
+let currentLoad = null;
+let loadCancelled = false;
+
+function isLoadCancelError(err) {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  // WorkerShutdownError fires when the whole app is quitting mid-load;
+  // retrying it is pointless and just turns a clean shutdown into a scary log.
+  return err.name === 'InferenceCancelledError' || err.name === 'WorkerShutdownError' || /cancel/i.test(msg);
+}
+
+async function cancelLoad() {
+  loadCancelled = true;
+  const cur = currentLoad;
+  if (!cur) return { cancelled: false };
+  // Aborts the plain-HTTPS pre-fetch shortcut (shared/model-fetch.cjs), which
+  // has no requestId of its own to cancel.
+  cur.controller?.abort();
+  if (!cur.requestId) return { cancelled: Boolean(cur.controller) };
+  try {
+    const sdk = require('@qvac/sdk');
+    if (typeof sdk.cancel === 'function') {
+      await sdk.cancel({ requestId: cur.requestId });
+    }
+  } catch (err) {
+    console.warn('[chat] cancelLoad: sdk.cancel failed', err && err.message);
+  }
+  return { cancelled: true };
+}
+
 let idleTimer = null;
 
 function clearIdleTimer() {
@@ -113,7 +145,8 @@ async function load(modelHint) {
   if (!modelHint) {
     throw new Error('modelHint is required');
   }
-  await ensureLoaded(modelHint);
+  const result = await ensureLoaded(modelHint);
+  if (result && result.cancelled) return result;
   touchIdleTimer();
   return { modelName: current.filename };
 }
@@ -237,9 +270,16 @@ async function ensureLoaded(filename) {
   ]);
   if (!memoryCheck.ok) throw new Error(memoryCheck.message);
   emitLoadProgress({ modelName: filename, loaded: 0, total: 0 });
+  loadCancelled = false;
+  // The plain-HTTPS shortcut below has no requestId to cancel by, so give
+  // cancelLoad() an AbortController it can reach for that phase; the
+  // sdk.loadModel phase after it is cancelled by requestId instead.
+  const abortController = new AbortController();
+  currentLoad = { controller: abortController, requestId: null };
   // See shared/model-fetch.cjs: takes the registry's named source when the
   // model is missing.
   const fetchResult = await ensureModels([CHAT_PRESETS[filename]], {
+    signal: abortController.signal,
     onEvent: (e) => {
       if (e.phase === 'progress') {
         emitLoadProgress({ modelName: filename, loaded: e.downloaded, total: e.total });
@@ -247,6 +287,10 @@ async function ensureLoaded(filename) {
       }
     },
   }).catch(() => null);
+  if (loadCancelled) {
+    currentLoad = null;
+    return { cancelled: true };
+  }
   // loadModel()'s onProgress fires for an on-disk file too, reading it into
   // memory. The SDK's callback can't tell that from a download, so labeling
   // it "downloading" walks the status backward right after "loading".
@@ -256,19 +300,36 @@ async function ensureLoaded(filename) {
   // Every prompt in this file is budgeted against this number, so the two read
   // it from the same constant instead of agreeing by hand.
   const ctxSize = MODEL_CTX_SIZE;
-  try {
-    modelId = await sdk.loadModel({
+  const { hfFallbackSrc } = require('./models.cjs');
+  const fallbackSrc = hfFallbackSrc(modelSrc);
+  const attemptLoad = () => {
+    const op = sdk.loadModel({
       modelSrc,
       modelConfig: { ctx_size: ctxSize },
+      ...(fallbackSrc ? { fallbackSrc } : {}),
       onProgress: (p) => {
-      // The SDK's modelProgress event uses `downloaded`, not `loaded`.
-      if (p && typeof p.downloaded === 'number' && typeof p.total === 'number') {
-        emitLoadProgress({ modelName: filename, loaded: p.downloaded, total: p.total });
-        notify({ name: displayName, kind: 'ai', phase: alreadyOnDisk ? 'loading' : 'downloading', downloaded: p.downloaded, total: p.total });
-      }
-    },
+        // The SDK's modelProgress event uses `downloaded`, not `loaded`.
+        if (p && typeof p.downloaded === 'number' && typeof p.total === 'number') {
+          emitLoadProgress({ modelName: filename, loaded: p.downloaded, total: p.total });
+          notify({ name: displayName, kind: 'ai', phase: alreadyOnDisk ? 'loading' : 'downloading', downloaded: p.downloaded, total: p.total });
+        }
+      },
     });
+    currentLoad = { controller: abortController, requestId: op && op.requestId };
+    return op;
+  };
+  try {
+    try {
+      modelId = await attemptLoad();
+    } catch (err) {
+      // A Stop click or an "already registered" race isn't transient;
+      // retrying would just repeat the same outcome.
+      if (loadCancelled || isLoadCancelError(err) || parseAlreadyRegisteredModelId(err)) throw err;
+      console.warn('[chat] ensureLoaded: retrying after failure', filename, err && err.message);
+      modelId = await attemptLoad();
+    }
   } catch (err) {
+    if (loadCancelled || isLoadCancelError(err)) return { cancelled: true };
     // The SDK refuses to register a file twice; recover the existing modelId from the error text and adopt it.
     const existingId = parseAlreadyRegisteredModelId(err);
     // Adopting or unloading an id another capability owns would corrupt
@@ -309,6 +370,8 @@ async function ensureLoaded(filename) {
       throw new Error(`${filename} did not finish downloading. Pick it again in Settings to retry.`);
     }
     throw err;
+  } finally {
+    currentLoad = null;
   }
   current = { filename, modelId, preset: modelSrc.name };
   claim(modelId, 'chat');
@@ -1036,6 +1099,7 @@ module.exports = {
   isReady,
   currentModel,
   load,
+  cancelLoad,
   preload,
   send,
   verify,

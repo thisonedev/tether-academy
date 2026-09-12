@@ -47,6 +47,10 @@ const FILENAME_FAMILY_HINTS = [
   { match: /-?(wan|t2v|i2v|svd)/i, family: 'video' },
   { match: /-?(vla|pi0|smolvla|libero)/i, family: 'other' },
   { match: /-?(ocr|vision|sdvlm|smolvlm|clip)/i, family: 'image' },
+  // Any other Qwen3 instruct GGUF: someone may point the AI bot at it even
+  // though it's not one of the small CHAT_MODEL_HINTS presets. VL is
+  // multimodal, not a plain chat model; embedding is matched above already.
+  { match: /^Qwen3(?!VL)/i, family: 'chat' },
 ];
 
 function familyForName(name) {
@@ -238,6 +242,18 @@ function sdkRegistryModels() {
   return _sdkRegistryModels;
 }
 
+// Real HF download URL for a registry entry, for loadModel's fallbackSrc when
+// the P2P registry is unreachable. Only 'hf'-sourced, single-file entries
+// have one; the SDK rejects fallbackSrc for sharded/companion-set models, and
+// 's3'-sourced entries have no public mirror to construct one from.
+// Takes the resolved registry constant itself (e.g. sdk.QWEN3_8B_INST_Q4_K_M),
+// not a modelId: several constants can share one modelId, and only the exact
+// entry a caller is actually loading tells us which source it uses.
+function hfFallbackSrc(entry) {
+  if (!entry || entry.registrySource !== 'hf' || entry.shardMetadata || entry.companionSet) return undefined;
+  return `https://huggingface.co/${entry.registryPath.replace('/blob/', '/resolve/')}`;
+}
+
 // Memoized filename -> set of valid download sizes, from @qvac/sdk's registry
 // (multiple entries when a file has more than one legitimate source).
 let _knownSizesByName = null;
@@ -402,11 +418,18 @@ const downloadEvents = new EventEmitter();
 
 let currentDownload = null;
 let downloadCancelled = false;
+// Last progress tick for whichever file downloadModel() is currently on;
+// queueSnapshot() only surfaces it while the name still matches the queue's
+// current item, so a finished item's numbers can't leak into the next one.
+let lastProgress = null;
 
 function isCancelError(err) {
   if (!err) return false;
   const msg = String(err.message || err);
-  return err.name === 'InferenceCancelledError' || /cancel/i.test(msg);
+  // WorkerShutdownError fires when the whole app is quitting mid-download;
+  // retrying it is pointless (the process is on its way out) and just turns
+  // one clean shutdown into a scary "unhandled" log.
+  return err.name === 'InferenceCancelledError' || err.name === 'WorkerShutdownError' || /cancel/i.test(msg);
 }
 
 // Caches a model without loading it, so a chapter can be pulled ahead of
@@ -419,11 +442,18 @@ async function downloadModel(name, sdkOverride) {
   const model = sdk[constant];
   if (!model) throw new Error(`@qvac/sdk does not export ${constant} in this build`);
 
+  downloadCancelled = false;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    downloadCancelled = false;
+    // Resetting this per-attempt would drop a Stop click that lands in the
+    // gap between attempt 1's cleanup and attempt 2's setup.
+    if (downloadCancelled) return { downloaded: false, cancelled: true };
     const op = sdk.downloadAsset({
       assetSrc: model,
       onProgress: (update) => {
+        // A renderer that (re)loads mid-download (a full page navigation,
+        // not an SPA transition, in this app) has no other way to recover
+        // how far along the current file already is.
+        lastProgress = { name, loaded: update.downloaded, total: update.total };
         downloadEvents.emit('progress', { name, loaded: update.downloaded, total: update.total });
       },
     });
@@ -444,9 +474,7 @@ async function downloadModel(name, sdkOverride) {
   }
 }
 
-// Aborts the in-flight downloadAsset. Safe when nothing is running. The
-// renderer owns the rest of a Download-all queue and stops calling download()
-// after this returns.
+// Aborts the in-flight downloadAsset. Safe when nothing is running.
 // Plain cancel is a pause: the SDK keeps the partial in its own cache to
 // resume later. Pass clearCache for a real delete (e.g. before removeAll).
 async function cancelDownload(clearCache) {
@@ -466,6 +494,67 @@ async function cancelDownload(clearCache) {
 function onDownloadProgress(callback) {
   downloadEvents.on('progress', callback);
   return () => downloadEvents.off('progress', callback);
+}
+
+// One batch runs at a time, tracked here (not in the renderer) so it keeps
+// going, and keeps its own state, across a Settings page unmount/remount.
+let queueState = null;
+
+function queueSnapshot() {
+  if (!queueState) return { active: false, scope: null, name: null, done: 0, total: 0, error: null, progress: null };
+  const { scope, name, done, total, error } = queueState;
+  const progress = lastProgress && lastProgress.name === name ? { loaded: lastProgress.loaded, total: lastProgress.total } : null;
+  return { active: true, scope, name, done, total, error, progress };
+}
+
+// Sequential, not parallel: keeps one progress bar meaningful per model and
+// avoids competing for the same bandwidth. downloadAsset no-ops on a model
+// that's already cached, so callers can pass a scope's full list as-is.
+async function downloadModels(scope, names) {
+  if (queueState) return { started: false };
+  queueState = { scope, name: null, done: 0, total: names.length, cancelled: false, error: null };
+  downloadEvents.emit('queue', queueSnapshot());
+  for (let i = 0; i < names.length; i++) {
+    if (queueState.cancelled) break;
+    const name = names[i];
+    if (!name) continue;
+    queueState.name = name;
+    downloadEvents.emit('queue', queueSnapshot());
+    let result;
+    try {
+      result = await downloadModel(name);
+    } catch (err) {
+      queueState.error = err instanceof Error ? err.message : String(err);
+      break;
+    }
+    if (queueState.cancelled || result?.cancelled) break;
+    queueState.done = i + 1;
+  }
+  queueState.name = null;
+  const final = { ...queueSnapshot(), active: false };
+  queueState = null;
+  downloadEvents.emit('queue', final);
+  return { started: true };
+}
+
+// Marks the queue cancelled without touching the current downloadAsset call,
+// for removeAll (which needs its own clearCache: true cancelDownload).
+function stopDownloadQueue() {
+  if (queueState) queueState.cancelled = true;
+}
+
+async function cancelDownloadQueue() {
+  stopDownloadQueue();
+  return cancelDownload();
+}
+
+function downloadQueueState() {
+  return queueSnapshot();
+}
+
+function onDownloadQueueProgress(callback) {
+  downloadEvents.on('queue', callback);
+  return () => downloadEvents.off('queue', callback);
 }
 
 // installedSizes overrides the static hint once the real size is known,
@@ -662,4 +751,10 @@ module.exports = {
   downloadModel,
   cancelDownload,
   onDownloadProgress,
+  downloadModels,
+  stopDownloadQueue,
+  cancelDownloadQueue,
+  downloadQueueState,
+  onDownloadQueueProgress,
+  hfFallbackSrc,
 };

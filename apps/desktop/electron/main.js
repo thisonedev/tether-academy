@@ -75,6 +75,11 @@ const {
   downloadModel,
   cancelDownload,
   onDownloadProgress,
+  downloadModels,
+  stopDownloadQueue,
+  cancelDownloadQueue,
+  downloadQueueState,
+  onDownloadQueueProgress,
 } = require('./models.cjs');
 const { getDeviceInfo } = require('./device.cjs');
 const chat = require('./chat.cjs');
@@ -607,6 +612,7 @@ handle('academy:models:removeAll', async () => {
   // (it checks chat.currentModel() first), so keeping it here means removeAll
   // never actually deletes a loaded model, and never needs to unload one.
   const keepName = await configuredChatModelName();
+  stopDownloadQueue();
   // clearCache: true, or the SDK keeps the partial around to resume later
   // and it reappears the next time this model downloads.
   await cancelDownload(true);
@@ -633,6 +639,11 @@ handle('academy:models:for-lesson', async (lessonKey) => forLesson(lessonKey));
 
 handle('academy:models:download', async (name) => downloadModel(name));
 handle('academy:models:cancelDownload', async () => cancelDownload());
+// Runs entirely here, not in the renderer, so a Settings page unmount (e.g.
+// the user opens a lesson mid-batch) doesn't stop or lose track of it.
+handle('academy:models:downloadQueue', async (payload) => downloadModels(payload.scope, payload.names));
+handle('academy:models:cancelDownloadQueue', async () => cancelDownloadQueue());
+handle('academy:models:downloadQueueState', async () => downloadQueueState());
 
 // AI assistant chat. The renderer subscribes once on mount to academy:chat:chunk
 // and routes by requestId.
@@ -655,10 +666,12 @@ handle('academy:chat:configured-model', async () => {
 });
 handle('academy:chat:load', async (modelHint) => {
   const result = await chat.load(modelHint);
+  if (result.cancelled) return result;
   const store = await pearEnd.store();
   await store.set('ai.chat.model', result.modelName);
   return result;
 });
+handle('academy:chat:cancelLoad', async () => chat.cancelLoad());
 handle('academy:chat:preload', async () => chat.preload());
 handle('academy:chat:send', async (parsed) => {
   const result = await chat.send({
@@ -744,6 +757,7 @@ chat.onVerifyResult((result) => sendToAll('academy:chat:verify-result', result))
 chat.onSecurityResult((result) => sendToAll('academy:chat:security-result', result));
 chat.onLoadProgress((progress) => sendToAll('academy:chat:load-progress', progress));
 onDownloadProgress((progress) => sendToAll('academy:models:download-progress', progress));
+onDownloadQueueProgress((snapshot) => sendToAll('academy:models:download-queue', snapshot));
 
 handle('academy:peer:identity', async () => {
   const idm = pearEnd.identity();

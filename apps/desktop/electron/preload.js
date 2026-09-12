@@ -39,6 +39,14 @@ const academy = {
       ipcRenderer.on('academy:models:download-progress', handler);
       return () => ipcRenderer.removeListener('academy:models:download-progress', handler);
     },
+    downloadQueue: (scope, names) => ipcRenderer.invoke('academy:models:downloadQueue', { scope, names }),
+    cancelDownloadQueue: () => ipcRenderer.invoke('academy:models:cancelDownloadQueue'),
+    downloadQueueState: () => ipcRenderer.invoke('academy:models:downloadQueueState'),
+    onDownloadQueueProgress: (callback) => {
+      const handler = (/** @type {unknown} */ _e, /** @type {any} */ snapshot) => callback(snapshot);
+      ipcRenderer.on('academy:models:download-queue', handler);
+      return () => ipcRenderer.removeListener('academy:models:download-queue', handler);
+    },
   },
   device: {
     info: () => ipcRenderer.invoke('academy:device:info'),
@@ -50,6 +58,7 @@ const academy = {
     docsStatus: () => ipcRenderer.invoke('academy:chat:docs-status'),
     docsRefresh: () => ipcRenderer.invoke('academy:chat:docs-refresh'),
     load: (modelHint) => ipcRenderer.invoke('academy:chat:load', modelHint),
+    cancelLoad: () => ipcRenderer.invoke('academy:chat:cancelLoad'),
     preload: () => ipcRenderer.invoke('academy:chat:preload'),
     send: (payload) => ipcRenderer.invoke('academy:chat:send', payload),
     verify: (payload) => ipcRenderer.invoke('academy:chat:verify', payload),

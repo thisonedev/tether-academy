@@ -134,6 +134,45 @@ function findReferencesInMdx(content, constants) {
   return [...hits];
 }
 
+// Bracket-matched spans of every call to a function in fnNamesPattern (a
+// regex alternation like 'loadModel|downloadAsset'), used to tell what a
+// constant is actually passed to rather than just textually near it.
+function extractCallSpans(body, fnNamesPattern) {
+  const spans = [];
+  const re = new RegExp(`\\b(?:${fnNamesPattern})\\s*\\(`, 'g');
+  let call;
+  while ((call = re.exec(body)) !== null) {
+    let depth = 1;
+    let i = call.index + call[0].length;
+    while (i < body.length && depth > 0) {
+      if (body[i] === '(') depth++;
+      else if (body[i] === ')') depth--;
+      i++;
+    }
+    spans.push(body.slice(call.index, i));
+  }
+  return spans;
+}
+
+const DOWNLOAD_TRIGGER_FNS = 'loadModel|downloadAsset|ensureModels|preload';
+
+// assessModelFit only estimates memory fit; it never downloads or loads a
+// model. A constant passed to it that's never also passed to a real
+// download/load call in the same lesson shouldn't count as something the
+// lesson needs on disk.
+function assessModelFitOnlyRefs(content, refs) {
+  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+  const fitSpans = extractCallSpans(body, 'assessModelFit');
+  if (!fitSpans.length) return new Set();
+  const fitText = fitSpans.join('\n');
+  const downloadText = extractCallSpans(body, DOWNLOAD_TRIGGER_FNS).join('\n');
+  const onlyInside = new Set();
+  for (const ref of refs) {
+    if (fitText.includes(ref) && !downloadText.includes(ref)) onlyInside.add(ref);
+  }
+  return onlyInside;
+}
+
 const PURPOSES = {
   llm: 'text generation',
   diffusion: 'image generation',
@@ -177,8 +216,10 @@ async function main() {
     if (!refs.length) continue;
     const chapter = chapterOf(mdx);
     const title = lessonTitle(mdx);
+    const fitCheckOnly = assessModelFitOnlyRefs(content, refs);
     for (const ref of refs) {
       used.add(ref);
+      if (fitCheckOnly.has(ref)) continue;
       const meta = registry[ref];
       if (!meta) continue;
       addRef(meta.modelId, chapter, title);

@@ -73,7 +73,7 @@ function isPresent(entry, home, now = Date.now()) {
 
 /**
  * @param {string[]} names registry constants, e.g. ['QWEN3_4B_Q4_K_M']
- * @param {{ home?: string, onEvent?: (e: { name: string, phase: string, downloaded?: number, total?: number, message?: string }) => void, freeBytesOverride?: number }} [opts]
+ * @param {{ home?: string, onEvent?: (e: { name: string, phase: string, downloaded?: number, total?: number, message?: string }) => void, freeBytesOverride?: number, signal?: AbortSignal }} [opts]
  * @returns {Promise<{ fetched: string[], present: string[], unavailable: string[], failed: string[] }>}
  */
 async function ensureModels(names, opts = {}) {
@@ -90,6 +90,7 @@ async function ensureModels(names, opts = {}) {
   let remaining = opts.freeBytesOverride ?? (await freeBytesAt(modelsDir(opts.home)));
 
   for (const name of names) {
+    if (opts.signal?.aborted) break;
     const entry = registry.get(name);
     if (!entry) continue;
     if (isPresent(entry, opts.home)) {
@@ -122,6 +123,7 @@ async function ensureModels(names, opts = {}) {
       await sideloadModel(name, {
         home: opts.home,
         registry,
+        signal: opts.signal,
         onProgress: (downloaded, total) => report({ name, phase: 'progress', downloaded, total }),
       });
       report({ name, phase: 'done' });

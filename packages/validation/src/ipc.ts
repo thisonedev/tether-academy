@@ -264,6 +264,12 @@ export const modelIdSchema = z
     message: 'modelId must not contain empty or traversal segments',
   });
 
+/** A Download-all batch: a scope label (a chapter slug or 'course') plus the modelIds to fetch in order. */
+export const modelDownloadQueueSchema = z.object({
+  scope: z.string().min(1).max(256),
+  names: z.array(modelIdSchema).min(1).max(500),
+});
+
 /** Worker module specifier. main.js compares it against the one it registered. */
 export const workerSpecifierSchema = z.string().min(1).max(256);
 
